@@ -62,8 +62,11 @@ export default function MasterTemplatePage() {
   }
 
   function handleEdit(template: Template) {
-    setEditingTemplate(template);
+    // isCharacter is the authoritative category flag (matches characterImagePath
+    // being set); switch tabs before setting the editing target so the form
+    // mounted below always matches the template we're about to populate.
     setActiveTab(template.isCharacter ? "character" : "font");
+    setEditingTemplate(template);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 

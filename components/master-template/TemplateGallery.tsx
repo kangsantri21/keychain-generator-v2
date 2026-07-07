@@ -65,11 +65,11 @@ function TemplateCard({
         <span className="text-xs text-slate-400">
           {new Date(template.createdAt).toLocaleString("id-ID")}
         </span>
-        <div className="mt-auto flex gap-2">
+        <div className="relative z-20 mt-auto flex gap-2">
           <button
             type="button"
             onClick={() => onEdit(template)}
-            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-blue-200 px-2 py-1.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50"
+            className="relative z-10 flex flex-1 items-center justify-center gap-1 rounded-md border border-blue-200 px-2 py-1.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50"
           >
             <Pencil size={14} />
             Edit
@@ -78,7 +78,7 @@ function TemplateCard({
             type="button"
             onClick={handleDelete}
             disabled={isDeleting}
-            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="relative z-10 flex flex-1 items-center justify-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Trash2 size={14} />
             {isDeleting ? "Menghapus..." : "Hapus"}
