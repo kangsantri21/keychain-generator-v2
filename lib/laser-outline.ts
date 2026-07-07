@@ -6,9 +6,13 @@ export const ERODE_PX = 5.6;
 
 let scopeReady = false;
 
+/**
+ * paper.js's geometry kernel (path booleans, bounds) needs no DOM/canvas, so
+ * this works identically in the browser (live preview) and in Node (server-side
+ * nesting) — just call `paper.setup()` once per process.
+ */
 function ensureScope(): boolean {
   if (scopeReady) return true;
-  if (typeof window === "undefined") return false;
   paper.setup(new paper.Size(10, 10));
   scopeReady = true;
   return true;
@@ -69,9 +73,37 @@ export function translatePathData(d: string, tx: number, ty: number): string {
   if (!ensureScope()) return d;
 
   try {
+    // Some glyphs (e.g. a font's comma or a degenerate single-point curve)
+    // produce path data paper.js can't turn into a real PathItem — fall back
+    // to the untranslated data rather than crash on a null item.
     const item = paper.PathItem.create(d);
+    if (!item) return d;
     item.translate(new paper.Point(tx, ty));
     return item.pathData;
+  } catch {
+    return d;
+  } finally {
+    paper.project?.activeLayer.removeChildren();
+  }
+}
+
+export interface PathBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Bounding box of the given SVG path data, in the same units as the path. */
+export function getPathBounds(d: string): PathBounds | null {
+  if (!ensureScope()) return null;
+
+  try {
+    const item = paper.PathItem.create(d);
+    const { x, y, width, height } = item.bounds;
+    return { x, y, width, height };
+  } catch {
+    return null;
   } finally {
     paper.project?.activeLayer.removeChildren();
   }
@@ -92,6 +124,7 @@ export function computeLaserOutline(shapes: string[]): string | null {
 
     for (const d of shapes) {
       const item = paper.PathItem.create(d);
+      if (!item) continue;
       union = union ? union.unite(item, { insert: false }) : item;
     }
 

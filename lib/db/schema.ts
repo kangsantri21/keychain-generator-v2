@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 
 export const templates = sqliteTable("templates", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -32,3 +32,26 @@ export const orders = sqliteTable("orders", {
 
 export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
+
+export const stagingItems = sqliteTable("staging_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orderId: integer("order_id")
+    .notNull()
+    .references(() => orders.id),
+  templateId: integer("template_id")
+    .notNull()
+    .references(() => templates.id),
+  // One order can hold several names; each nested unit needs to know which
+  // name it renders, since that's what makes its cut outline/text unique.
+  customerName: text("customer_name").notNull(),
+  sheetId: integer("sheet_id").notNull(),
+  posX: real("pos_x").notNull(),
+  posY: real("pos_y").notNull(),
+  width: real("width").notNull(),
+  height: real("height").notNull(),
+  status: text("status").notNull().default("staged"),
+  createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
+});
+
+export type StagingItem = typeof stagingItems.$inferSelect;
+export type NewStagingItem = typeof stagingItems.$inferInsert;
