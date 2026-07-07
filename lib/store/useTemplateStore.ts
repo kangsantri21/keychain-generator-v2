@@ -45,6 +45,7 @@ interface TemplateStoreState {
   templates: Template[];
   setTemplates: (templates: Template[]) => void;
   addTemplate: (template: Template) => void;
+  updateTemplate: (template: Template) => void;
   removeTemplate: (id: number) => void;
 
   orderQueue: OrderQueueItem[];
@@ -64,6 +65,10 @@ export const useTemplateStore = create<TemplateStoreState>((set) => ({
   setTemplates: (templates) => set({ templates }),
   addTemplate: (template) =>
     set((state) => ({ templates: [...state.templates, template] })),
+  updateTemplate: (template) =>
+    set((state) => ({
+      templates: state.templates.map((t) => (t.id === template.id ? template : t)),
+    })),
   removeTemplate: (id) =>
     set((state) => ({ templates: state.templates.filter((t) => t.id !== id) })),
 

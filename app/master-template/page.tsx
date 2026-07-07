@@ -7,6 +7,7 @@ import { Search } from "lucide-react";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import { FontTemplateForm } from "@/components/master-template/FontTemplateForm";
 import { TemplateGallery } from "@/components/master-template/TemplateGallery";
+import type { Template } from "@/lib/db/schema";
 
 // paper.js (used by the character live preview) touches browser-only APIs
 // that break during SSR, so this tab is rendered client-side only.
@@ -24,6 +25,7 @@ export default function MasterTemplatePage() {
   const [activeTab, setActiveTab] = useState<Tab>("character");
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const templates = useTemplateStore((state) => state.templates);
   const setTemplates = useTemplateStore((state) => state.setTemplates);
 
@@ -54,6 +56,21 @@ export default function MasterTemplatePage() {
     };
   }, [setTemplates]);
 
+  function handleTabChange(tab: Tab) {
+    setActiveTab(tab);
+    setEditingTemplate(null);
+  }
+
+  function handleEdit(template: Template) {
+    setEditingTemplate(template);
+    setActiveTab(template.isCharacter ? "character" : "font");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleCancelEdit() {
+    setEditingTemplate(null);
+  }
+
   return (
     <div className="mx-auto max-w-6xl p-8">
       <h1 className="text-2xl font-semibold text-slate-800">Master Template</h1>
@@ -65,7 +82,7 @@ export default function MasterTemplatePage() {
         <div className="flex border-b border-slate-200">
           <button
             type="button"
-            onClick={() => setActiveTab("character")}
+            onClick={() => handleTabChange("character")}
             className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
               activeTab === "character"
                 ? "bg-slate-800 text-white"
@@ -76,7 +93,7 @@ export default function MasterTemplatePage() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("font")}
+            onClick={() => handleTabChange("font")}
             className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
               activeTab === "font"
                 ? "bg-slate-800 text-white"
@@ -88,7 +105,24 @@ export default function MasterTemplatePage() {
         </div>
 
         <div className="p-6">
-          {activeTab === "character" ? <CharacterTemplateForm /> : <FontTemplateForm />}
+          {editingTemplate && (
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              Mengedit template <strong>{editingTemplate.code}</strong>
+            </div>
+          )}
+          {activeTab === "character" ? (
+            <CharacterTemplateForm
+              key={editingTemplate?.isCharacter ? `edit-${editingTemplate.id}` : "create-character"}
+              editingTemplate={editingTemplate?.isCharacter ? editingTemplate : null}
+              onCancelEdit={handleCancelEdit}
+            />
+          ) : (
+            <FontTemplateForm
+              key={editingTemplate && !editingTemplate.isCharacter ? `edit-${editingTemplate.id}` : "create-font"}
+              editingTemplate={editingTemplate && !editingTemplate.isCharacter ? editingTemplate : null}
+              onCancelEdit={handleCancelEdit}
+            />
+          )}
         </div>
       </div>
 
@@ -106,7 +140,7 @@ export default function MasterTemplatePage() {
             className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
           />
         </div>
-        <TemplateGallery templates={filteredTemplates} isLoading={isLoading} />
+        <TemplateGallery templates={filteredTemplates} isLoading={isLoading} onEdit={handleEdit} />
       </div>
     </div>
   );

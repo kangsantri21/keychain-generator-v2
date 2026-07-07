@@ -19,30 +19,72 @@ const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
 const RING_HOLE_DIAMETER = 7; // ~0.19mm spec, scaled up for preview visibility
 const OUTLINE_DEBOUNCE_MS = 300;
 
-export function CharacterTemplateForm() {
-  const [code, setCode] = useState("");
-  const [defaultText, setDefaultText] = useState("Nama");
+/**
+ * The parent keys this component by `editingTemplate?.id ?? "create"`, so a
+ * switch between templates (or between edit/create) remounts it — that's
+ * what resets these fields, rather than an effect syncing state from props.
+ */
+export function CharacterTemplateForm({
+  editingTemplate,
+  onCancelEdit,
+}: {
+  editingTemplate: Template | null;
+  onCancelEdit: () => void;
+}) {
+  const [code, setCode] = useState(editingTemplate?.code ?? "");
+  const [defaultText, setDefaultText] = useState(editingTemplate?.defaultText ?? "Nama");
   const [characterFile, setCharacterFile] = useState<File | null>(null);
   const [fontFile, setFontFile] = useState<File | null>(null);
-  const [colors, setColors] = useState<string[]>([DEFAULT_COLOR]);
-  const [characterPreviewUrl, setCharacterPreviewUrl] = useState<string | null>(null);
+  const [colors, setColors] = useState<string[]>(
+    editingTemplate && editingTemplate.colors.length > 0 ? editingTemplate.colors : [DEFAULT_COLOR]
+  );
+  const [characterPreviewUrl, setCharacterPreviewUrl] = useState<string | null>(
+    editingTemplate?.characterImagePath ?? null
+  );
   const [parsedFont, setParsedFont] = useState<opentype.Font | null>(null);
   const [outlinePath, setOutlinePath] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
   const addTemplate = useTemplateStore((state) => state.addTemplate);
+  const updateTemplate = useTemplateStore((state) => state.updateTemplate);
+
+  const isEditing = Boolean(editingTemplate);
 
   useEffect(() => {
     return () => {
-      if (characterPreviewUrl) URL.revokeObjectURL(characterPreviewUrl);
+      if (characterPreviewUrl?.startsWith("blob:")) URL.revokeObjectURL(characterPreviewUrl);
     };
   }, [characterPreviewUrl]);
+
+  // Fetch the existing font once (for an accurate live preview) when opened in edit mode.
+  useEffect(() => {
+    if (!editingTemplate) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(editingTemplate.filePath);
+        const arrayBuffer = await res.arrayBuffer();
+        if (!cancelled) setParsedFont(opentype.parse(arrayBuffer));
+      } catch {
+        if (!cancelled) toast.error("Gagal memuat font template untuk pratinjau");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editingTemplate]);
 
   function handleCharacterFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const selected = event.target.files?.[0] ?? null;
     setCharacterFile(selected);
-    setCharacterPreviewUrl(selected ? URL.createObjectURL(selected) : null);
+    if (selected) {
+      setCharacterPreviewUrl(URL.createObjectURL(selected));
+    } else {
+      setCharacterPreviewUrl(editingTemplate?.characterImagePath ?? null);
+    }
   }
 
   async function handleFontFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -122,11 +164,11 @@ export function CharacterTemplateForm() {
       toast.error("Kode template harus diisi");
       return;
     }
-    if (!characterFile) {
+    if (!isEditing && !characterFile) {
       toast.error("Pilih file karakter terlebih dahulu");
       return;
     }
-    if (!fontFile) {
+    if (!isEditing && !fontFile) {
       toast.error("Pilih file font terlebih dahulu");
       return;
     }
@@ -138,19 +180,28 @@ export function CharacterTemplateForm() {
     const formData = new FormData();
     formData.set("code", code.trim());
     formData.set("category", "character");
-    formData.set("file", fontFile);
-    formData.set("characterImage", characterFile);
+    if (fontFile) formData.set("file", fontFile);
+    if (characterFile) formData.set("characterImage", characterFile);
     formData.set("colors", JSON.stringify(colors));
     formData.set("defaultText", defaultText.trim() || "Nama");
 
     setIsSubmitting(true);
     try {
-      const res = await fetch("/api/templates", { method: "POST", body: formData });
+      const url = editingTemplate ? `/api/templates/${editingTemplate.id}` : "/api/templates";
+      const method = editingTemplate ? "PUT" : "POST";
+      const res = await fetch(url, { method, body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menyimpan template");
-      addTemplate(data.template as Template);
-      toast.success("Template karakter berhasil disimpan");
-      resetForm();
+
+      if (editingTemplate) {
+        updateTemplate(data.template as Template);
+        toast.success("Template karakter berhasil diperbarui");
+        onCancelEdit();
+      } else {
+        addTemplate(data.template as Template);
+        toast.success("Template karakter berhasil disimpan");
+        resetForm();
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menyimpan template");
     } finally {
@@ -192,6 +243,11 @@ export function CharacterTemplateForm() {
             onChange={handleCharacterFileChange}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
           />
+          {isEditing && (
+            <span className="text-xs text-slate-400">
+              (Biarkan kosong jika tidak ingin mengubah file)
+            </span>
+          )}
         </label>
 
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
@@ -203,19 +259,41 @@ export function CharacterTemplateForm() {
             onChange={handleFontFileChange}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
           />
+          {isEditing && (
+            <span className="text-xs text-slate-400">
+              (Biarkan kosong jika tidak ingin mengubah file)
+            </span>
+          )}
         </label>
 
         <div className="sm:col-span-2">
           <ColorPaletteEditor colors={colors} onChange={setColors} />
         </div>
 
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-fit rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2"
-        >
-          {isSubmitting ? "Menyimpan..." : "Simpan Template Karakter"}
-        </button>
+        <div className="flex items-center gap-3 sm:col-span-2">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-fit rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSubmitting
+              ? isEditing
+                ? "Memperbarui..."
+                : "Menyimpan..."
+              : isEditing
+                ? "Update Template"
+                : "Simpan Template Karakter"}
+          </button>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="w-fit rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+            >
+              Batal Edit
+            </button>
+          )}
+        </div>
       </form>
 
       <div className="flex flex-col gap-2">

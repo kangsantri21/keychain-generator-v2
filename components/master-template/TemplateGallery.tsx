@@ -2,11 +2,17 @@
 
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template } from "@/lib/db/schema";
 
-function TemplateCard({ template }: { template: Template }) {
+function TemplateCard({
+  template,
+  onEdit,
+}: {
+  template: Template;
+  onEdit: (template: Template) => void;
+}) {
   const removeTemplate = useTemplateStore((state) => state.removeTemplate);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -59,15 +65,25 @@ function TemplateCard({ template }: { template: Template }) {
         <span className="text-xs text-slate-400">
           {new Date(template.createdAt).toLocaleString("id-ID")}
         </span>
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          className="mt-auto flex items-center justify-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Trash2 size={14} />
-          {isDeleting ? "Menghapus..." : "Hapus"}
-        </button>
+        <div className="mt-auto flex gap-2">
+          <button
+            type="button"
+            onClick={() => onEdit(template)}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-blue-200 px-2 py-1.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50"
+          >
+            <Pencil size={14} />
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Trash2 size={14} />
+            {isDeleting ? "Menghapus..." : "Hapus"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -77,10 +93,12 @@ function TemplateSection({
   title,
   items,
   emptyLabel,
+  onEdit,
 }: {
   title: string;
   items: Template[];
   emptyLabel: string;
+  onEdit: (template: Template) => void;
 }) {
   return (
     <section>
@@ -92,7 +110,7 @@ function TemplateSection({
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {items.map((template) => (
-            <TemplateCard key={template.id} template={template} />
+            <TemplateCard key={template.id} template={template} onEdit={onEdit} />
           ))}
         </div>
       )}
@@ -103,9 +121,11 @@ function TemplateSection({
 export function TemplateGallery({
   templates,
   isLoading,
+  onEdit,
 }: {
   templates: Template[];
   isLoading: boolean;
+  onEdit: (template: Template) => void;
 }) {
   if (isLoading) {
     return <p className="text-sm text-slate-400">Memuat template...</p>;
@@ -120,11 +140,13 @@ export function TemplateGallery({
         title="Template Karakter"
         items={characterTemplates}
         emptyLabel="Belum ada template karakter."
+        onEdit={onEdit}
       />
       <TemplateSection
         title="Template Font & Warna"
         items={fontTemplates}
         emptyLabel="Belum ada template font."
+        onEdit={onEdit}
       />
     </div>
   );
