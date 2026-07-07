@@ -43,48 +43,6 @@ export function renderColoredGlyphs(
   };
 }
 
-function fallbackTextSvg(text: string, colors: string[], width = 240, height = 120): string {
-  const spans = text
-    .split("")
-    .map((ch, i) => `<tspan fill="${colors[i % colors.length] ?? "#1e293b"}">${escapeXml(ch)}</tspan>`)
-    .join("");
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
-  <rect width="100%" height="100%" fill="#f1f5f9" />
-  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="28">${spans}</text>
-</svg>`;
-}
-
-/** Standalone "Template Font & Warna" thumbnail: centered colored glyphs. */
-export function generateFontOnlyPreviewSvg(
-  fontArrayBuffer: ArrayBuffer,
-  text: string,
-  colors: string[]
-): string {
-  const sampleText = text.trim() || "Aa";
-
-  try {
-    const font = opentype.parse(fontArrayBuffer);
-    const fontSize = 72;
-    const { segments, bbox } = renderColoredGlyphs(font, sampleText, fontSize, colors);
-    const padding = 16;
-    const width = Math.max(bbox.x2 - bbox.x1, 1) + padding * 2;
-    const height = Math.max(bbox.y2 - bbox.y1, 1) + padding * 2;
-    const translateX = padding - bbox.x1;
-    const translateY = height / 2 - (bbox.y1 + bbox.y2) / 2;
-    const paths = segments.map((s) => `<path d="${s.d}" fill="${s.color}" />`).join("\n    ");
-
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
-  <rect width="100%" height="100%" fill="#f1f5f9" />
-  <g transform="translate(${translateX}, ${translateY})">
-    ${paths}
-  </g>
-</svg>`;
-  } catch {
-    return fallbackTextSvg(sampleText, colors);
-  }
-}
-
 /**
  * "Template Karakter" thumbnail: character image on the left, colored text
  * rendered from the uploaded font on the right, wrapped in a joint pill

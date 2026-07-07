@@ -5,10 +5,11 @@ import path from "path";
 import { db } from "@/lib/db";
 import { templates } from "@/lib/db/schema";
 import { slugify } from "@/lib/utils";
-import { generateCharacterPreviewSvg, generateFontOnlyPreviewSvg } from "@/lib/font-preview";
+import { generateCharacterPreviewSvg } from "@/lib/font-preview";
 
 const CHARACTER_EXTENSIONS = [".svg", ".png"];
 const FONT_EXTENSIONS = [".ttf", ".otf"];
+const THUMBNAIL_EXTENSIONS = [".png", ".jpg", ".jpeg"];
 const MAX_COLORS = 6;
 const MIN_COLORS = 1;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest) {
   const category = formData.get("category") as string | null; // "character" | "font"
   const fontFile = formData.get("file") as File | null;
   const characterImageFile = formData.get("characterImage") as File | null;
+  const thumbnailImageFile = formData.get("thumbnailImage") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
 
@@ -64,6 +66,16 @@ export async function POST(request: NextRequest) {
     const characterExt = path.extname(characterImageFile.name).toLowerCase();
     if (!CHARACTER_EXTENSIONS.includes(characterExt)) {
       return badRequest("File karakter harus berformat SVG atau PNG");
+    }
+  }
+
+  if (category === "font") {
+    if (!thumbnailImageFile || thumbnailImageFile.size === 0) {
+      return badRequest("Pilih gambar preview/thumbnail terlebih dahulu");
+    }
+    const thumbnailExt = path.extname(thumbnailImageFile.name).toLowerCase();
+    if (!THUMBNAIL_EXTENSIONS.includes(thumbnailExt)) {
+      return badRequest("File thumbnail harus berformat PNG atau JPG");
     }
   }
 
@@ -115,16 +127,29 @@ export async function POST(request: NextRequest) {
 
   const thumbsDir = path.join(process.cwd(), "public", "uploads", "thumbnails");
   await fs.mkdir(thumbsDir, { recursive: true });
-  const thumbFileName = `${uniqueId}.svg`;
-  const absoluteThumbnailPath = path.join(thumbsDir, thumbFileName);
 
-  const svgMarkup =
-    category === "character" && characterImageBuffer
-      ? generateCharacterPreviewSvg(characterImageBuffer, characterExt, fontArrayBuffer, defaultText, colors)
-      : generateFontOnlyPreviewSvg(fontArrayBuffer, "Aa", colors);
+  let absoluteThumbnailPath: string;
+  let publicThumbnailPath: string;
 
-  await fs.writeFile(absoluteThumbnailPath, svgMarkup);
-  const publicThumbnailPath = `/uploads/thumbnails/${thumbFileName}`;
+  if (category === "character" && characterImageBuffer) {
+    const thumbFileName = `${uniqueId}.svg`;
+    absoluteThumbnailPath = path.join(thumbsDir, thumbFileName);
+    const svgMarkup = generateCharacterPreviewSvg(
+      characterImageBuffer,
+      characterExt,
+      fontArrayBuffer,
+      defaultText,
+      colors
+    );
+    await fs.writeFile(absoluteThumbnailPath, svgMarkup);
+    publicThumbnailPath = `/uploads/thumbnails/${thumbFileName}`;
+  } else {
+    const thumbnailExt = path.extname(thumbnailImageFile!.name).toLowerCase();
+    const thumbFileName = `${uniqueId}${thumbnailExt}`;
+    absoluteThumbnailPath = path.join(thumbsDir, thumbFileName);
+    await fs.writeFile(absoluteThumbnailPath, Buffer.from(await thumbnailImageFile!.arrayBuffer()));
+    publicThumbnailPath = `/uploads/thumbnails/${thumbFileName}`;
+  }
 
   try {
     const [created] = await db

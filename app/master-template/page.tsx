@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import toast from "react-hot-toast";
+import { Search } from "lucide-react";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import { FontTemplateForm } from "@/components/master-template/FontTemplateForm";
 import { TemplateGallery } from "@/components/master-template/TemplateGallery";
@@ -22,8 +23,15 @@ type Tab = "character" | "font";
 export default function MasterTemplatePage() {
   const [activeTab, setActiveTab] = useState<Tab>("character");
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
   const templates = useTemplateStore((state) => state.templates);
   const setTemplates = useTemplateStore((state) => state.setTemplates);
+
+  const filteredTemplates = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return templates;
+    return templates.filter((template) => template.code.toLowerCase().includes(query));
+  }, [templates, searchQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +93,20 @@ export default function MasterTemplatePage() {
       </div>
 
       <div className="mt-10">
-        <TemplateGallery templates={templates} isLoading={isLoading} />
+        <div className="relative mb-4 max-w-sm">
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Cari kode template..."
+            className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+          />
+        </div>
+        <TemplateGallery templates={filteredTemplates} isLoading={isLoading} />
       </div>
     </div>
   );
