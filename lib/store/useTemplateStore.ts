@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { Template } from "@/lib/db/schema";
 
+export type OrderStatus = "pending" | "processing" | "completed";
+
 export type PageKey =
   | "dashboard"
   | "master-template"
@@ -25,11 +27,15 @@ export const PAGE_ROUTES: Record<PageKey, string> = {
 };
 
 export interface OrderQueueItem {
-  id: string;
+  id: number;
+  receiptCode: string;
+  manualCode: string;
   templateId: number;
-  customerName: string;
   quantity: number;
-  status: "pending" | "processing" | "done";
+  customerNames: string[];
+  status: OrderStatus;
+  createdAt: string;
+  template: Template | null;
 }
 
 interface TemplateStoreState {
@@ -42,12 +48,12 @@ interface TemplateStoreState {
   removeTemplate: (id: number) => void;
 
   orderQueue: OrderQueueItem[];
-  activeOrderId: string | null;
+  activeOrderId: number | null;
   setOrderQueue: (orders: OrderQueueItem[]) => void;
   addToQueue: (order: OrderQueueItem) => void;
-  updateQueueItem: (id: string, updates: Partial<OrderQueueItem>) => void;
-  removeFromQueue: (id: string) => void;
-  setActiveOrderId: (id: string | null) => void;
+  updateQueueItem: (id: number, updates: Partial<OrderQueueItem>) => void;
+  removeFromQueue: (id: number) => void;
+  setActiveOrderId: (id: number | null) => void;
 }
 
 export const useTemplateStore = create<TemplateStoreState>((set) => ({
@@ -65,7 +71,7 @@ export const useTemplateStore = create<TemplateStoreState>((set) => ({
   activeOrderId: null,
   setOrderQueue: (orderQueue) => set({ orderQueue }),
   addToQueue: (order) =>
-    set((state) => ({ orderQueue: [...state.orderQueue, order] })),
+    set((state) => ({ orderQueue: [order, ...state.orderQueue] })),
   updateQueueItem: (id, updates) =>
     set((state) => ({
       orderQueue: state.orderQueue.map((o) =>
