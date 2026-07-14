@@ -113,7 +113,10 @@ export function computeLaserOutlineClipper(
  * Plain boolean union of the given shapes — no dilate/erode. Used to combine
  * a designer-authored cut-line (already the final intended contour) with our
  * own computed text outline into one seamless shape without distorting the
- * designer's original geometry.
+ * designer's original geometry. Keeps only the outermost perimeter(s): a
+ * laser cutter must never see an accidental interior loop (a stray "hole"
+ * artifact from an off-center weld seam, or a genuine hole in the designer's
+ * own artwork), since stroking it would cut straight through solid material.
  */
 export function unionOutlines(shapes: string[]): string | null {
   const subjectPaths = shapesToClipperPaths(shapes);
@@ -122,7 +125,7 @@ export function unionOutlines(shapes: string[]): string | null {
   try {
     const unionPaths = unionClipperPaths(subjectPaths);
     if (unionPaths.length === 0) return null;
-    return clipperPathsToSvgD(unionPaths);
+    return clipperPathsToSvgD(keepOuterOrientation(unionPaths));
   } catch {
     return null;
   }

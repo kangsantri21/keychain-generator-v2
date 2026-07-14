@@ -82,6 +82,43 @@ export function getPathBounds(d: string): PathBounds | null {
   }
 }
 
+/**
+ * Scans candidate centers (in preference order) for one where a circle of
+ * the given radius lies entirely within the outline, and returns the first
+ * hit. Used to verify the ring hole actually lands on solid material instead
+ * of a fixed offset that may miss a non-square/non-convex silhouette. The
+ * outline is parsed once and reused across all candidates for performance.
+ */
+export function findHoleCenterInside(
+  outlineD: string,
+  candidates: FlatPoint[],
+  radius: number
+): FlatPoint | null {
+  if (!ensureScope()) return null;
+
+  try {
+    const outline = paper.PathItem.create(outlineD);
+    if (!outline) return null;
+
+    for (const { x, y } of candidates) {
+      const circle = new paper.Path.Circle(new paper.Point(x, y), radius);
+      const circleArea = Math.abs(circle.area);
+      const intersection = outline.intersect(circle);
+      const intersectionArea = Math.abs((intersection as paper.PathItem & { area: number }).area);
+      circle.remove();
+      intersection.remove();
+      if (circleArea > 0 && intersectionArea >= circleArea * 0.995) {
+        return { x, y };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    paper.project?.activeLayer.removeChildren();
+  }
+}
+
 export interface FlatPoint {
   x: number;
   y: number;

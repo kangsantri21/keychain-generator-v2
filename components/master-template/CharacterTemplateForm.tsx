@@ -4,7 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import * as opentype from "opentype.js";
 import { renderColoredGlyphs, type ColoredTextRender } from "@/lib/font-preview";
-import { DILATE_PX, ERODE_PX, translatePathData, scaleAndTranslatePathData } from "@/lib/laser-outline";
+import {
+  DILATE_PX,
+  ERODE_PX,
+  translatePathData,
+  scaleAndTranslatePathData,
+  getPathBounds,
+  findHoleCenterInside,
+  type PathBounds,
+} from "@/lib/laser-outline";
 import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
@@ -23,6 +31,42 @@ const OUTLINE_DEBOUNCE_MS = 300;
 
 function isSvgFile(file: File): boolean {
   return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+}
+
+function unionBounds(a: PathBounds, b: PathBounds): PathBounds {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return {
+    x,
+    y,
+    width: Math.max(a.x + a.width, b.x + b.width) - x,
+    height: Math.max(a.y + a.height, b.y + b.height) - y,
+  };
+}
+
+/**
+ * Candidate ring-hole centers within `bounds`, closest to the preferred
+ * (nominal top-left) position first — used to find a spot that actually
+ * lands on solid material for non-square/non-convex character silhouettes.
+ */
+function holeCandidates(
+  preferred: { x: number; y: number },
+  bounds: PathBounds,
+  radius: number,
+  step: number
+): { x: number; y: number }[] {
+  const points: { x: number; y: number }[] = [];
+  for (let y = bounds.y + radius; y <= bounds.y + bounds.height - radius; y += step) {
+    for (let x = bounds.x + radius; x <= bounds.x + bounds.width - radius; x += step) {
+      points.push({ x, y });
+    }
+  }
+  points.sort((a, b) => {
+    const da = (a.x - preferred.x) ** 2 + (a.y - preferred.y) ** 2;
+    const db = (b.x - preferred.x) ** 2 + (b.y - preferred.y) ** 2;
+    return da - db;
+  });
+  return points;
 }
 
 /**
@@ -52,6 +96,10 @@ export function CharacterTemplateForm({
   const [characterVector, setCharacterVector] = useState<CharacterVector | null>(null);
   const [parsedFont, setParsedFont] = useState<opentype.Font | null>(null);
   const [outlinePath, setOutlinePath] = useState<string | null>(null);
+  const [holeCenter, setHoleCenter] = useState({
+    x: CANVAS_MARGIN + RING_HOLE_OFFSET,
+    y: CANVAS_MARGIN + RING_HOLE_OFFSET,
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
@@ -162,8 +210,39 @@ export function CharacterTemplateForm({
     }
   }, [parsedFont, defaultText, colors]);
 
+  // Fit the designer's own cut-line into the character box the same way the
+  // production renderer does — computed once here (not just inside the
+  // outline effect) so both the text's X origin and the outline computation
+  // can be measured against the character's *actual* silhouette bounds.
+  const characterFit = useMemo(() => {
+    if (!characterVector || characterVector.cutLinePaths.length === 0) return null;
+    const { bounds: srcBounds } = characterVector;
+    const fitScale = Math.min(CHAR_BOX_SIZE / srcBounds.width, CHAR_BOX_SIZE / srcBounds.height);
+    const cutTx = CANVAS_MARGIN + (CHAR_BOX_SIZE - srcBounds.width * fitScale) / 2 - srcBounds.x * fitScale;
+    const cutTy = CANVAS_MARGIN + (CHAR_BOX_SIZE - srcBounds.height * fitScale) / 2 - srcBounds.y * fitScale;
+    const positionedCutLines = characterVector.cutLinePaths.map((d) =>
+      scaleAndTranslatePathData(d, fitScale, cutTx, cutTy)
+    );
+    let bounds: PathBounds | null = null;
+    for (const d of positionedCutLines) {
+      const b = getPathBounds(d);
+      if (b) bounds = bounds ? unionBounds(bounds, b) : b;
+    }
+    return bounds ? { positionedCutLines, bounds } : null;
+  }, [characterVector]);
+
   // Text starts right after the character box, leaving only a small (~5mm) gap.
-  const textOriginX = CANVAS_MARGIN + CHAR_BOX_SIZE + TEXT_GAP;
+  // When a designer cut-line is present it's used as-is (not dilated), so only
+  // the text side grows outward during outline closing. Positioning by a
+  // fixed nominal gap would measure against the nominal CHAR_BOX_SIZE edge,
+  // which real artwork rarely reaches — instead push the text's raw
+  // (pre-dilation) box to already overlap the character's *actual* right
+  // edge by a small safety margin, so dilation is guaranteed to weld them.
+  const OVERLAP_BUFFER_PX = 6; // ~1.5mm at this preview's px-per-mm scale
+  const nominalTextOriginX = CANVAS_MARGIN + CHAR_BOX_SIZE + TEXT_GAP;
+  const textOriginX = characterFit
+    ? Math.min(nominalTextOriginX, characterFit.bounds.x + characterFit.bounds.width - OVERLAP_BUFFER_PX)
+    : nominalTextOriginX;
   const textOriginY = CANVAS_MARGIN;
 
   const textTranslateX = textPreview ? textOriginX - textPreview.bbox.x1 : textOriginX;
@@ -179,6 +258,7 @@ export function CharacterTemplateForm({
     const timeout = setTimeout(() => {
       if (!characterPreviewUrl || !textPreview || textPreview.segments.length === 0) {
         setOutlinePath(null);
+        setHoleCenter({ x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET });
         return;
       }
 
@@ -186,29 +266,47 @@ export function CharacterTemplateForm({
         translatePathData(segment.d, textTranslateX, textTranslateY)
       );
 
-      if (characterVector && characterVector.cutLinePaths.length > 0) {
-        // Fit the designer's own cut-line into the character box the same
-        // way the production renderer does, then union it with the text
-        // outline as-is — no re-dilating a contour that's already final.
-        const { bounds } = characterVector;
-        const fitScale = Math.min(CHAR_BOX_SIZE / bounds.width, CHAR_BOX_SIZE / bounds.height);
-        const cutTx = CANVAS_MARGIN + (CHAR_BOX_SIZE - bounds.width * fitScale) / 2 - bounds.x * fitScale;
-        const cutTy = CANVAS_MARGIN + (CHAR_BOX_SIZE - bounds.height * fitScale) / 2 - bounds.y * fitScale;
-        const positionedCutLines = characterVector.cutLinePaths.map((d) =>
-          scaleAndTranslatePathData(d, fitScale, cutTx, cutTy)
-        );
+      const nominalHoleCenter = { x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET };
+
+      if (characterFit) {
+        // Union the designer's cut-line with the text outline as-is — no
+        // re-dilating a contour that's already the final intended shape.
         const textOutline = computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
-        setOutlinePath(unionOutlines(textOutline ? [textOutline, ...positionedCutLines] : positionedCutLines));
+        const combined = unionOutlines(
+          textOutline ? [textOutline, ...characterFit.positionedCutLines] : characterFit.positionedCutLines
+        );
+        setOutlinePath(combined);
+
+        // The ring hole's fixed corner offset is safe for a plain square box
+        // but can miss a non-square/non-convex character silhouette — find
+        // the nearest spot that's actually inside the welded outline.
+        let nextHoleCenter = nominalHoleCenter;
+        if (combined) {
+          const searchBounds = unionBounds(characterFit.bounds, {
+            x: nominalHoleCenter.x - RING_HOLE_DIAMETER,
+            y: nominalHoleCenter.y - RING_HOLE_DIAMETER,
+            width: RING_HOLE_DIAMETER * 2,
+            height: RING_HOLE_DIAMETER * 2,
+          });
+          const found = findHoleCenterInside(
+            combined,
+            holeCandidates(nominalHoleCenter, searchBounds, RING_HOLE_DIAMETER / 2, 3),
+            RING_HOLE_DIAMETER / 2
+          );
+          if (found) nextHoleCenter = found;
+        }
+        setHoleCenter(nextHoleCenter);
       } else {
         const charBoxD = `M ${CANVAS_MARGIN} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN + CHAR_BOX_SIZE} L ${CANVAS_MARGIN} ${CANVAS_MARGIN + CHAR_BOX_SIZE} Z`;
         setOutlinePath(
           computeLaserOutlineClipper([charBoxD, ...glyphShapes], { dilateMm: DILATE_PX, erodeMm: ERODE_PX })
         );
+        setHoleCenter(nominalHoleCenter);
       }
     }, OUTLINE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
-  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY, characterVector]);
+  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY, characterFit]);
 
   function resetForm() {
     setCode("");
@@ -219,6 +317,7 @@ export function CharacterTemplateForm({
     setFontFile(null);
     setParsedFont(null);
     setOutlinePath(null);
+    setHoleCenter({ x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET });
     setColors([DEFAULT_COLOR]);
     if (characterInputRef.current) characterInputRef.current.value = "";
     if (fontInputRef.current) fontInputRef.current.value = "";
@@ -401,8 +500,8 @@ export function CharacterTemplateForm({
             )}
 
             <circle
-              cx={CANVAS_MARGIN + RING_HOLE_OFFSET}
-              cy={CANVAS_MARGIN + RING_HOLE_OFFSET}
+              cx={holeCenter.x}
+              cy={holeCenter.y}
               r={RING_HOLE_DIAMETER / 2}
               stroke="red"
               strokeWidth={1}
