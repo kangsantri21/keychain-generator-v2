@@ -6,19 +6,28 @@ import type { Template } from "@/lib/db/schema";
 export interface ItemBlockState {
   key: string;
   template: Template | null;
-  quantity: number;
   namesText: string;
-  namesGrid: string[];
 }
 
 export function createEmptyItemBlock(): ItemBlockState {
   return {
     key: crypto.randomUUID(),
     template: null,
-    quantity: 1,
     namesText: "",
-    namesGrid: [""],
   };
+}
+
+/**
+ * Splits a pasted name list on commas AND/OR newlines (either format, or a
+ * mix of both) into a clean array — trimmed, empty entries dropped. This is
+ * the single source of truth for an item's quantity: however many names
+ * come out of this is how many units get ordered, no separate count field.
+ */
+export function parseNamesInput(text: string): string[] {
+  return text
+    .split(/[,\n]+/)
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
 }
 
 export function OrderItemBlock({
@@ -26,21 +35,18 @@ export function OrderItemBlock({
   index,
   canRemove,
   onOpenPicker,
-  onQuantityChange,
   onNamesTextChange,
-  onNamesGridChange,
   onRemove,
 }: {
   item: ItemBlockState;
   index: number;
   canRemove: boolean;
   onOpenPicker: () => void;
-  onQuantityChange: (quantity: number) => void;
   onNamesTextChange: (text: string) => void;
-  onNamesGridChange: (nameIndex: number, value: string) => void;
   onRemove: () => void;
 }) {
   const { template } = item;
+  const names = parseNamesInput(item.namesText);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
@@ -93,55 +99,28 @@ export function OrderItemBlock({
         )}
       </div>
 
-      <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 sm:max-w-[160px]">
-        Jumlah Pesanan
-        <input
-          type="number"
-          min={1}
-          value={item.quantity}
-          onChange={(event) => onQuantityChange(Math.max(1, Number(event.target.value) || 1))}
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-        />
-      </label>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-slate-700">Daftar Nama</span>
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-slate-700">Daftar Nama</span>
+          <span
+            className={`text-xs font-medium ${names.length > 0 ? "text-blue-600" : "text-slate-400"}`}
+          >
+            Total: {names.length} nama terdeteksi
+          </span>
+        </div>
         {!template ? (
           <p className="text-sm text-slate-400">Pilih template terlebih dahulu.</p>
-        ) : template.isCharacter ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {item.namesGrid.map((name, nameIndex) => (
-              <div
-                key={nameIndex}
-                className="flex flex-col items-center gap-2 rounded-md border border-slate-200 p-2"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={template.thumbnailPath}
-                  alt={template.code}
-                  className="h-14 w-14 object-contain"
-                />
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(event) => onNamesGridChange(nameIndex, event.target.value)}
-                  placeholder={`Nama #${nameIndex + 1}`}
-                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-center text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                />
-              </div>
-            ))}
-          </div>
         ) : (
           <div className="flex flex-col gap-1">
             <textarea
               value={item.namesText}
               onChange={(event) => onNamesTextChange(event.target.value)}
-              rows={3}
-              placeholder="Ali, Budi, Caca"
+              rows={4}
+              placeholder={"Rofiq, Faza, Nailil\natau satu nama per baris"}
               className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
             />
             <span className="text-xs text-slate-400">
-              Pisah nama dengan koma (contoh: Ali, Budi, Caca)
+              Pisah nama dengan koma atau baris baru — jumlah pesanan otomatis mengikuti jumlah nama.
             </span>
           </div>
         )}

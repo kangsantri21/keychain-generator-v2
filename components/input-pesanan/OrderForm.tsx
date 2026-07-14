@@ -7,25 +7,7 @@ import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import { toOrderQueueEntry } from "@/lib/normalize-order";
 import type { Template } from "@/lib/db/schema";
 import { TemplatePickerModal } from "./TemplatePickerModal";
-import { OrderItemBlock, createEmptyItemBlock, type ItemBlockState } from "./OrderItemBlock";
-
-function resizeNamesGrid(current: string[], nextQuantity: number): string[] {
-  if (current.length === nextQuantity) return current;
-  if (current.length < nextQuantity) {
-    return [...current, ...Array(nextQuantity - current.length).fill("")];
-  }
-  return current.slice(0, nextQuantity);
-}
-
-function getItemCustomerNames(item: ItemBlockState): string[] {
-  if (item.template?.isCharacter) {
-    return item.namesGrid.map((name) => name.trim()).filter((name) => name.length > 0);
-  }
-  return item.namesText
-    .split(",")
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0);
-}
+import { OrderItemBlock, createEmptyItemBlock, parseNamesInput, type ItemBlockState } from "./OrderItemBlock";
 
 export function OrderForm() {
   const templates = useTemplateStore((state) => state.templates);
@@ -49,31 +31,11 @@ export function OrderForm() {
     setItems((current) => current.filter((item) => item.key !== key));
   }
 
-  function handleQuantityChange(key: string, nextQuantity: number) {
-    setItems((current) =>
-      current.map((item) => {
-        if (item.key !== key) return item;
-        const namesGrid = item.template?.isCharacter
-          ? resizeNamesGrid(item.namesGrid, nextQuantity)
-          : item.namesGrid;
-        return { ...item, quantity: nextQuantity, namesGrid };
-      })
-    );
-  }
-
   function handleSelectTemplate(template: Template) {
     if (!activePickerKey) return;
     const key = activePickerKey;
     setItems((current) =>
-      current.map((item) => {
-        if (item.key !== key) return item;
-        return {
-          ...item,
-          template,
-          namesGrid: template.isCharacter ? Array(item.quantity).fill("") : [""],
-          namesText: "",
-        };
-      })
+      current.map((item) => (item.key === key ? { ...item, template, namesText: "" } : item))
     );
     setActivePickerKey(null);
   }
@@ -103,16 +65,16 @@ export function OrderForm() {
         toast.error(`Item #${i + 1}: pilih template terlebih dahulu`);
         return;
       }
-      if (!Number.isInteger(item.quantity) || item.quantity < 1) {
-        toast.error(`Item #${i + 1}: jumlah pesanan minimal 1`);
-        return;
-      }
-      const customerNames = getItemCustomerNames(item);
+      const customerNames = parseNamesInput(item.namesText);
       if (customerNames.length === 0) {
         toast.error(`Item #${i + 1}: daftar nama tidak boleh kosong`);
         return;
       }
-      payloadItems.push({ templateId: item.template.id, quantity: item.quantity, customerNames });
+      payloadItems.push({
+        templateId: item.template.id,
+        quantity: customerNames.length,
+        customerNames,
+      });
     }
 
     setIsSubmitting(true);
@@ -176,13 +138,7 @@ export function OrderForm() {
               index={index}
               canRemove={items.length > 1}
               onOpenPicker={() => setActivePickerKey(item.key)}
-              onQuantityChange={(quantity) => handleQuantityChange(item.key, quantity)}
               onNamesTextChange={(text) => updateItem(item.key, { namesText: text })}
-              onNamesGridChange={(nameIndex, value) => {
-                const nextGrid = [...item.namesGrid];
-                nextGrid[nameIndex] = value;
-                updateItem(item.key, { namesGrid: nextGrid });
-              }}
               onRemove={() => removeItem(item.key)}
             />
           ))}
