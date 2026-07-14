@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import * as opentype from "opentype.js";
-import { renderColoredGlyphs, type GlyphSegment } from "@/lib/font-preview";
+import { renderColoredGlyphs, renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
 import {
   translatePathData,
   scaleAndTranslatePathData,
@@ -16,13 +16,13 @@ import {
   CHAR_BOX_MM,
   TEXT_GAP_MM,
   MARGIN_MM,
-  FONT_SIZE_CHAR_MM,
   FONT_SIZE_STANDARD_MM,
   RING_HOLE_OFFSET_MM,
   RING_HOLE_DIAMETER_MM,
   DILATE_MM,
   ERODE_MM,
   WELD_CLEARANCE_MM,
+  TEXT_RAW_HEIGHT_MM,
 } from "@/lib/keychain-geometry";
 
 export interface TemplateAssets {
@@ -132,8 +132,13 @@ export function renderKeychainText(
 ): KeychainRender {
   const sampleText = text.trim() || template.defaultText || "Nama";
 
-  const fontSize = template.isCharacter ? FONT_SIZE_CHAR_MM : FONT_SIZE_STANDARD_MM;
-  const { segments, bbox } = renderColoredGlyphs(assets.font, sampleText, fontSize, template.colors);
+  // A character template's name text is locked to a fixed *finished* cutting
+  // height (TEXT_CUT_HEIGHT_MM, via TEXT_RAW_HEIGHT_MM before the dilate
+  // pass) — a production spec, not a mere visual size — so it's rescaled per
+  // render rather than using one fixed fontSize regardless of font metrics.
+  const { segments, bbox } = template.isCharacter
+    ? renderColoredGlyphsAtHeight(assets.font, sampleText, TEXT_RAW_HEIGHT_MM, template.colors)
+    : renderColoredGlyphs(assets.font, sampleText, FONT_SIZE_STANDARD_MM, template.colors);
 
   const cutLines = template.isCharacter ? (assets.characterVector?.cutLinePaths ?? []) : [];
   const hasDesignerCutLine = cutLines.length > 0;

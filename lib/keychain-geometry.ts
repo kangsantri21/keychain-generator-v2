@@ -13,8 +13,6 @@ export const TEXT_GAP_MM = 5;
 /** Outer clearance kept around every item so the dilated outline never clips. */
 export const MARGIN_MM = 3;
 
-/** Cap-height-ish font size used when rendering a name next to a character box. */
-export const FONT_SIZE_CHAR_MM = 14;
 /** Cap-height-ish font size used when rendering a name for a standalone font template. */
 export const FONT_SIZE_STANDARD_MM = 18;
 
@@ -33,6 +31,21 @@ export const MAX_LAYOUT_OFFSET_MM = 15;
  */
 export const DILATE_MM = 4.0;
 export const ERODE_MM = 1.5;
+
+/**
+ * Production spec for a character template's name text: the *final* cutting
+ * outline height (raw glyphs + the dilate/erode closing pass on both the top
+ * and bottom edges) must land in the 25-27mm range, target 26mm. Since the
+ * closing pass grows a locally-flat edge outward by (DILATE_MM - ERODE_MM)
+ * on each side, the raw glyphs must be rendered at that much less than the
+ * target so the *finished* cut line comes out at TEXT_CUT_HEIGHT_MM — not
+ * the glyphs themselves. Font size is then back-calculated per render (see
+ * `renderColoredGlyphsAtHeight` in lib/font-preview.ts) so this holds
+ * regardless of the uploaded font's own metrics or which characters (with or
+ * without descenders) appear in a given name.
+ */
+export const TEXT_CUT_HEIGHT_MM = 26;
+export const TEXT_RAW_HEIGHT_MM = TEXT_CUT_HEIGHT_MM - 2 * (DILATE_MM - ERODE_MM);
 
 /**
  * Visual gap (mm) kept between a character's *actual* cut-line silhouette and

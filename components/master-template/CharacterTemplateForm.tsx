@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import * as opentype from "opentype.js";
-import { renderColoredGlyphs, type ColoredTextRender } from "@/lib/font-preview";
+import { renderColoredGlyphsAtHeight, type ColoredTextRender } from "@/lib/font-preview";
 import {
   DILATE_PX,
   ERODE_PX,
@@ -17,10 +17,8 @@ import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template } from "@/lib/db/schema";
-import { CHAR_BOX_MM, MAX_LAYOUT_OFFSET_MM, WELD_CLEARANCE_MM } from "@/lib/keychain-geometry";
+import { CHAR_BOX_MM, MAX_LAYOUT_OFFSET_MM, WELD_CLEARANCE_MM, TEXT_RAW_HEIGHT_MM } from "@/lib/keychain-geometry";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
-
-const PREVIEW_FONT_SIZE = 56;
 
 // Live-preview canvas geometry (px), approximating the laser-cut scale.
 const CHAR_BOX_SIZE = 96;
@@ -32,6 +30,10 @@ const OUTLINE_DEBOUNCE_MS = 300;
 // Manual layout offsets are stored/submitted in real-world mm (matching the
 // production renderer); this converts them to the preview's px scale.
 const PX_PER_MM = CHAR_BOX_SIZE / CHAR_BOX_MM;
+// Raw (pre-dilation) glyph height target in px, mirroring the production
+// spec (TEXT_RAW_HEIGHT_MM) so the preview's finished cut line matches the
+// real 25-27mm production height exactly, regardless of the uploaded font.
+const TEXT_RAW_HEIGHT_PX = TEXT_RAW_HEIGHT_MM * PX_PER_MM;
 
 function isSvgFile(file: File): boolean {
   return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
@@ -247,7 +249,7 @@ export function CharacterTemplateForm({
   const textPreview: ColoredTextRender | null = useMemo(() => {
     if (!parsedFont || !defaultText.trim()) return null;
     try {
-      return renderColoredGlyphs(parsedFont, defaultText.trim(), PREVIEW_FONT_SIZE, colors);
+      return renderColoredGlyphsAtHeight(parsedFont, defaultText.trim(), TEXT_RAW_HEIGHT_PX, colors);
     } catch {
       return null;
     }

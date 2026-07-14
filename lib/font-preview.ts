@@ -63,6 +63,29 @@ export function renderColoredGlyphs(
 }
 
 /**
+ * Renders `text` scaled so its own raw glyph bounding-box height matches
+ * `targetHeight` exactly (same unit as the caller — mm for production, px
+ * for a preview canvas), regardless of the font's internal metrics or which
+ * characters (with/without descenders) happen to be in this particular
+ * name. Fixed-fontSize rendering can't guarantee a physical size spec across
+ * arbitrary uploaded fonts; this measures the actual text once at a
+ * calibration size, then rescales proportionally to hit the target exactly.
+ */
+export function renderColoredGlyphsAtHeight(
+  font: opentype.Font,
+  text: string,
+  targetHeight: number,
+  colors: string[]
+): ColoredTextRender {
+  const CALIBRATION_SIZE = 100;
+  const calibration = renderColoredGlyphs(font, text, CALIBRATION_SIZE, colors);
+  const rawHeight = calibration.bbox.y2 - calibration.bbox.y1;
+  if (!(rawHeight > 0)) return calibration; // degenerate text (e.g. blank) — nothing to scale
+  const fontSize = CALIBRATION_SIZE * (targetHeight / rawHeight);
+  return renderColoredGlyphs(font, text, fontSize, colors);
+}
+
+/**
  * "Template Karakter" thumbnail: character image on the left, colored text
  * rendered from the uploaded font on the right, wrapped in a joint pill
  * outline (a sneak peek of the Modul C keychain shape).
