@@ -16,6 +16,7 @@ import {
   isUniqueConstraintError,
   parseColors,
   isValidColorPalette,
+  parseOffset,
   saveUploadedFile,
   readPublicFile,
   removePublicFile,
@@ -77,6 +78,13 @@ export async function PUT(
   const thumbnailImageFile = formData.get("thumbnailImage") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
+  const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, existing.holeOffsetX);
+  const holeOffsetY = parseOffset(formData.get("holeOffsetY") as string | null, existing.holeOffsetY);
+  // Manual text offsets were retired (they let letters overlap character
+  // artwork) — layout is auto-computed again, so these always save as 0
+  // regardless of what an older row (or stray request) might carry.
+  const textOffsetX = 0;
+  const textOffsetY = 0;
 
   if (!code) {
     return badRequest("Kode template harus diisi");
@@ -179,7 +187,19 @@ export async function PUT(
 
     const [updated] = await db
       .update(templates)
-      .set({ code, type, filePath, characterImagePath, thumbnailPath, colors, defaultText })
+      .set({
+        code,
+        type,
+        filePath,
+        characterImagePath,
+        thumbnailPath,
+        colors,
+        defaultText,
+        holeOffsetX,
+        holeOffsetY,
+        textOffsetX,
+        textOffsetY,
+      })
       .where(eq(templates.id, templateId))
       .returning();
 

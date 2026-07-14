@@ -17,6 +17,7 @@ import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template } from "@/lib/db/schema";
+import { CHAR_BOX_MM, MAX_LAYOUT_OFFSET_MM, WELD_CLEARANCE_MM } from "@/lib/keychain-geometry";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
 
 const PREVIEW_FONT_SIZE = 56;
@@ -28,9 +29,45 @@ const CANVAS_MARGIN = 24;
 const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
 const RING_HOLE_DIAMETER = 7; // ~0.19mm spec, scaled up for preview visibility
 const OUTLINE_DEBOUNCE_MS = 300;
+// Manual layout offsets are stored/submitted in real-world mm (matching the
+// production renderer); this converts them to the preview's px scale.
+const PX_PER_MM = CHAR_BOX_SIZE / CHAR_BOX_MM;
 
 function isSvgFile(file: File): boolean {
   return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+}
+
+const OFFSET_SLIDER_STEP = 0.5;
+
+function OffsetSlider({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  hint: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+      <div className="flex items-center justify-between">
+        <span>{label}</span>
+        <span className="font-mono text-slate-500">{value.toFixed(1)} mm</span>
+      </div>
+      <input
+        type="range"
+        min={-MAX_LAYOUT_OFFSET_MM}
+        max={MAX_LAYOUT_OFFSET_MM}
+        step={OFFSET_SLIDER_STEP}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="accent-blue-600"
+      />
+      <span className="text-[11px] font-normal text-slate-400">{hint}</span>
+    </label>
+  );
 }
 
 function unionBounds(a: PathBounds, b: PathBounds): PathBounds {
@@ -96,9 +133,15 @@ export function CharacterTemplateForm({
   const [characterVector, setCharacterVector] = useState<CharacterVector | null>(null);
   const [parsedFont, setParsedFont] = useState<opentype.Font | null>(null);
   const [outlinePath, setOutlinePath] = useState<string | null>(null);
+  // Manual layout tweak (mm), persisted on the template so production
+  // rendering matches whatever the user dialed in here. Text position is
+  // always auto-computed (see textOriginX/textTranslateY below) — letting
+  // it be manually offset let letters overlap the character artwork.
+  const [holeOffsetX, setHoleOffsetX] = useState(editingTemplate?.holeOffsetX ?? 0);
+  const [holeOffsetY, setHoleOffsetY] = useState(editingTemplate?.holeOffsetY ?? 0);
   const [holeCenter, setHoleCenter] = useState({
-    x: CANVAS_MARGIN + RING_HOLE_OFFSET,
-    y: CANVAS_MARGIN + RING_HOLE_OFFSET,
+    x: CANVAS_MARGIN + RING_HOLE_OFFSET + (editingTemplate?.holeOffsetX ?? 0) * PX_PER_MM,
+    y: CANVAS_MARGIN + RING_HOLE_OFFSET + (editingTemplate?.holeOffsetY ?? 0) * PX_PER_MM,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
@@ -231,24 +274,28 @@ export function CharacterTemplateForm({
     return bounds ? { positionedCutLines, bounds } : null;
   }, [characterVector]);
 
-  // Text starts right after the character box, leaving only a small (~5mm) gap.
-  // When a designer cut-line is present it's used as-is (not dilated), so only
-  // the text side grows outward during outline closing. Positioning by a
-  // fixed nominal gap would measure against the nominal CHAR_BOX_SIZE edge,
-  // which real artwork rarely reaches — instead push the text's raw
-  // (pre-dilation) box to already overlap the character's *actual* right
-  // edge by a small safety margin, so dilation is guaranteed to weld them.
-  const OVERLAP_BUFFER_PX = 6; // ~1.5mm at this preview's px-per-mm scale
+  // Position the text just clear of the character's *actual* cut-line
+  // silhouette (not the nominal CHAR_BOX_SIZE square, which real artwork
+  // rarely fills) — a small positive clearance gap keeps the raw glyphs from
+  // ever visually overlapping the character artwork, while staying under
+  // the text's net dilation growth so the *dilated* cutting outline still
+  // reaches the character and Clipper welds them into one contour.
+  const WELD_CLEARANCE_PX = WELD_CLEARANCE_MM * PX_PER_MM;
   const nominalTextOriginX = CANVAS_MARGIN + CHAR_BOX_SIZE + TEXT_GAP;
   const textOriginX = characterFit
-    ? Math.min(nominalTextOriginX, characterFit.bounds.x + characterFit.bounds.width - OVERLAP_BUFFER_PX)
+    ? characterFit.bounds.x + characterFit.bounds.width + WELD_CLEARANCE_PX
     : nominalTextOriginX;
   const textOriginY = CANVAS_MARGIN;
 
+  // Center vertically against the character's *actual* silhouette height
+  // when one is known, not the nominal box — an off-center cut-line would
+  // otherwise leave the text looking misaligned next to the artwork.
+  const charCenterY = characterFit
+    ? characterFit.bounds.y + characterFit.bounds.height / 2
+    : CANVAS_MARGIN + CHAR_BOX_SIZE / 2;
+
   const textTranslateX = textPreview ? textOriginX - textPreview.bbox.x1 : textOriginX;
-  const textTranslateY = textPreview
-    ? textOriginY + CHAR_BOX_SIZE / 2 - (textPreview.bbox.y1 + textPreview.bbox.y2) / 2
-    : textOriginY;
+  const textTranslateY = textPreview ? charCenterY - (textPreview.bbox.y1 + textPreview.bbox.y2) / 2 : textOriginY;
   const textWidth = textPreview ? Math.max(textPreview.bbox.x2 - textPreview.bbox.x1, 1) : 80;
 
   const canvasWidth = textOriginX + textWidth + CANVAS_MARGIN;
@@ -256,17 +303,20 @@ export function CharacterTemplateForm({
 
   useEffect(() => {
     const timeout = setTimeout(() => {
+      const nominalHoleCenter = {
+        x: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetX * PX_PER_MM,
+        y: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetY * PX_PER_MM,
+      };
+
       if (!characterPreviewUrl || !textPreview || textPreview.segments.length === 0) {
         setOutlinePath(null);
-        setHoleCenter({ x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET });
+        setHoleCenter(nominalHoleCenter);
         return;
       }
 
       const glyphShapes = textPreview.segments.map((segment) =>
         translatePathData(segment.d, textTranslateX, textTranslateY)
       );
-
-      const nominalHoleCenter = { x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET };
 
       if (characterFit) {
         // Union the designer's cut-line with the text outline as-is — no
@@ -277,9 +327,11 @@ export function CharacterTemplateForm({
         );
         setOutlinePath(combined);
 
-        // The ring hole's fixed corner offset is safe for a plain square box
-        // but can miss a non-square/non-convex character silhouette — find
-        // the nearest spot that's actually inside the welded outline.
+        // The ring hole's offset (nominal + manual nudge) is safe for a plain
+        // square box but can miss a non-square/non-convex character
+        // silhouette — find the nearest spot that's actually inside the
+        // welded outline, preferring the position closest to what the user
+        // dialed in.
         let nextHoleCenter = nominalHoleCenter;
         if (combined) {
           const searchBounds = unionBounds(characterFit.bounds, {
@@ -306,7 +358,7 @@ export function CharacterTemplateForm({
     }, OUTLINE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
-  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY, characterFit]);
+  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY, characterFit, holeOffsetX, holeOffsetY]);
 
   function resetForm() {
     setCode("");
@@ -317,6 +369,8 @@ export function CharacterTemplateForm({
     setFontFile(null);
     setParsedFont(null);
     setOutlinePath(null);
+    setHoleOffsetX(0);
+    setHoleOffsetY(0);
     setHoleCenter({ x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET });
     setColors([DEFAULT_COLOR]);
     if (characterInputRef.current) characterInputRef.current.value = "";
@@ -350,6 +404,8 @@ export function CharacterTemplateForm({
     if (characterFile) formData.set("characterImage", characterFile);
     formData.set("colors", JSON.stringify(colors));
     formData.set("defaultText", defaultText.trim() || "Nama");
+    formData.set("holeOffsetX", String(holeOffsetX));
+    formData.set("holeOffsetY", String(holeOffsetY));
 
     setIsSubmitting(true);
     try {
@@ -438,6 +494,26 @@ export function CharacterTemplateForm({
 
         <div className="sm:col-span-2">
           <ColorPaletteEditor colors={colors} onChange={setColors} />
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+          <span className="text-sm font-medium text-slate-700">
+            Penyesuaian Lubang Ganci <span className="font-normal text-slate-400">(opsional, mm)</span>
+          </span>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <OffsetSlider
+              label="Lubang Ganci — Geser X"
+              value={holeOffsetX}
+              onChange={setHoleOffsetX}
+              hint="Kiri / kanan"
+            />
+            <OffsetSlider
+              label="Lubang Ganci — Geser Y"
+              value={holeOffsetY}
+              onChange={setHoleOffsetY}
+              hint="Atas / bawah"
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-3 sm:col-span-2">

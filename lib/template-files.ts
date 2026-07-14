@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
+import { MAX_LAYOUT_OFFSET_MM } from "@/lib/keychain-geometry";
 
 export const CHARACTER_EXTENSIONS = [".svg", ".png"];
 export const FONT_EXTENSIONS = [".ttf", ".otf"];
@@ -34,6 +35,14 @@ export function isValidColorPalette(colors: unknown): colors is string[] {
     colors.length <= MAX_COLORS &&
     colors.every((c) => typeof c === "string" && HEX_COLOR_PATTERN.test(c))
   );
+}
+
+/** Parses a manual layout offset field from form data; falls back on missing/invalid input. */
+export function parseOffset(raw: string | null, fallback: number): number {
+  if (raw === null) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(-MAX_LAYOUT_OFFSET_MM, Math.min(MAX_LAYOUT_OFFSET_MM, n));
 }
 
 export interface SavedFile {

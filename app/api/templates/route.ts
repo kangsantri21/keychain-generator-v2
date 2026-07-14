@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { templates } from "@/lib/db/schema";
 import { slugify } from "@/lib/utils";
 import { generateCharacterPreviewSvg } from "@/lib/font-preview";
+import { parseOffset } from "@/lib/template-files";
 
 const CHARACTER_EXTENSIONS = [".svg", ".png"];
 const FONT_EXTENSIONS = [".ttf", ".otf"];
@@ -41,6 +42,12 @@ export async function POST(request: NextRequest) {
   const thumbnailImageFile = formData.get("thumbnailImage") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
+  const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, 0);
+  const holeOffsetY = parseOffset(formData.get("holeOffsetY") as string | null, 0);
+  // Manual text offsets were retired (they let letters overlap character
+  // artwork) — layout is auto-computed again, so this always saves as 0.
+  const textOffsetX = 0;
+  const textOffsetY = 0;
 
   if (!code) {
     return badRequest("Kode template harus diisi");
@@ -163,6 +170,10 @@ export async function POST(request: NextRequest) {
         colors,
         defaultText,
         isCharacter: category === "character",
+        holeOffsetX,
+        holeOffsetY,
+        textOffsetX,
+        textOffsetY,
       })
       .returning();
 

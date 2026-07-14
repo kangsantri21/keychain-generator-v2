@@ -22,6 +22,9 @@ export const FONT_SIZE_STANDARD_MM = 18;
 export const RING_HOLE_OFFSET_MM = 4;
 export const RING_HOLE_DIAMETER_MM = 3;
 
+/** Manual per-template hole offset nudge (Template.holeOffset* columns) is clamped to this range, in mm. */
+export const MAX_LAYOUT_OFFSET_MM = 15;
+
 /**
  * Laser-cutting clearance: dilate outward then erode back (a "closing" pass)
  * to merge nearby letters into one silhouette and round off concavities.
@@ -30,3 +33,14 @@ export const RING_HOLE_DIAMETER_MM = 3;
  */
 export const DILATE_MM = 4.0;
 export const ERODE_MM = 1.5;
+
+/**
+ * Visual gap (mm) kept between a character's *actual* cut-line silhouette and
+ * the raw (pre-dilation) text glyphs next to it — guarantees the letters
+ * never visually overlap the character artwork. Must stay comfortably below
+ * the text's net dilation growth (DILATE_MM - ERODE_MM ≈ 2.5mm) so the
+ * *dilated* text outline still reaches the character's cut-line and Clipper
+ * welds them into one contour; verified empirically against real CorelDraw
+ * artwork that a bare hair's-width beyond ~2.0-2.25mm stops welding.
+ */
+export const WELD_CLEARANCE_MM = 1.0;

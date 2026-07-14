@@ -22,6 +22,7 @@ import {
   RING_HOLE_DIAMETER_MM,
   DILATE_MM,
   ERODE_MM,
+  WELD_CLEARANCE_MM,
 } from "@/lib/keychain-geometry";
 
 export interface TemplateAssets {
@@ -166,25 +167,27 @@ export function renderKeychainText(
   let textTranslateY: number;
 
   if (template.isCharacter) {
-    // When the designer's own cut-line is used as-is (not re-dilated), only
-    // the text side gets pushed outward during the outline closing pass. If
-    // positioned by a fixed nominal gap, the character's real silhouette
-    // (which rarely reaches the full CHAR_BOX_MM edge) leaves a gap too wide
-    // for dilation to close, splitting the laser cut into two disconnected
-    // islands. Instead, measure the character cut-line's *actual* right
-    // edge and push the text's raw (pre-dilation) bounding box to already
-    // overlap it by a small safety margin — dilation only grows the text
-    // shape further, so genuine overlap here guarantees Clipper's union
-    // welds the two into one contour regardless of the character's shape.
-    const OVERLAP_BUFFER_MM = 1.5;
+    // Position the text just clear of the character's *actual* cut-line
+    // silhouette (not the nominal CHAR_BOX_MM square, which real artwork
+    // rarely fills) — a small positive WELD_CLEARANCE_MM gap keeps the raw
+    // glyphs from ever visually overlapping the character artwork, while
+    // staying under the text's net dilation growth (DILATE_MM - ERODE_MM)
+    // so the *dilated* cutting outline still reaches the character and
+    // Clipper welds the two into one contour.
     const nominalTextOriginX = MARGIN_MM + CHAR_BOX_MM + TEXT_GAP_MM;
     const textOriginX =
       hasDesignerCutLine && characterBounds
-        ? Math.min(nominalTextOriginX, characterBounds.x + characterBounds.width - OVERLAP_BUFFER_MM)
+        ? characterBounds.x + characterBounds.width + WELD_CLEARANCE_MM
         : nominalTextOriginX;
-    const textOriginY = MARGIN_MM;
     textTranslateX = textOriginX - bbox.x1;
-    textTranslateY = textOriginY + CHAR_BOX_MM / 2 - (bbox.y1 + bbox.y2) / 2;
+    // Center vertically against the character's *actual* silhouette height
+    // when one is known, not the nominal box — an off-center cut-line would
+    // otherwise leave the text looking misaligned next to the artwork.
+    const charCenterY =
+      hasDesignerCutLine && characterBounds
+        ? characterBounds.y + characterBounds.height / 2
+        : MARGIN_MM + CHAR_BOX_MM / 2;
+    textTranslateY = charCenterY - (bbox.y1 + bbox.y2) / 2;
   } else {
     textTranslateX = MARGIN_MM - bbox.x1;
     textTranslateY = MARGIN_MM - bbox.y1;
@@ -215,13 +218,18 @@ export function renderKeychainText(
   // corner, which is safe for the plain-square character box but can miss a
   // designer's non-square/non-convex silhouette entirely (a fixed corner
   // point may fall in a concavity — an armpit, a gap between limbs — that
-  // isn't actually part of the cut shape). When a real cut-line is in play,
-  // search nearby candidates for one that's genuinely inside the welded
-  // outline, preferring the position closest to the nominal corner spot.
-  const nominalHoleCenter = { x: MARGIN_MM + RING_HOLE_OFFSET_MM, y: MARGIN_MM + RING_HOLE_OFFSET_MM };
+  // isn't actually part of the cut shape). A manual per-template nudge (mm)
+  // shifts the preferred spot first — e.g. pulling it inward from an edge
+  // that's prone to snapping off — then the search below still guarantees
+  // whatever we land on is genuinely inside the welded outline.
+  const nominalHoleCenter = {
+    x: MARGIN_MM + RING_HOLE_OFFSET_MM + template.holeOffsetX,
+    y: MARGIN_MM + RING_HOLE_OFFSET_MM + template.holeOffsetY,
+  };
   let holeCenter = nominalHoleCenter;
-  if (hasDesignerCutLine && outlinePath && characterBounds) {
-    const searchBounds = unionBounds(characterBounds, {
+  if (template.isCharacter && outlinePath) {
+    const baseBounds = characterBounds ?? { x: MARGIN_MM, y: MARGIN_MM, width: CHAR_BOX_MM, height: CHAR_BOX_MM };
+    const searchBounds = unionBounds(baseBounds, {
       x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
       y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
       width: RING_HOLE_DIAMETER_MM * 2,

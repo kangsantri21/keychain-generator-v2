@@ -11,6 +11,14 @@ export const templates = sqliteTable("templates", {
   colors: text("colors", { mode: "json" }).$type<string[]>().notNull(),
   defaultText: text("default_text").notNull().default("Nama"),
   isCharacter: integer("is_character", { mode: "boolean" }).notNull().default(false),
+  // Manual layout tweaks (mm, real-world scale) for character templates whose
+  // irregular silhouette makes the static auto-layout imperfect — nudges the
+  // ring hole and name text away from the auto-computed position. Zero means
+  // "use the auto layout as-is".
+  holeOffsetX: real("hole_offset_x").notNull().default(0),
+  holeOffsetY: real("hole_offset_y").notNull().default(0),
+  textOffsetX: real("text_offset_x").notNull().default(0),
+  textOffsetY: real("text_offset_y").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
 });
 
