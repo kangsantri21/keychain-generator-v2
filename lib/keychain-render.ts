@@ -2,7 +2,8 @@ import { promises as fs } from "fs";
 import path from "path";
 import * as opentype from "opentype.js";
 import { renderColoredGlyphs, type GlyphSegment } from "@/lib/font-preview";
-import { computeLaserOutline, translatePathData, getPathBounds, type PathBounds } from "@/lib/laser-outline";
+import { translatePathData, getPathBounds, type PathBounds } from "@/lib/laser-outline";
+import { computeLaserOutlineClipper } from "@/lib/clipper-outline";
 import type { Template } from "@/lib/db/schema";
 import {
   CHAR_BOX_MM,
@@ -12,6 +13,8 @@ import {
   FONT_SIZE_STANDARD_MM,
   RING_HOLE_OFFSET_MM,
   RING_HOLE_DIAMETER_MM,
+  DILATE_MM,
+  ERODE_MM,
 } from "@/lib/keychain-geometry";
 
 export interface TemplateAssets {
@@ -100,7 +103,7 @@ export function renderKeychainText(
   shapesForOutline.push(...textSegments.map((s) => s.d));
 
   const holePath = circlePathData(MARGIN_MM + RING_HOLE_OFFSET_MM, MARGIN_MM + RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM / 2);
-  const outlinePath = computeLaserOutline(shapesForOutline);
+  const outlinePath = computeLaserOutlineClipper(shapesForOutline, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
 
   const fallbackWidth = template.isCharacter
     ? MARGIN_MM + CHAR_BOX_MM + TEXT_GAP_MM + Math.max(bbox.x2 - bbox.x1, 1) + MARGIN_MM

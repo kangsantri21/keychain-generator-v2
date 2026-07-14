@@ -44,6 +44,7 @@ export interface StagingItemPayload {
   posY: number;
   width: number;
   height: number;
+  rotated: boolean;
   status: string;
   order: StagingOrderPayload | null;
   template: StagingTemplatePayload | null;

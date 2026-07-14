@@ -12,8 +12,10 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@types/clipper-lib": "^6.4.0",
     "better-auth": "^1.6.23",
     "better-sqlite3": "^12.11.1",
+    "clipper-lib": "^6.4.2",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.23.0",
     "maxrects-packer": "^2.7.3",

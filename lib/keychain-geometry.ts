@@ -4,7 +4,7 @@ export const SHEET_WIDTH_MM = 310;
 export const SHEET_HEIGHT_MM = 470;
 
 /** Gap the packer keeps between neighboring items, for safe laser cutting. */
-export const ITEM_PADDING_MM = 3;
+export const ITEM_PADDING_MM = 2;
 
 /** Character image footprint (square) for Template Karakter items. */
 export const CHAR_BOX_MM = 25;
@@ -21,3 +21,12 @@ export const FONT_SIZE_STANDARD_MM = 18;
 /** Ring/keychain hole, offset from the item's top-left corner. */
 export const RING_HOLE_OFFSET_MM = 4;
 export const RING_HOLE_DIAMETER_MM = 3;
+
+/**
+ * Laser-cutting clearance: dilate outward then erode back (a "closing" pass)
+ * to merge nearby letters into one silhouette and round off concavities.
+ * Net growth is DILATE_MM - ERODE_MM. These are real mm values for the
+ * clipper-lib-based outline engine (lib/clipper-outline.ts).
+ */
+export const DILATE_MM = 4.0;
+export const ERODE_MM = 1.5;

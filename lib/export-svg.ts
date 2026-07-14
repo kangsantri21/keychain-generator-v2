@@ -1,10 +1,16 @@
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/keychain-geometry";
+import { getItemTransform, getContentSize } from "@/lib/staging-transform";
 import type { StagingSheet } from "@/lib/staging-types";
+
+function escapeXml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 /**
  * Builds a standalone, print-ready SVG document for one nested sheet: a
- * "print" layer (character images + colored name text) and a "cutting"
- * layer (red laser lines for the outer outline and the ring hole).
+ * "print" layer (character images + colored name text + a small receipt-code
+ * label for sorting after cutting) and a "cutting" layer (red laser lines
+ * for the outer outline and the ring hole).
  */
 export function buildSheetSvgDocument(sheet: StagingSheet): string {
   const printLayer = sheet.items
@@ -16,7 +22,10 @@ export function buildSheetSvgDocument(sheet: StagingSheet): string {
       const text = item.render.textSegments
         .map((segment) => `<path d="${segment.d}" fill="${segment.color}" />`)
         .join("");
-      return `  <g transform="translate(${item.posX}, ${item.posY})">${image}${text}</g>`;
+      const label = item.order
+        ? `<text x="0.5" y="${getContentSize(item).height - 0.5}" font-size="2.5" fill="#334155">${escapeXml(item.order.receiptCode)}</text>`
+        : "";
+      return `  <g transform="${getItemTransform(item)}">${image}${text}${label}</g>`;
     })
     .join("\n");
 
@@ -29,7 +38,7 @@ export function buildSheetSvgDocument(sheet: StagingSheet): string {
       const hole = item.render.holePath
         ? `<path d="${item.render.holePath}" fill="none" stroke="#ff0000" stroke-width="0.3" />`
         : "";
-      return `  <g transform="translate(${item.posX}, ${item.posY})">${outline}${hole}</g>`;
+      return `  <g transform="${getItemTransform(item)}">${outline}${hole}</g>`;
     })
     .join("\n");
 

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { eq, inArray, sql } from "drizzle-orm";
-import { MaxRectsPacker, type Rectangle } from "maxrects-packer";
+import { MaxRectsPacker, PACKING_LOGIC, type Rectangle } from "maxrects-packer";
 import { db } from "@/lib/db";
-import { orders, templates, stagingItems, type NewStagingItem } from "@/lib/db/schema";
+import { orders, orderItems, templates, stagingItems, type NewStagingItem } from "@/lib/db/schema";
 import { loadTemplateAssets, renderKeychainText, type TemplateAssets } from "@/lib/keychain-render";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM } from "@/lib/keychain-geometry";
 
@@ -19,7 +19,20 @@ export async function POST() {
     return NextResponse.json({ error: "Tidak ada pesanan pending untuk disusun" }, { status: 400 });
   }
 
-  const templateIds = [...new Set(pendingOrders.map((order) => order.templateId))];
+  const pendingOrderIds = pendingOrders.map((order) => order.id);
+  const pendingItems = await db
+    .select()
+    .from(orderItems)
+    .where(inArray(orderItems.orderId, pendingOrderIds));
+
+  if (pendingItems.length === 0) {
+    return NextResponse.json(
+      { error: "Pesanan pending tidak memiliki item untuk disusun" },
+      { status: 400 }
+    );
+  }
+
+  const templateIds = [...new Set(pendingItems.map((item) => item.templateId))];
   const templateRows = await db.select().from(templates).where(inArray(templates.id, templateIds));
   const templateMap = new Map(templateRows.map((template) => [template.id, template]));
 
@@ -28,17 +41,24 @@ export async function POST() {
     SHEET_WIDTH_MM,
     SHEET_HEIGHT_MM,
     ITEM_PADDING_MM,
-    { smart: false, pot: false, square: false, allowRotation: false, border: ITEM_PADDING_MM }
+    {
+      smart: false,
+      pot: false,
+      square: false,
+      allowRotation: true,
+      border: ITEM_PADDING_MM,
+      logic: PACKING_LOGIC.MAX_AREA,
+    }
   );
 
-  const skippedOrderIds = new Set<number>();
+  // An order flips to "processing" once at least one name from any of its
+  // items is successfully staged — mirrors the old per-order tolerance, now
+  // tracked positively since items (not orders) are the iteration unit.
+  const successfulOrderIds = new Set<number>();
 
-  for (const order of pendingOrders) {
-    const template = templateMap.get(order.templateId);
-    if (!template) {
-      skippedOrderIds.add(order.id);
-      continue;
-    }
+  for (const item of pendingItems) {
+    const template = templateMap.get(item.templateId);
+    if (!template) continue;
 
     let assets = assetsCache.get(template.id);
     if (!assets) {
@@ -46,30 +66,21 @@ export async function POST() {
         assets = await loadTemplateAssets(template);
         assetsCache.set(template.id, assets);
       } catch {
-        skippedOrderIds.add(order.id);
         continue;
       }
     }
 
-    let hasPackedName = false;
-    for (const name of order.customerNames) {
+    for (const name of item.customerNames) {
       try {
         const rendered = renderKeychainText(assets, template, name);
-        const data: PackData = { orderId: order.id, templateId: template.id, customerName: name };
+        const data: PackData = { orderId: item.orderId, templateId: template.id, customerName: name };
         packer.add(rendered.width, rendered.height, data);
-        hasPackedName = true;
+        successfulOrderIds.add(item.orderId);
       } catch {
-        // Skip a single unrenderable name (e.g. a glyph the font can't shape) without failing the whole order.
+        // Skip a single unrenderable name (e.g. a glyph the font can't shape) without failing the whole item.
       }
     }
-    if (!hasPackedName) {
-      skippedOrderIds.add(order.id);
-    }
   }
-
-  const processedOrderIds = pendingOrders
-    .map((order) => order.id)
-    .filter((id) => !skippedOrderIds.has(id));
 
   if (packer.bins.length === 0) {
     return NextResponse.json(
@@ -96,6 +107,7 @@ export async function POST() {
         posY: rect.y,
         width: rect.width,
         height: rect.height,
+        rotated: rect.rot,
         status: "staged",
       });
     });
@@ -103,6 +115,7 @@ export async function POST() {
 
   await db.insert(stagingItems).values(rows);
 
+  const processedOrderIds = [...successfulOrderIds];
   if (processedOrderIds.length > 0) {
     await db.update(orders).set({ status: "processing" }).where(inArray(orders.id, processedOrderIds));
   }

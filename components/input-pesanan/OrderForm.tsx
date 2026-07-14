@@ -2,9 +2,30 @@
 
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { useTemplateStore, type OrderQueueItem } from "@/lib/store/useTemplateStore";
+import { Plus } from "lucide-react";
+import { useTemplateStore } from "@/lib/store/useTemplateStore";
+import { toOrderQueueEntry } from "@/lib/normalize-order";
 import type { Template } from "@/lib/db/schema";
 import { TemplatePickerModal } from "./TemplatePickerModal";
+import { OrderItemBlock, createEmptyItemBlock, type ItemBlockState } from "./OrderItemBlock";
+
+function resizeNamesGrid(current: string[], nextQuantity: number): string[] {
+  if (current.length === nextQuantity) return current;
+  if (current.length < nextQuantity) {
+    return [...current, ...Array(nextQuantity - current.length).fill("")];
+  }
+  return current.slice(0, nextQuantity);
+}
+
+function getItemCustomerNames(item: ItemBlockState): string[] {
+  if (item.template?.isCharacter) {
+    return item.namesGrid.map((name) => name.trim()).filter((name) => name.length > 0);
+  }
+  return item.namesText
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+}
 
 export function OrderForm() {
   const templates = useTemplateStore((state) => state.templates);
@@ -12,56 +33,55 @@ export function OrderForm() {
 
   const [receiptCode, setReceiptCode] = useState("");
   const [manualCode, setManualCode] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const [namesText, setNamesText] = useState("");
-  const [namesGrid, setNamesGrid] = useState<string[]>([""]);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [items, setItems] = useState<ItemBlockState[]>(() => [createEmptyItemBlock()]);
+  const [activePickerKey, setActivePickerKey] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function resizeNamesGrid(current: string[], nextQuantity: number): string[] {
-    if (current.length === nextQuantity) return current;
-    if (current.length < nextQuantity) {
-      return [...current, ...Array(nextQuantity - current.length).fill("")];
-    }
-    return current.slice(0, nextQuantity);
+  function updateItem(key: string, patch: Partial<ItemBlockState>) {
+    setItems((current) => current.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   }
 
-  function handleQuantityChange(nextQuantity: number) {
-    setQuantity(nextQuantity);
-    if (selectedTemplate?.isCharacter) {
-      setNamesGrid((current) => resizeNamesGrid(current, nextQuantity));
-    }
+  function addItem() {
+    setItems((current) => [...current, createEmptyItemBlock()]);
+  }
+
+  function removeItem(key: string) {
+    setItems((current) => current.filter((item) => item.key !== key));
+  }
+
+  function handleQuantityChange(key: string, nextQuantity: number) {
+    setItems((current) =>
+      current.map((item) => {
+        if (item.key !== key) return item;
+        const namesGrid = item.template?.isCharacter
+          ? resizeNamesGrid(item.namesGrid, nextQuantity)
+          : item.namesGrid;
+        return { ...item, quantity: nextQuantity, namesGrid };
+      })
+    );
   }
 
   function handleSelectTemplate(template: Template) {
-    setSelectedTemplate(template);
-    setIsPickerOpen(false);
-    if (template.isCharacter) {
-      setNamesGrid(Array(quantity).fill(""));
-      setNamesText("");
-    } else {
-      setNamesGrid([""]);
-    }
+    if (!activePickerKey) return;
+    const key = activePickerKey;
+    setItems((current) =>
+      current.map((item) => {
+        if (item.key !== key) return item;
+        return {
+          ...item,
+          template,
+          namesGrid: template.isCharacter ? Array(item.quantity).fill("") : [""],
+          namesText: "",
+        };
+      })
+    );
+    setActivePickerKey(null);
   }
 
   function resetForm() {
     setReceiptCode("");
     setManualCode("");
-    setSelectedTemplate(null);
-    setQuantity(1);
-    setNamesText("");
-    setNamesGrid([""]);
-  }
-
-  function getCustomerNames(): string[] {
-    if (selectedTemplate?.isCharacter) {
-      return namesGrid.map((name) => name.trim()).filter((name) => name.length > 0);
-    }
-    return namesText
-      .split(",")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
+    setItems([createEmptyItemBlock()]);
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -71,23 +91,28 @@ export function OrderForm() {
       toast.error("Kode resi harus diisi");
       return;
     }
-    if (!manualCode.trim()) {
-      toast.error("Kode manual harus diisi");
-      return;
-    }
-    if (!selectedTemplate) {
-      toast.error("Pilih template terlebih dahulu");
-      return;
-    }
-    if (!Number.isInteger(quantity) || quantity < 1) {
-      toast.error("Jumlah pesanan minimal 1");
+    if (items.length === 0) {
+      toast.error("Tambahkan minimal satu template pesanan");
       return;
     }
 
-    const customerNames = getCustomerNames();
-    if (customerNames.length === 0) {
-      toast.error("Daftar nama tidak boleh kosong");
-      return;
+    const payloadItems: { templateId: number; quantity: number; customerNames: string[] }[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.template) {
+        toast.error(`Item #${i + 1}: pilih template terlebih dahulu`);
+        return;
+      }
+      if (!Number.isInteger(item.quantity) || item.quantity < 1) {
+        toast.error(`Item #${i + 1}: jumlah pesanan minimal 1`);
+        return;
+      }
+      const customerNames = getItemCustomerNames(item);
+      if (customerNames.length === 0) {
+        toast.error(`Item #${i + 1}: daftar nama tidak boleh kosong`);
+        return;
+      }
+      payloadItems.push({ templateId: item.template.id, quantity: item.quantity, customerNames });
     }
 
     setIsSubmitting(true);
@@ -98,14 +123,12 @@ export function OrderForm() {
         body: JSON.stringify({
           receiptCode: receiptCode.trim(),
           manualCode: manualCode.trim(),
-          templateId: selectedTemplate.id,
-          quantity,
-          customerNames,
+          items: payloadItems,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menyimpan pesanan");
-      addToQueue(data.order as OrderQueueItem);
+      addToQueue(toOrderQueueEntry(data.order));
       toast.success("Pesanan berhasil ditambahkan ke antrean");
       resetForm();
     } catch (error) {
@@ -145,99 +168,33 @@ export function OrderForm() {
           </label>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-slate-700">Pilih Template</span>
-          {selectedTemplate ? (
-            <div className="flex items-center gap-3 rounded-md border border-slate-300 p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={selectedTemplate.thumbnailPath}
-                alt={selectedTemplate.code}
-                className="h-12 w-12 rounded bg-slate-50 object-contain"
-              />
-              <div className="flex flex-1 flex-col">
-                <span className="text-sm font-semibold text-slate-800">
-                  {selectedTemplate.code}
-                </span>
-                <span className="text-xs text-slate-500">
-                  {selectedTemplate.isCharacter ? "Template Karakter" : "Font & Warna Standar"}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsPickerOpen(true)}
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
-              >
-                Ganti
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsPickerOpen(true)}
-              className="w-fit rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-            >
-              Pilih Template
-            </button>
-          )}
-        </div>
+        <div className="flex flex-col gap-3">
+          {items.map((item, index) => (
+            <OrderItemBlock
+              key={item.key}
+              item={item}
+              index={index}
+              canRemove={items.length > 1}
+              onOpenPicker={() => setActivePickerKey(item.key)}
+              onQuantityChange={(quantity) => handleQuantityChange(item.key, quantity)}
+              onNamesTextChange={(text) => updateItem(item.key, { namesText: text })}
+              onNamesGridChange={(nameIndex, value) => {
+                const nextGrid = [...item.namesGrid];
+                nextGrid[nameIndex] = value;
+                updateItem(item.key, { namesGrid: nextGrid });
+              }}
+              onRemove={() => removeItem(item.key)}
+            />
+          ))}
 
-        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 sm:max-w-[160px]">
-          Jumlah Pesanan
-          <input
-            type="number"
-            min={1}
-            value={quantity}
-            onChange={(event) => handleQuantityChange(Math.max(1, Number(event.target.value) || 1))}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          />
-        </label>
-
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium text-slate-700">Daftar Nama</span>
-          {!selectedTemplate ? (
-            <p className="text-sm text-slate-400">Pilih template terlebih dahulu.</p>
-          ) : selectedTemplate.isCharacter ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {namesGrid.map((name, index) => (
-                <div
-                  key={index}
-                  className="flex flex-col items-center gap-2 rounded-md border border-slate-200 p-2"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={selectedTemplate.thumbnailPath}
-                    alt={selectedTemplate.code}
-                    className="h-14 w-14 object-contain"
-                  />
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(event) => {
-                      const next = [...namesGrid];
-                      next[index] = event.target.value;
-                      setNamesGrid(next);
-                    }}
-                    placeholder={`Nama #${index + 1}`}
-                    className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-center text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1">
-              <textarea
-                value={namesText}
-                onChange={(event) => setNamesText(event.target.value)}
-                rows={4}
-                placeholder="Ali, Budi, Caca"
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
-              />
-              <span className="text-xs text-slate-400">
-                Pisah nama dengan koma (contoh: Ali, Budi, Caca)
-              </span>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={addItem}
+            className="flex w-fit items-center gap-2 rounded-md border border-dashed border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-blue-600 hover:text-blue-600"
+          >
+            <Plus size={16} />
+            Tambah Template
+          </button>
         </div>
 
         <button
@@ -245,14 +202,14 @@ export function OrderForm() {
           disabled={isSubmitting}
           className="mt-2 w-fit rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isSubmitting ? "Menyimpan..." : "Simpan Pesanan"}
+          {isSubmitting ? "Menyimpan..." : "Simpan Pesanan Resi Ini"}
         </button>
       </form>
 
       <TemplatePickerModal
         templates={templates}
-        isOpen={isPickerOpen}
-        onClose={() => setIsPickerOpen(false)}
+        isOpen={activePickerKey !== null}
+        onClose={() => setActivePickerKey(null)}
         onSelect={handleSelectTemplate}
       />
     </>

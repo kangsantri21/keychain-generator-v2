@@ -109,6 +109,41 @@ export function getPathBounds(d: string): PathBounds | null {
   }
 }
 
+export interface FlatPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Flattens SVG path data (including bezier curves, as in font glyph outlines)
+ * into one or more closed polygons — the point-array input a polygon-clipping
+ * library like clipper-lib needs, since it has no notion of curves.
+ */
+export function flattenPathToPolygons(d: string, tolerance = 0.05): FlatPoint[][] {
+  if (!ensureScope()) return [];
+
+  try {
+    const item = paper.PathItem.create(d);
+    if (!item) return [];
+
+    const flattened = item.clone({ insert: false });
+    flattened.flatten(tolerance);
+
+    const subPaths =
+      flattened instanceof paper.CompoundPath
+        ? (flattened.children as unknown as paper.Path[])
+        : [flattened as paper.Path];
+
+    return subPaths
+      .map((path) => path.segments.map((segment) => ({ x: segment.point.x, y: segment.point.y })))
+      .filter((points) => points.length >= 3);
+  } catch {
+    return [];
+  } finally {
+    paper.project?.activeLayer.removeChildren();
+  }
+}
+
 /**
  * Merges the given shapes (already positioned in one shared coordinate
  * space — e.g. the character bounding box plus each glyph outline) into a

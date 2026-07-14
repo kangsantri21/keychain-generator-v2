@@ -26,16 +26,24 @@ export const PAGE_ROUTES: Record<PageKey, string> = {
   "file-siap-cetak": "/file-siap-cetak",
 };
 
-export interface OrderQueueItem {
+/** One template+names line within a receipt (mirrors an order_items row). */
+export interface OrderQueueLineItem {
+  id: number;
+  templateId: number;
+  templateCode: string | null;
+  quantity: number;
+  names: string[];
+  thumbnailPath: string | null;
+}
+
+/** One receipt (order header) with its nested template line items. */
+export interface OrderQueueEntry {
   id: number;
   receiptCode: string;
-  manualCode: string;
-  templateId: number;
-  quantity: number;
-  customerNames: string[];
+  manualCode: string | null;
   status: OrderStatus;
   createdAt: string;
-  template: Template | null;
+  items: OrderQueueLineItem[];
 }
 
 interface TemplateStoreState {
@@ -48,11 +56,11 @@ interface TemplateStoreState {
   updateTemplate: (template: Template) => void;
   removeTemplate: (id: number) => void;
 
-  orderQueue: OrderQueueItem[];
+  orderQueue: OrderQueueEntry[];
   activeOrderId: number | null;
-  setOrderQueue: (orders: OrderQueueItem[]) => void;
-  addToQueue: (order: OrderQueueItem) => void;
-  updateQueueItem: (id: number, updates: Partial<OrderQueueItem>) => void;
+  setOrderQueue: (orders: OrderQueueEntry[]) => void;
+  addToQueue: (order: OrderQueueEntry) => void;
+  updateQueueItem: (id: number, updates: Partial<OrderQueueEntry>) => void;
   removeFromQueue: (id: number) => void;
   setActiveOrderId: (id: number | null) => void;
 }

@@ -14,6 +14,7 @@ interface StagingItemPayload {
   posY: number;
   width: number;
   height: number;
+  rotated: boolean;
   status: string;
   order: Order | null;
   template: Template | null;
@@ -32,6 +33,7 @@ export async function GET() {
       posY: stagingItems.posY,
       width: stagingItems.width,
       height: stagingItems.height,
+      rotated: stagingItems.rotated,
       status: stagingItems.status,
       order: orders,
       template: templates,

@@ -1,0 +1,1 @@
+ALTER TABLE `staging_items` ADD `rotated` integer DEFAULT false NOT NULL;

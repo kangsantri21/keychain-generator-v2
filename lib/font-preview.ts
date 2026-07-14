@@ -15,6 +15,25 @@ function escapeXml(value: string): string {
 }
 
 /**
+ * opentype.js's TrueType curve decoding can emit a numeric NaN for a
+ * control point on certain glyphs/fonts (an implied-on-curve-point edge
+ * case), which `toPathData()` then serializes as the literal text "NaN".
+ * SVG's error-recovery rule truncates parsing of the *entire rest* of the
+ * path at the first invalid token, so one bad control point can silently
+ * cut off the remainder of a letter. Repair by reusing the last valid
+ * coordinate — a tiny local artifact beats losing the rest of the glyph.
+ */
+function sanitizePathData(d: string): string {
+  if (!d.includes("NaN")) return d;
+  let lastValid = "0";
+  return d.replace(/-?\d+\.?\d*(?:[eE][+-]?\d+)?|NaN/g, (token) => {
+    if (token === "NaN") return lastValid;
+    lastValid = token;
+    return token;
+  });
+}
+
+/**
  * Renders each glyph of `text` as its own path, cycling through `colors`
  * per character. Pure opentype.js logic — safe to call from both the
  * server (thumbnail generation) and the browser (live preview).
@@ -32,7 +51,7 @@ export function renderColoredGlyphs(
   font.forEachGlyph(text, 0, 0, fontSize, undefined, (glyph, x, y, gFontSize) => {
     const d = glyph.getPath(x, y, gFontSize).toPathData(2);
     if (d) {
-      segments.push({ d, color: colors[colorIndex % colors.length] ?? "#1e293b" });
+      segments.push({ d: sanitizePathData(d), color: colors[colorIndex % colors.length] ?? "#1e293b" });
     }
     colorIndex += 1;
   });
