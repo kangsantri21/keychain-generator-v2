@@ -117,8 +117,10 @@ function isReddish(color: string): boolean {
  * - its own id, or an ancestor `<g>`'s id, matches `cut-line` (any of the
  *   usual spellings), OR
  * - its resolved (self-or-inherited) stroke color is reddish, OR
- * - its resolved stroke isn't `none` while its resolved fill is `none` —
- *   laser cut lines are drawn as bare outlines, unlike filled artwork.
+ * - its resolved fill is `none` — real CorelDraw exports often leave the
+ *   cut-line path completely unpainted (no stroke color set anywhere in
+ *   its ancestor chain either), relying on it being geometry-only, unlike
+ *   filled artwork which always carries a visible fill color.
  */
 function isCutLine(el: SvgNode): boolean {
   if (idMatchesSelfOrAncestor(el)) return true;
@@ -127,7 +129,7 @@ function isCutLine(el: SvgNode): boolean {
   const fill = resolveInherited(el, "fill", "black");
 
   if (stroke !== "none" && isReddish(stroke)) return true;
-  if (stroke !== "none" && fill === "none") return true;
+  if (fill === "none") return true;
 
   return false;
 }
