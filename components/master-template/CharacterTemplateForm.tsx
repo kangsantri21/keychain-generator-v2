@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import * as opentype from "opentype.js";
 import { renderColoredGlyphs, type ColoredTextRender } from "@/lib/font-preview";
-import { computeLaserOutline, translatePathData } from "@/lib/laser-outline";
+import { DILATE_PX, ERODE_PX, translatePathData, scaleAndTranslatePathData } from "@/lib/laser-outline";
+import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
+import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template } from "@/lib/db/schema";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
@@ -18,6 +20,10 @@ const CANVAS_MARGIN = 24;
 const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
 const RING_HOLE_DIAMETER = 7; // ~0.19mm spec, scaled up for preview visibility
 const OUTLINE_DEBOUNCE_MS = 300;
+
+function isSvgFile(file: File): boolean {
+  return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+}
 
 /**
  * The parent keys this component by `editingTemplate?.id ?? "create"`, so a
@@ -41,6 +47,9 @@ export function CharacterTemplateForm({
   const [characterPreviewUrl, setCharacterPreviewUrl] = useState<string | null>(
     editingTemplate?.characterImagePath ?? null
   );
+  // The designer's own cut-line + cleaned artwork, parsed from an SVG
+  // upload — null means "no cut-line found, fall back to the plain box".
+  const [characterVector, setCharacterVector] = useState<CharacterVector | null>(null);
   const [parsedFont, setParsedFont] = useState<opentype.Font | null>(null);
   const [outlinePath, setOutlinePath] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,7 +66,8 @@ export function CharacterTemplateForm({
     };
   }, [characterPreviewUrl]);
 
-  // Fetch the existing font once (for an accurate live preview) when opened in edit mode.
+  // Fetch the existing font (and, if it's an SVG, the character cut-line)
+  // once, for an accurate live preview when opened in edit mode.
   useEffect(() => {
     if (!editingTemplate) return;
     let cancelled = false;
@@ -72,18 +82,56 @@ export function CharacterTemplateForm({
       }
     })();
 
+    if (editingTemplate.characterImagePath?.toLowerCase().endsWith(".svg")) {
+      (async () => {
+        try {
+          const res = await fetch(editingTemplate.characterImagePath!);
+          const text = await res.text();
+          const vector = parseCharacterSvg(text);
+          if (!cancelled && vector) {
+            setCharacterVector(vector);
+            setCharacterPreviewUrl(vector.artworkDataUri);
+          }
+        } catch {
+          // Keep the raw image preview if parsing fails — not fatal.
+        }
+      })();
+    }
+
     return () => {
       cancelled = true;
     };
   }, [editingTemplate]);
 
-  function handleCharacterFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleCharacterFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const selected = event.target.files?.[0] ?? null;
-    setCharacterFile(selected);
-    if (selected) {
-      setCharacterPreviewUrl(URL.createObjectURL(selected));
-    } else {
+
+    if (selected && !isSvgFile(selected)) {
+      toast.error("Gagal: Mesin laser butuh garis vektor. File karakter WAJIB berformat .svg!");
+      event.target.value = "";
+      setCharacterFile(null);
+      setCharacterVector(null);
       setCharacterPreviewUrl(editingTemplate?.characterImagePath ?? null);
+      return;
+    }
+
+    setCharacterFile(selected);
+
+    if (!selected) {
+      setCharacterVector(null);
+      setCharacterPreviewUrl(editingTemplate?.characterImagePath ?? null);
+      return;
+    }
+
+    try {
+      const text = await selected.text();
+      const vector = parseCharacterSvg(text);
+      setCharacterVector(vector);
+      setCharacterPreviewUrl(vector ? vector.artworkDataUri : URL.createObjectURL(selected));
+    } catch {
+      toast.error("Gagal membaca kontur SVG, menampilkan gambar apa adanya");
+      setCharacterVector(null);
+      setCharacterPreviewUrl(URL.createObjectURL(selected));
     }
   }
 
@@ -134,21 +182,40 @@ export function CharacterTemplateForm({
         return;
       }
 
-      const charBoxD = `M ${CANVAS_MARGIN} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN + CHAR_BOX_SIZE} L ${CANVAS_MARGIN} ${CANVAS_MARGIN + CHAR_BOX_SIZE} Z`;
       const glyphShapes = textPreview.segments.map((segment) =>
         translatePathData(segment.d, textTranslateX, textTranslateY)
       );
-      setOutlinePath(computeLaserOutline([charBoxD, ...glyphShapes]));
+
+      if (characterVector && characterVector.cutLinePaths.length > 0) {
+        // Fit the designer's own cut-line into the character box the same
+        // way the production renderer does, then union it with the text
+        // outline as-is — no re-dilating a contour that's already final.
+        const { bounds } = characterVector;
+        const fitScale = Math.min(CHAR_BOX_SIZE / bounds.width, CHAR_BOX_SIZE / bounds.height);
+        const cutTx = CANVAS_MARGIN + (CHAR_BOX_SIZE - bounds.width * fitScale) / 2 - bounds.x * fitScale;
+        const cutTy = CANVAS_MARGIN + (CHAR_BOX_SIZE - bounds.height * fitScale) / 2 - bounds.y * fitScale;
+        const positionedCutLines = characterVector.cutLinePaths.map((d) =>
+          scaleAndTranslatePathData(d, fitScale, cutTx, cutTy)
+        );
+        const textOutline = computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
+        setOutlinePath(unionOutlines(textOutline ? [textOutline, ...positionedCutLines] : positionedCutLines));
+      } else {
+        const charBoxD = `M ${CANVAS_MARGIN} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN + CHAR_BOX_SIZE} L ${CANVAS_MARGIN} ${CANVAS_MARGIN + CHAR_BOX_SIZE} Z`;
+        setOutlinePath(
+          computeLaserOutlineClipper([charBoxD, ...glyphShapes], { dilateMm: DILATE_PX, erodeMm: ERODE_PX })
+        );
+      }
     }, OUTLINE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
-  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY]);
+  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY, characterVector]);
 
   function resetForm() {
     setCode("");
     setDefaultText("Nama");
     setCharacterFile(null);
     setCharacterPreviewUrl(null);
+    setCharacterVector(null);
     setFontFile(null);
     setParsedFont(null);
     setOutlinePath(null);
@@ -235,14 +302,18 @@ export function CharacterTemplateForm({
         </label>
 
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-          File Karakter (SVG/PNG)
+          File Karakter (SVG)
           <input
             ref={characterInputRef}
             type="file"
-            accept=".svg,.png,image/svg+xml,image/png"
+            accept=".svg, image/svg+xml"
             onChange={handleCharacterFileChange}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
           />
+          <span className="text-xs text-slate-400">
+            SVG dengan path <code>id=&quot;cut-line&quot;</code> atau <code>stroke=&quot;#FF0000&quot;</code>{" "}
+            akan dipakai sebagai kontur potong asli.
+          </span>
           {isEditing && (
             <span className="text-xs text-slate-400">
               (Biarkan kosong jika tidak ingin mengubah file)
@@ -297,7 +368,14 @@ export function CharacterTemplateForm({
       </form>
 
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-slate-700">Live Preview</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-slate-700">Live Preview</span>
+          {characterVector && characterVector.cutLinePaths.length > 0 && (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+              Kontur SVG terdeteksi
+            </span>
+          )}
+        </div>
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-2">
           <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="h-40 w-full max-w-full">
             {characterPreviewUrl ? (

@@ -2,8 +2,14 @@ import { promises as fs } from "fs";
 import path from "path";
 import * as opentype from "opentype.js";
 import { renderColoredGlyphs, type GlyphSegment } from "@/lib/font-preview";
-import { translatePathData, getPathBounds, type PathBounds } from "@/lib/laser-outline";
-import { computeLaserOutlineClipper } from "@/lib/clipper-outline";
+import {
+  translatePathData,
+  scaleAndTranslatePathData,
+  getPathBounds,
+  type PathBounds,
+} from "@/lib/laser-outline";
+import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
+import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg-server";
 import type { Template } from "@/lib/db/schema";
 import {
   CHAR_BOX_MM,
@@ -20,6 +26,8 @@ import {
 export interface TemplateAssets {
   font: opentype.Font;
   characterImageDataUri: string | null;
+  /** Parsed cut-line + cleaned artwork from an SVG character upload, if any. */
+  characterVector: CharacterVector | null;
 }
 
 export interface KeychainRender {
@@ -45,6 +53,17 @@ function normalizePath(d: string, bounds: PathBounds): string {
   return translatePathData(d, -bounds.x, -bounds.y);
 }
 
+function unionBounds(a: PathBounds, b: PathBounds): PathBounds {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return {
+    x,
+    y,
+    width: Math.max(a.x + a.width, b.x + b.width) - x,
+    height: Math.max(a.y + a.height, b.y + b.height) - y,
+  };
+}
+
 async function readPublicFile(publicPath: string): Promise<Buffer> {
   return fs.readFile(path.join(process.cwd(), "public", publicPath));
 }
@@ -56,14 +75,22 @@ export async function loadTemplateAssets(template: Template): Promise<TemplateAs
   );
 
   let characterImageDataUri: string | null = null;
+  let characterVector: CharacterVector | null = null;
+
   if (template.isCharacter && template.characterImagePath) {
     const imageBuffer = await readPublicFile(template.characterImagePath);
     const ext = path.extname(template.characterImagePath).toLowerCase();
-    const mimeType = ext === ".svg" ? "image/svg+xml" : "image/png";
-    characterImageDataUri = `data:${mimeType};base64,${imageBuffer.toString("base64")}`;
+
+    if (ext === ".svg") {
+      characterVector = parseCharacterSvg(imageBuffer.toString("utf8"));
+    }
+
+    characterImageDataUri = characterVector
+      ? characterVector.artworkDataUri
+      : `data:${ext === ".svg" ? "image/svg+xml" : "image/png"};base64,${imageBuffer.toString("base64")}`;
   }
 
-  return { font, characterImageDataUri };
+  return { font, characterImageDataUri, characterVector };
 }
 
 /**
@@ -81,7 +108,6 @@ export function renderKeychainText(
   const fontSize = template.isCharacter ? FONT_SIZE_CHAR_MM : FONT_SIZE_STANDARD_MM;
   const { segments, bbox } = renderColoredGlyphs(assets.font, sampleText, fontSize, template.colors);
 
-  const shapesForOutline: string[] = [];
   let textTranslateX: number;
   let textTranslateY: number;
 
@@ -90,7 +116,6 @@ export function renderKeychainText(
     const textOriginY = MARGIN_MM;
     textTranslateX = textOriginX - bbox.x1;
     textTranslateY = textOriginY + CHAR_BOX_MM / 2 - (bbox.y1 + bbox.y2) / 2;
-    shapesForOutline.push(rectPathData(MARGIN_MM, MARGIN_MM, CHAR_BOX_MM, CHAR_BOX_MM));
   } else {
     textTranslateX = MARGIN_MM - bbox.x1;
     textTranslateY = MARGIN_MM - bbox.y1;
@@ -100,10 +125,44 @@ export function renderKeychainText(
     d: translatePathData(segment.d, textTranslateX, textTranslateY),
     color: segment.color,
   }));
-  shapesForOutline.push(...textSegments.map((s) => s.d));
+
+  const cutLines = template.isCharacter ? (assets.characterVector?.cutLinePaths ?? []) : [];
+  const hasDesignerCutLine = cutLines.length > 0;
+
+  // Reference shapes for the character's contribution to the outline, and as
+  // a bounds fallback if outline computation fails entirely.
+  const characterShapes: string[] = [];
+  let positionedCutLines: string[] = [];
+  if (template.isCharacter) {
+    if (hasDesignerCutLine) {
+      const srcBounds = assets.characterVector!.bounds;
+      const fitScale = Math.min(CHAR_BOX_MM / srcBounds.width, CHAR_BOX_MM / srcBounds.height);
+      const cutTx = MARGIN_MM + (CHAR_BOX_MM - srcBounds.width * fitScale) / 2 - srcBounds.x * fitScale;
+      const cutTy = MARGIN_MM + (CHAR_BOX_MM - srcBounds.height * fitScale) / 2 - srcBounds.y * fitScale;
+      positionedCutLines = cutLines.map((d) => scaleAndTranslatePathData(d, fitScale, cutTx, cutTy));
+      characterShapes.push(...positionedCutLines);
+    } else {
+      characterShapes.push(rectPathData(MARGIN_MM, MARGIN_MM, CHAR_BOX_MM, CHAR_BOX_MM));
+    }
+  }
+
+  const shapesForOutline = [...characterShapes, ...textSegments.map((s) => s.d)];
+
+  let outlinePath: string | null;
+  if (hasDesignerCutLine) {
+    // The designer's cut-line is already the final intended contour — dilate
+    // only the text, then union the two as-is instead of re-dilating
+    // (and thereby distorting) the character's own geometry.
+    const textOutline = computeLaserOutlineClipper(textSegments.map((s) => s.d), {
+      dilateMm: DILATE_MM,
+      erodeMm: ERODE_MM,
+    });
+    outlinePath = unionOutlines(textOutline ? [textOutline, ...positionedCutLines] : positionedCutLines);
+  } else {
+    outlinePath = computeLaserOutlineClipper(shapesForOutline, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
+  }
 
   const holePath = circlePathData(MARGIN_MM + RING_HOLE_OFFSET_MM, MARGIN_MM + RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM / 2);
-  const outlinePath = computeLaserOutlineClipper(shapesForOutline, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
 
   const fallbackWidth = template.isCharacter
     ? MARGIN_MM + CHAR_BOX_MM + TEXT_GAP_MM + Math.max(bbox.x2 - bbox.x1, 1) + MARGIN_MM
@@ -112,13 +171,26 @@ export function renderKeychainText(
     ? CHAR_BOX_MM + MARGIN_MM * 2
     : Math.max(bbox.y2 - bbox.y1, 1) + MARGIN_MM * 2;
 
-  const bounds =
+  let bounds =
     getPathBounds(outlinePath ?? shapesForOutline[0]) ?? {
       x: 0,
       y: 0,
       width: fallbackWidth,
       height: fallbackHeight,
     };
+
+  if (hasDesignerCutLine) {
+    // The artwork image always renders at the full nominal CHAR_BOX_MM
+    // square (that's the reserved layout slot), but a designer's cut-line
+    // shape — a circle, a blob, anything non-square — won't necessarily
+    // reach every edge of that square. Widen the footprint to guarantee it
+    // always covers the artwork's reserved space, even though that square
+    // isn't part of the actual red cutting line.
+    const nominalCharBoxBounds = getPathBounds(rectPathData(MARGIN_MM, MARGIN_MM, CHAR_BOX_MM, CHAR_BOX_MM));
+    if (nominalCharBoxBounds) {
+      bounds = unionBounds(bounds, nominalCharBoxBounds);
+    }
+  }
 
   return {
     width: bounds.width,
