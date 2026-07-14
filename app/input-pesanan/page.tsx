@@ -45,7 +45,7 @@ export default function InputPesananPage() {
         Masukkan pesanan pelanggan baru dan tambahkan ke antrean produksi.
       </p>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="mt-6 flex flex-col gap-6">
         <OrderForm />
         <RecentOrdersList />
       </div>
