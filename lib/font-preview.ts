@@ -16,21 +16,50 @@ function escapeXml(value: string): string {
 
 /**
  * opentype.js's TrueType curve decoding can emit a numeric NaN for a
- * control point on certain glyphs/fonts (an implied-on-curve-point edge
- * case), which `toPathData()` then serializes as the literal text "NaN".
+ * control point on certain glyphs/fonts (bad source point data feeding an
+ * implied-on-curve-midpoint calculation — observed even on plain letters
+ * like "a"/"v"/"e" in some uploaded fonts, not just accented characters),
+ * which `toPathData()` then serializes as the literal text "NaN".
+ *
  * SVG's error-recovery rule truncates parsing of the *entire rest* of the
  * path at the first invalid token, so one bad control point can silently
- * cut off the remainder of a letter. Repair by reusing the last valid
- * coordinate — a tiny local artifact beats losing the rest of the glyph.
+ * cut off the remainder of a letter — this must never reach the DOM as-is.
+ *
+ * Do NOT substitute a fabricated coordinate for the NaN (e.g. reusing the
+ * last valid number seen): that produces a syntactically valid but
+ * geometrically arbitrary point, which draws a long straight stray line
+ * clear across the glyph when the path jumps to it — a laser would cut
+ * that spike for real. Instead drop just the individual drawing command
+ * that contains the NaN — the path cursor simply continues from wherever
+ * it already was straight to the next (valid) command's point, which for
+ * font curves is always a small local segment, not a cross-glyph jump.
  */
 function sanitizePathData(d: string): string {
   if (!d.includes("NaN")) return d;
-  let lastValid = "0";
-  return d.replace(/-?\d+\.?\d*(?:[eE][+-]?\d+)?|NaN/g, (token) => {
-    if (token === "NaN") return lastValid;
-    lastValid = token;
-    return token;
+
+  // A glyph's path can contain several subpaths (e.g. "a"'s outer contour
+  // and inner counter, or "i"'s stem and dot) — handle each independently
+  // so a bad command never bleeds across a subpath boundary onto a
+  // previous, otherwise-clean contour.
+  const subpaths = d.match(/[Mm][^Mm]*/g) ?? [];
+
+  const cleanedSubpaths = subpaths.map((subpath) => {
+    // Command letter followed by all its numeric args, up to (not
+    // including) the next command letter.
+    const commands = subpath.match(/[MLCQZmlcqz][^MLCQZmlcqz]*/g) ?? [];
+
+    // The subpath must still open with a moveto — if that anchor point
+    // itself is corrupted there's no valid position to resume from, so
+    // this whole subpath is unrecoverable and gets dropped entirely.
+    if (commands.length === 0 || !commands[0] || commands[0].includes("NaN")) return "";
+
+    // Otherwise drop just the individual bad drawing commands — the cursor
+    // continues from wherever it already was straight to the next valid
+    // point, a small local segment rather than a cross-glyph jump.
+    return commands.filter((cmd) => !cmd.includes("NaN")).join(" ");
   });
+
+  return cleanedSubpaths.filter(Boolean).join(" ");
 }
 
 /**
