@@ -57,3 +57,18 @@ export const TEXT_RAW_HEIGHT_MM = TEXT_CUT_HEIGHT_MM - 2 * (DILATE_MM - ERODE_MM
  * artwork that a bare hair's-width beyond ~2.0-2.25mm stops welding.
  */
 export const WELD_CLEARANCE_MM = 1.0;
+
+/**
+ * Extra morphological closing (dilate then erode by this same amount, round
+ * joins) applied to the *final* character+text union — plain unioning two
+ * shapes that only just touch leaves a sharp, narrow concave "armpit" right
+ * at the seam (a fragile neck in laser-cut acrylic, even though the contour
+ * is already topologically a single welded piece). Dilating first makes the
+ * two banks of that notch touch and merge; eroding back by the identical
+ * amount restores the overall outer size everywhere else (verified this
+ * keeps the locked TEXT_CUT_HEIGHT_MM exact), while the notch itself stays
+ * filled in as a smooth, rounded bridge. Empirically, 2mm was already enough
+ * to fully close the seam void on real CorelDraw character artwork; this
+ * keeps a safety margin above that measured minimum.
+ */
+export const SEAM_CLOSE_MM = 3.0;

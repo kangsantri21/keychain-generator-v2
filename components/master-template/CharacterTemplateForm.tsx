@@ -17,7 +17,13 @@ import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template } from "@/lib/db/schema";
-import { CHAR_BOX_MM, MAX_LAYOUT_OFFSET_MM, WELD_CLEARANCE_MM, TEXT_RAW_HEIGHT_MM } from "@/lib/keychain-geometry";
+import {
+  CHAR_BOX_MM,
+  MAX_LAYOUT_OFFSET_MM,
+  WELD_CLEARANCE_MM,
+  TEXT_RAW_HEIGHT_MM,
+  SEAM_CLOSE_MM,
+} from "@/lib/keychain-geometry";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
 
 // Live-preview canvas geometry (px), approximating the laser-cut scale.
@@ -34,6 +40,10 @@ const PX_PER_MM = CHAR_BOX_SIZE / CHAR_BOX_MM;
 // spec (TEXT_RAW_HEIGHT_MM) so the preview's finished cut line matches the
 // real 25-27mm production height exactly, regardless of the uploaded font.
 const TEXT_RAW_HEIGHT_PX = TEXT_RAW_HEIGHT_MM * PX_PER_MM;
+// Extra closing pass (mirrors the production SEAM_CLOSE_MM) applied to the
+// final character+text union so the preview's seam matches the real welded
+// bridge shape instead of showing a fragile-looking notch that isn't there.
+const SEAM_CLOSE_PX = SEAM_CLOSE_MM * PX_PER_MM;
 
 function isSvgFile(file: File): boolean {
   return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
@@ -324,9 +334,16 @@ export function CharacterTemplateForm({
         // Union the designer's cut-line with the text outline as-is — no
         // re-dilating a contour that's already the final intended shape.
         const textOutline = computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
-        const combined = unionOutlines(
+        const welded = unionOutlines(
           textOutline ? [textOutline, ...characterFit.positionedCutLines] : characterFit.positionedCutLines
         );
+        // A plain union of two shapes that only just touch leaves a sharp,
+        // narrow concave notch at the seam — a fragile neck once laser-cut.
+        // An extra closing pass fills it into a smooth, rounded bridge
+        // without changing the overall outer size.
+        const combined = welded
+          ? (computeLaserOutlineClipper([welded], { dilateMm: SEAM_CLOSE_PX, erodeMm: SEAM_CLOSE_PX }) ?? welded)
+          : null;
         setOutlinePath(combined);
 
         // The ring hole's offset (nominal + manual nudge) is safe for a plain

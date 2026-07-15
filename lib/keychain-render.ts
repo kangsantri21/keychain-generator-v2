@@ -23,6 +23,7 @@ import {
   ERODE_MM,
   WELD_CLEARANCE_MM,
   TEXT_RAW_HEIGHT_MM,
+  SEAM_CLOSE_MM,
 } from "@/lib/keychain-geometry";
 
 export interface TemplateAssets {
@@ -214,7 +215,15 @@ export function renderKeychainText(
       dilateMm: DILATE_MM,
       erodeMm: ERODE_MM,
     });
-    outlinePath = unionOutlines(textOutline ? [textOutline, ...positionedCutLines] : positionedCutLines);
+    const welded = unionOutlines(textOutline ? [textOutline, ...positionedCutLines] : positionedCutLines);
+    // A plain union of two shapes that only just touch leaves a sharp,
+    // narrow concave notch right at the seam — a fragile neck once laser-cut
+    // from acrylic, even though it's already topologically one piece. An
+    // extra closing pass (equal dilate/erode) fills that notch into a
+    // smooth, rounded bridge without changing the overall outer size.
+    outlinePath = welded
+      ? (computeLaserOutlineClipper([welded], { dilateMm: SEAM_CLOSE_MM, erodeMm: SEAM_CLOSE_MM }) ?? welded)
+      : null;
   } else {
     outlinePath = computeLaserOutlineClipper(shapesForOutline, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
   }
