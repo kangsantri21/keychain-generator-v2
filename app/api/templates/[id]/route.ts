@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { promises as fs } from "fs";
 import path from "path";
 import { db } from "@/lib/db";
-import { templates } from "@/lib/db/schema";
+import { templates, orderItems, stagingItems } from "@/lib/db/schema";
 import { slugify } from "@/lib/utils";
 import { generateCharacterPreviewSvg } from "@/lib/font-preview";
 import {
@@ -43,7 +43,38 @@ export async function DELETE(
     return badRequest("Template tidak ditemukan", 404);
   }
 
-  await db.delete(templates).where(eq(templates.id, templateId));
+  // The DB's foreign key enforcement is on and order_items/staging_items
+  // reference templates with no ON DELETE clause (default RESTRICT), so a
+  // referenced template would otherwise fail deletion with a raw, unhandled
+  // FK constraint exception — pre-check and reject with a clear message
+  // instead of letting the delete throw.
+  const [referencingOrderItem] = await db
+    .select({ id: orderItems.id })
+    .from(orderItems)
+    .where(eq(orderItems.templateId, templateId))
+    .limit(1);
+  if (referencingOrderItem) {
+    return badRequest(
+      "Template tidak bisa dihapus karena masih digunakan pada pesanan aktif. Silakan hapus pesanan terkait di menu Input Pesanan terlebih dahulu."
+    );
+  }
+
+  const [referencingStagingItem] = await db
+    .select({ id: stagingItems.id })
+    .from(stagingItems)
+    .where(eq(stagingItems.templateId, templateId))
+    .limit(1);
+  if (referencingStagingItem) {
+    return badRequest(
+      "Template tidak bisa dihapus karena masih digunakan pada item di Staging Area. Silakan hapus atau selesaikan item terkait terlebih dahulu."
+    );
+  }
+
+  try {
+    await db.delete(templates).where(eq(templates.id, templateId));
+  } catch {
+    return badRequest("Template tidak bisa dihapus karena masih terkait dengan data lain", 409);
+  }
 
   const relativePaths = new Set(
     [existing.filePath, existing.thumbnailPath, existing.characterImagePath].filter(

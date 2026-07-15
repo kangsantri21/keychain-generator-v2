@@ -23,9 +23,10 @@ export async function DELETE(
     return badRequest("Pesanan tidak ditemukan", 404);
   }
 
-  // SQLite FK enforcement isn't turned on for this connection, so the
-  // schema's cascade annotations aren't actually applied by the engine —
-  // clean up dependents manually, in dependency order, inside a transaction.
+  // FK enforcement is on for this connection, and staging_items->orders has
+  // no ON DELETE clause (default RESTRICT) — deleting the order directly
+  // would throw a constraint violation while staging_items still reference
+  // it. Clean up dependents manually, in dependency order, in a transaction.
   db.transaction((tx) => {
     tx.delete(stagingItems).where(eq(stagingItems.orderId, orderId)).run();
     tx.delete(orderItems).where(eq(orderItems.orderId, orderId)).run();
