@@ -9,14 +9,22 @@ export function ControlPanel({
   onSelectSheet,
   onRunNesting,
   onExport,
+  onExportPrint,
+  labelText,
+  onLabelTextChange,
   isRunningNesting,
+  isExportingPrint,
 }: {
   sheets: StagingSheet[];
   activeSheetId: number | null;
   onSelectSheet: (sheetId: number) => void;
   onRunNesting: () => void;
   onExport: () => void;
+  onExportPrint: () => void;
+  labelText: string;
+  onLabelTextChange: (value: string) => void;
   isRunningNesting: boolean;
+  isExportingPrint: boolean;
 }) {
   const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId) ?? null;
 
@@ -72,10 +80,37 @@ export function ControlPanel({
           className="flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Download size={16} />
-          Ekspor File Cetak (PDF/SVG)
+          Ekspor File Potong Laser (SVG)
         </button>
         <p className="text-xs text-slate-400">
           Mengunduh SVG vektor siap potong laser untuk lembar kerja yang aktif.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-slate-200 pt-4">
+        <h2 className="text-sm font-semibold text-slate-800">Ekspor Print (Xerox C70)</h2>
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          Kode Lembar / Urgent
+          <input
+            type="text"
+            value={labelText}
+            onChange={(event) => onLabelTextChange(event.target.value)}
+            placeholder="Contoh: D 14 JULI"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onExportPrint}
+          disabled={!activeSheet || isExportingPrint}
+          className="flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Download size={16} />
+          {isExportingPrint ? "Memproses JPG 300 DPI..." : "Ekspor File Print (Xerox C70)"}
+        </button>
+        <p className="text-xs text-slate-400">
+          Mengunduh JPG raster 300 DPI khusus mesin cetak grafis: seluruh isi kanvas di-mirror
+          horizontal untuk back-print, ditambah garis tepi hairline dan 4 titik registrasi di sudut.
         </p>
       </div>
     </div>

@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { ControlPanel } from "@/components/staging-area/ControlPanel";
 import { StagingCanvas } from "@/components/staging-area/StagingCanvas";
 import { downloadSheetSvg } from "@/lib/export-svg";
+import { downloadPrintSheetJpg } from "@/lib/export-print-svg";
 import type { StagingSheet } from "@/lib/staging-types";
 
 export default function StagingAreaPage() {
@@ -12,6 +13,8 @@ export default function StagingAreaPage() {
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningNesting, setIsRunningNesting] = useState(false);
+  const [isExportingPrint, setIsExportingPrint] = useState(false);
+  const [labelText, setLabelText] = useState("");
 
   async function loadSheets(): Promise<StagingSheet[]> {
     const res = await fetch("/api/staging");
@@ -62,6 +65,20 @@ export default function StagingAreaPage() {
     toast.success(`Lembar Kerja #${activeSheet.sheetId} diekspor`);
   }
 
+  async function handleExportPrint() {
+    const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId);
+    if (!activeSheet) return;
+    setIsExportingPrint(true);
+    try {
+      await downloadPrintSheetJpg(activeSheet, labelText);
+      toast.success(`File print Lembar Kerja #${activeSheet.sheetId} diekspor (JPG 300 DPI)`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal mengekspor file print");
+    } finally {
+      setIsExportingPrint(false);
+    }
+  }
+
   const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId) ?? null;
 
   return (
@@ -78,7 +95,11 @@ export default function StagingAreaPage() {
           onSelectSheet={setActiveSheetId}
           onRunNesting={handleRunNesting}
           onExport={handleExport}
+          onExportPrint={handleExportPrint}
+          labelText={labelText}
+          onLabelTextChange={setLabelText}
           isRunningNesting={isRunningNesting}
+          isExportingPrint={isExportingPrint}
         />
         {isLoading ? (
           <p className="text-sm text-slate-400">Memuat staging area...</p>
