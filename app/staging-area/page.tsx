@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { ControlPanel } from "@/components/staging-area/ControlPanel";
 import { StagingCanvas } from "@/components/staging-area/StagingCanvas";
-import { downloadSheetSvg } from "@/lib/export-svg";
+import { downloadSheetDxf } from "@/lib/export-dxf";
 import { downloadPrintSheetJpg } from "@/lib/export-print-svg";
 import type { StagingSheet } from "@/lib/staging-types";
 
@@ -61,8 +61,8 @@ export default function StagingAreaPage() {
   function handleExport() {
     const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId);
     if (!activeSheet) return;
-    downloadSheetSvg(activeSheet);
-    toast.success(`Lembar Kerja #${activeSheet.sheetId} diekspor`);
+    downloadSheetDxf(activeSheet);
+    toast.success(`Lembar Kerja #${activeSheet.sheetId} diekspor (DXF)`);
   }
 
   async function handleExportPrint() {

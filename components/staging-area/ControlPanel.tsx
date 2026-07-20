@@ -80,10 +80,10 @@ export function ControlPanel({
           className="flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Download size={16} />
-          Ekspor File Potong Laser (SVG)
+          Ekspor File Potong Laser (DXF)
         </button>
         <p className="text-xs text-slate-400">
-          Mengunduh SVG vektor siap potong laser untuk lembar kerja yang aktif.
+          Mengunduh DXF (mm) vektor siap potong laser/CNC untuk lembar kerja yang aktif.
         </p>
       </div>
 

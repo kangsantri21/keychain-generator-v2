@@ -18,7 +18,7 @@ function escapeXml(value: string): string {
  * whole sheet's content is mirrored horizontally — plus a hairline
  * registration border and 4 corner fiducial marks the print operator aligns
  * against. These are specific to this print file and deliberately absent
- * from the laser-cutting export (`lib/export-svg.ts`), which is unchanged.
+ * from the laser-cutting export (`lib/export-dxf.ts`), which is unchanged.
  */
 export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): string {
   const printLayer = sheet.items
