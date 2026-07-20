@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
+import { eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { stagingItems, orders, templates, type Order, type Template } from "@/lib/db/schema";
 import { loadTemplateAssets, renderKeychainText, type TemplateAssets, type KeychainRender } from "@/lib/keychain-render";
@@ -21,7 +21,16 @@ interface StagingItemPayload {
   render: KeychainRender | null;
 }
 
-export async function GET() {
+/**
+ * By default returns only active ("staged") sheets — a completed sheet's
+ * items keep re-rendering full character SVGs/images on every load, which
+ * is expensive, so the (rarely viewed) history list is only ever fetched
+ * on demand via `?history=1`, keeping the normal Staging Area load fast.
+ */
+export async function GET(request: NextRequest) {
+  const wantHistory = new URL(request.url).searchParams.get("history") === "1";
+  const statusFilter = wantHistory ? eq(stagingItems.status, "completed") : ne(stagingItems.status, "completed");
+
   const rows = await db
     .select({
       id: stagingItems.id,
@@ -41,6 +50,7 @@ export async function GET() {
     .from(stagingItems)
     .leftJoin(orders, eq(stagingItems.orderId, orders.id))
     .leftJoin(templates, eq(stagingItems.templateId, templates.id))
+    .where(statusFilter)
     .orderBy(stagingItems.sheetId, stagingItems.id);
 
   const assetsCache = new Map<number, TemplateAssets | null>();

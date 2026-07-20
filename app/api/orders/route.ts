@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, orderItems, templates, type NewOrderItem, type Template } from "@/lib/db/schema";
 import { isUniqueConstraintError } from "@/lib/template-files";
@@ -44,6 +44,9 @@ export async function GET() {
     .from(orders)
     .leftJoin(orderItems, eq(orderItems.orderId, orders.id))
     .leftJoin(templates, eq(orderItems.templateId, templates.id))
+    // Completed orders (a whole staging sheet marked done) are done for
+    // good — they no longer belong in the active Input Pesanan queue.
+    .where(ne(orders.status, "completed"))
     .orderBy(desc(orders.createdAt), orders.id, orderItems.id);
 
   const orderMap = new Map<number, OrderPayload>();
