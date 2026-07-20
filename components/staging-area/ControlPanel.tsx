@@ -2,6 +2,7 @@
 
 import { Play, Download, Trash2, CheckCircle2, History, Layers } from "lucide-react";
 import type { StagingSheet } from "@/lib/staging-types";
+import { HppCalculator } from "./HppCalculator";
 
 export function ControlPanel({
   sheets,
@@ -151,6 +152,10 @@ export function ControlPanel({
         <p className="text-xs text-slate-400">
           Mengunduh DXF (mm) vektor siap potong laser/CNC untuk lembar kerja yang aktif.
         </p>
+      </div>
+
+      <div className="border-t border-slate-200 pt-4">
+        <HppCalculator itemCount={activeSheet?.items.length ?? 0} />
       </div>
 
       <div className="flex flex-col gap-2 border-t border-slate-200 pt-4">
