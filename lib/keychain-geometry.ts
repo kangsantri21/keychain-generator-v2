@@ -72,3 +72,13 @@ export const WELD_CLEARANCE_MM = 1.0;
  * keeps a safety margin above that measured minimum.
  */
 export const SEAM_CLOSE_MM = 3.0;
+
+/**
+ * Corner registration/fiducial marks shared by both sheet-level exports —
+ * the print JPEG (lib/export-print-svg.ts) draws them as a visual alignment
+ * aid for the operator, and the laser DXF (lib/export-dxf.ts) cuts them as
+ * real holes, so the print and the cut can be physically pinned together.
+ * A single shared constant keeps both exports from ever drifting apart.
+ */
+export const FIDUCIAL_DIAMETER_MM = 5;
+export const FIDUCIAL_RADIUS_MM = FIDUCIAL_DIAMETER_MM / 2;

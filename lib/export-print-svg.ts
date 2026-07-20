@@ -1,12 +1,13 @@
-import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/keychain-geometry";
+import {
+  SHEET_WIDTH_MM,
+  SHEET_HEIGHT_MM,
+  FIDUCIAL_RADIUS_MM,
+} from "@/lib/keychain-geometry";
 import { getItemTransform, getContentSize } from "@/lib/staging-transform";
 import type { StagingSheet } from "@/lib/staging-types";
 
 /** Cut-registration border around the sheet, drawn hairline-thin. */
 const BORDER_STROKE_MM = 0.1;
-/** Corner fiducial/registration marks for the Xerox C70 back-print workflow. */
-const FIDUCIAL_DIAMETER_MM = 5;
-const FIDUCIAL_RADIUS_MM = FIDUCIAL_DIAMETER_MM / 2;
 
 function escapeXml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

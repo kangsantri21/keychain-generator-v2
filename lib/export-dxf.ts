@@ -1,4 +1,8 @@
-import { SHEET_HEIGHT_MM } from "@/lib/keychain-geometry";
+import {
+  SHEET_WIDTH_MM,
+  SHEET_HEIGHT_MM,
+  FIDUCIAL_RADIUS_MM,
+} from "@/lib/keychain-geometry";
 import { flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
 import type { StagingItemPayload, StagingSheet } from "@/lib/staging-types";
 
@@ -37,6 +41,39 @@ function polylineEntity(points: FlatPoint[], layer: string): string {
   return lines.join("\n");
 }
 
+function circleEntity(cx: number, cy: number, r: number, layer: string): string {
+  return ["0", "CIRCLE", "8", layer, "10", cx.toFixed(3), "20", cy.toFixed(3), "40", r.toFixed(3)].join("\n");
+}
+
+/**
+ * Sheet-level reference geometry the laser operator aligns against — the
+ * 310x470mm outer border and the 4 corner fiducial holes, at the exact same
+ * positions as the visual marks drawn in the print JPEG
+ * (lib/export-print-svg.ts), so the print and the cut can be physically
+ * pinned together. These are sheet-absolute (no per-item transform), but
+ * still need the same Y-up flip as every other coordinate in this file.
+ */
+function sheetReferenceEntities(): string[] {
+  const corners: FlatPoint[] = [
+    { x: 0, y: 0 },
+    { x: SHEET_WIDTH_MM, y: 0 },
+    { x: SHEET_WIDTH_MM, y: SHEET_HEIGHT_MM },
+    { x: 0, y: SHEET_HEIGHT_MM },
+  ];
+  const border = polylineEntity(
+    corners.map((p) => ({ x: p.x, y: toDxfY(p.y) })),
+    "CUT_BORDER"
+  );
+
+  const fiducialXs = [FIDUCIAL_RADIUS_MM, SHEET_WIDTH_MM - FIDUCIAL_RADIUS_MM];
+  const fiducialYs = [FIDUCIAL_RADIUS_MM, SHEET_HEIGHT_MM - FIDUCIAL_RADIUS_MM];
+  const fiducials = fiducialXs.flatMap((cx) =>
+    fiducialYs.map((cy) => circleEntity(cx, toDxfY(cy), FIDUCIAL_RADIUS_MM, "CUT_FIDUCIAL"))
+  );
+
+  return [border, ...fiducials];
+}
+
 /**
  * Flattens a path (outline or hole) and emits one closed LWPOLYLINE per
  * resulting polygon, in final on-sheet DXF coordinates. Both `outlinePath`
@@ -62,16 +99,21 @@ function pathToDxfEntities(
   });
 }
 
+function layerDefinition(name: string): string[] {
+  return ["0", "LAYER", "2", name, "70", "0", "62", "1", "6", "CONTINUOUS"];
+}
+
 /**
  * Builds a laser-cutting DXF for one nested sheet — the red cutting lines
- * ONLY (outer outline + ring hole per item), as separate CUT_OUTLINE/
- * CUT_HOLE layers, in millimeters ($INSUNITS = 4). This is the industry-
- * standard vector format CNC/laser software actually imports; no print or
- * graphic content belongs here (that's the separate print export in
+ * ONLY (per-item outline/hole, plus the sheet's own border and corner
+ * fiducial holes), across CUT_OUTLINE/CUT_HOLE/CUT_BORDER/CUT_FIDUCIAL
+ * layers, in millimeters ($INSUNITS = 4). This is the industry-standard
+ * vector format CNC/laser software actually imports; no print or graphic
+ * content belongs here (that's the separate print export in
  * lib/export-print-svg.ts).
  */
 export function buildSheetDxfDocument(sheet: StagingSheet): string {
-  const entities: string[] = [];
+  const entities: string[] = [...sheetReferenceEntities()];
 
   for (const item of sheet.items) {
     if (!item.render) continue;
@@ -82,6 +124,8 @@ export function buildSheetDxfDocument(sheet: StagingSheet): string {
       entities.push(...pathToDxfEntities(item.render.holePath, item, "CUT_HOLE"));
     }
   }
+
+  const layers = ["CUT_OUTLINE", "CUT_HOLE", "CUT_BORDER", "CUT_FIDUCIAL"];
 
   return [
     "0",
@@ -103,27 +147,8 @@ export function buildSheetDxfDocument(sheet: StagingSheet): string {
     "2",
     "LAYER",
     "70",
-    "2",
-    "0",
-    "LAYER",
-    "2",
-    "CUT_OUTLINE",
-    "70",
-    "0",
-    "62",
-    "1",
-    "6",
-    "CONTINUOUS",
-    "0",
-    "LAYER",
-    "2",
-    "CUT_HOLE",
-    "70",
-    "0",
-    "62",
-    "1",
-    "6",
-    "CONTINUOUS",
+    String(layers.length),
+    ...layers.flatMap(layerDefinition),
     "0",
     "ENDTAB",
     "0",
