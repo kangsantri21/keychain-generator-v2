@@ -117,7 +117,7 @@ export function OrderItemBlock({
               onChange={(event) => onNamesTextChange(event.target.value)}
               rows={4}
               placeholder={"Rofiq, Faza, Nailil\natau satu nama per baris"}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
             />
             <span className="text-xs text-slate-400">
               Pisah nama dengan koma atau baris baru — jumlah pesanan otomatis mengikuti jumlah nama.

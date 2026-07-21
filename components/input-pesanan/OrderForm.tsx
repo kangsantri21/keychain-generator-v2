@@ -114,7 +114,7 @@ export function OrderForm() {
               value={receiptCode}
               onChange={(event) => setReceiptCode(event.target.value)}
               placeholder="mis. JNE-123456789"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
             />
           </label>
 
@@ -125,7 +125,7 @@ export function OrderForm() {
               value={manualCode}
               onChange={(event) => setManualCode(event.target.value)}
               placeholder="mis. M-0001"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
             />
           </label>
         </div>
