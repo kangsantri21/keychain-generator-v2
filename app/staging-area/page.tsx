@@ -79,7 +79,7 @@ export default function StagingAreaPage() {
   function handleExport() {
     const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId);
     if (!activeSheet) return;
-    downloadSheetDxf(activeSheet);
+    downloadSheetDxf(activeSheet, labelText);
     toast.success(`Lembar Kerja #${activeSheet.sheetId} diekspor (DXF)`);
   }
 

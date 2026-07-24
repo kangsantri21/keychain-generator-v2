@@ -5,6 +5,7 @@ import {
 } from "@/lib/keychain-geometry";
 import { flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
 import type { StagingItemPayload, StagingSheet } from "@/lib/staging-types";
+import { sanitizeFileName } from "@/lib/utils";
 
 /**
  * Applies the same on-sheet placement as `getItemTransform`
@@ -165,13 +166,23 @@ export function buildSheetDxfDocument(sheet: StagingSheet): string {
   ].join("\n") + "\n";
 }
 
-export function downloadSheetDxf(sheet: StagingSheet): void {
+/**
+ * `labelText` mirrors the same "Kode Lembar / Urgent" input used by the
+ * print (JPG) export, sanitized with the exact same rule, so the cut (DXF)
+ * and print files for one sheet always share a filename — an operator can
+ * match them up on sight instead of cross-referencing sheet IDs.
+ */
+export function downloadSheetDxf(sheet: StagingSheet, labelText?: string): void {
   const dxf = buildSheetDxfDocument(sheet);
   const blob = new Blob([dxf], { type: "application/dxf" });
   const url = URL.createObjectURL(blob);
+
+  const sanitizedLabel = labelText ? sanitizeFileName(labelText) : "";
+  const fileName = sanitizedLabel ? `${sanitizedLabel}.dxf` : `lembar-kerja-${sheet.sheetId}.dxf`;
+
   const link = document.createElement("a");
   link.href = url;
-  link.download = `lembar-kerja-${sheet.sheetId}.dxf`;
+  link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
 }

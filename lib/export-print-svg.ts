@@ -5,6 +5,7 @@ import {
 } from "@/lib/keychain-geometry";
 import { getItemTransform, getContentSize } from "@/lib/staging-transform";
 import type { StagingSheet } from "@/lib/staging-types";
+import { sanitizeFileName } from "@/lib/utils";
 
 /** Cut-registration border around the sheet, drawn hairline-thin. */
 const BORDER_STROKE_MM = 0.1;
@@ -110,9 +111,12 @@ export async function downloadPrintSheetJpg(sheet: StagingSheet, labelText?: str
     ctx.drawImage(image, 0, 0, widthPx, heightPx);
 
     const jpgDataUrl = canvas.toDataURL("image/jpeg", 1.0);
+    const sanitizedLabel = labelText ? sanitizeFileName(labelText) : "";
+    const fileName = sanitizedLabel ? `${sanitizedLabel}.jpg` : `print-lembar-kerja-${sheet.sheetId}.jpg`;
+
     const link = document.createElement("a");
     link.href = jpgDataUrl;
-    link.download = `print-lembar-kerja-${sheet.sheetId}.jpg`;
+    link.download = fileName;
     link.click();
   } finally {
     URL.revokeObjectURL(svgUrl);
