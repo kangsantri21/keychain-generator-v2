@@ -1,10 +1,11 @@
 import { promises as fs } from "fs";
 import path from "path";
 import * as opentype from "opentype.js";
-import { renderColoredGlyphs, renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
+import { renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
 import {
   translatePathData,
   scaleAndTranslatePathData,
+  squeezeHorizontalPathData,
   getPathBounds,
   findHoleCenterInside,
   type PathBounds,
@@ -16,7 +17,6 @@ import {
   CHAR_BOX_MM,
   TEXT_GAP_MM,
   MARGIN_MM,
-  FONT_SIZE_STANDARD_MM,
   RING_HOLE_OFFSET_MM,
   RING_HOLE_DIAMETER_MM,
   DILATE_MM,
@@ -24,6 +24,8 @@ import {
   WELD_CLEARANCE_MM,
   TEXT_RAW_HEIGHT_MM,
   SEAM_CLOSE_MM,
+  MAX_ITEM_WIDTH_MM,
+  MIN_TEXT_CUT_HEIGHT_MM,
 } from "@/lib/keychain-geometry";
 
 export interface TemplateAssets {
@@ -125,21 +127,57 @@ export async function loadTemplateAssets(template: Template): Promise<TemplateAs
  * Computes the combined character+text (or text-only) cutting outline for one
  * nested unit, dimensioned in mm and normalized to a (0, 0) origin so the
  * result can be placed directly at a packer-assigned (pos_x, pos_y).
+ *
+ * `uniformScale` and `textSqueezeX` implement the MAX_ITEM_WIDTH_MM
+ * constraint (see the exported `renderKeychainText` wrapper below) and
+ * default to 1 (no change) for a normal, unconstrained render:
+ * - `uniformScale` shrinks the whole layout (character box, gap, text
+ *   height, hole position) together, uniformly — safe because it preserves
+ *   every spatial relationship exactly, including character-image-to-
+ *   cut-line alignment.
+ * - `textSqueezeX` additionally condenses ONLY the text's horizontal
+ *   letter-spacing (anchored where the text meets the character, so it
+ *   never drifts away from it) — used only once `uniformScale` has already
+ *   been driven down to MIN_TEXT_CUT_HEIGHT_MM and the item is still too
+ *   wide. It must never apply to the character artwork/cut-line: doing so
+ *   would desync the character's raster image (which keeps its own aspect
+ *   ratio via `preserveAspectRatio="xMidYMid meet"`) from its outline —
+ *   exactly the image-vs-outline mismatch previously diagnosed in the
+ *   Miko/Aldo cut-line bug.
+ *
+ * Kept fixed regardless of scale (physical/hardware constants, not design
+ * proportions): DILATE_MM/ERODE_MM/SEAM_CLOSE_MM (laser kerf & seam-closing
+ * are properties of the cutting process, not the drawn size) and
+ * RING_HOLE_DIAMETER_MM (the keyring hole is a fixed hardware-fit spec).
  */
-export function renderKeychainText(
+function renderKeychainTextScaled(
   assets: TemplateAssets,
   template: Template,
-  text: string
+  text: string,
+  uniformScale: number,
+  textSqueezeX: number
 ): KeychainRender {
   const sampleText = text.trim() || template.defaultText || "Nama";
 
-  // A character template's name text is locked to a fixed *finished* cutting
-  // height (TEXT_CUT_HEIGHT_MM, via TEXT_RAW_HEIGHT_MM before the dilate
-  // pass) — a production spec, not a mere visual size — so it's rescaled per
-  // render rather than using one fixed fontSize regardless of font metrics.
-  const { segments, bbox } = template.isCharacter
-    ? renderColoredGlyphsAtHeight(assets.font, sampleText, TEXT_RAW_HEIGHT_MM, template.colors)
-    : renderColoredGlyphs(assets.font, sampleText, FONT_SIZE_STANDARD_MM, template.colors);
+  const charBoxMm = CHAR_BOX_MM * uniformScale;
+  const marginMm = MARGIN_MM * uniformScale;
+  const textGapMm = TEXT_GAP_MM * uniformScale;
+  const weldClearanceMm = WELD_CLEARANCE_MM * uniformScale;
+  const textRawHeightMm = TEXT_RAW_HEIGHT_MM * uniformScale;
+  const ringHoleOffsetMm = RING_HOLE_OFFSET_MM * uniformScale;
+  const holeOffsetX = template.holeOffsetX * uniformScale;
+  const holeOffsetY = template.holeOffsetY * uniformScale;
+
+  // Every name text is locked to a fixed *finished* cutting height
+  // (TEXT_CUT_HEIGHT_MM, via TEXT_RAW_HEIGHT_MM before the dilate pass) — a
+  // production spec, not a mere visual size — so it's rescaled per render to
+  // hit that target exactly regardless of font metrics. This applies
+  // identically to character and text-only (non-character) templates alike,
+  // so both render at the same physical text height when nested side by
+  // side; a plain fixed fontSize (as text-only templates used previously)
+  // can't guarantee that, since a font's own em-to-glyph-height ratio varies
+  // per font.
+  const { segments, bbox } = renderColoredGlyphsAtHeight(assets.font, sampleText, textRawHeightMm, template.colors);
 
   const cutLines = template.isCharacter ? (assets.characterVector?.cutLinePaths ?? []) : [];
   const hasDesignerCutLine = cutLines.length > 0;
@@ -155,9 +193,9 @@ export function renderKeychainText(
   if (template.isCharacter) {
     if (hasDesignerCutLine) {
       const srcBounds = assets.characterVector!.bounds;
-      const fitScale = Math.min(CHAR_BOX_MM / srcBounds.width, CHAR_BOX_MM / srcBounds.height);
-      const cutTx = MARGIN_MM + (CHAR_BOX_MM - srcBounds.width * fitScale) / 2 - srcBounds.x * fitScale;
-      const cutTy = MARGIN_MM + (CHAR_BOX_MM - srcBounds.height * fitScale) / 2 - srcBounds.y * fitScale;
+      const fitScale = Math.min(charBoxMm / srcBounds.width, charBoxMm / srcBounds.height);
+      const cutTx = marginMm + (charBoxMm - srcBounds.width * fitScale) / 2 - srcBounds.x * fitScale;
+      const cutTy = marginMm + (charBoxMm - srcBounds.height * fitScale) / 2 - srcBounds.y * fitScale;
       positionedCutLines = cutLines.map((d) => scaleAndTranslatePathData(d, fitScale, cutTx, cutTy));
       characterShapes.push(...positionedCutLines);
       for (const d of positionedCutLines) {
@@ -165,12 +203,16 @@ export function renderKeychainText(
         if (b) characterBounds = characterBounds ? unionBounds(characterBounds, b) : b;
       }
     } else {
-      characterShapes.push(rectPathData(MARGIN_MM, MARGIN_MM, CHAR_BOX_MM, CHAR_BOX_MM));
+      characterShapes.push(rectPathData(marginMm, marginMm, charBoxMm, charBoxMm));
     }
   }
 
   let textTranslateX: number;
   let textTranslateY: number;
+  // X to anchor the horizontal letter-spacing squeeze around, so condensing
+  // long names never pulls the text away from the character (or, for
+  // text-only templates, away from its left margin).
+  let textAnchorX: number;
 
   if (template.isCharacter) {
     // Position the text just clear of the character's *actual* cut-line
@@ -180,29 +222,32 @@ export function renderKeychainText(
     // staying under the text's net dilation growth (DILATE_MM - ERODE_MM)
     // so the *dilated* cutting outline still reaches the character and
     // Clipper welds the two into one contour.
-    const nominalTextOriginX = MARGIN_MM + CHAR_BOX_MM + TEXT_GAP_MM;
+    const nominalTextOriginX = marginMm + charBoxMm + textGapMm;
     const textOriginX =
       hasDesignerCutLine && characterBounds
-        ? characterBounds.x + characterBounds.width + WELD_CLEARANCE_MM
+        ? characterBounds.x + characterBounds.width + weldClearanceMm
         : nominalTextOriginX;
     textTranslateX = textOriginX - bbox.x1;
+    textAnchorX = textOriginX;
     // Center vertically against the character's *actual* silhouette height
     // when one is known, not the nominal box — an off-center cut-line would
     // otherwise leave the text looking misaligned next to the artwork.
     const charCenterY =
       hasDesignerCutLine && characterBounds
         ? characterBounds.y + characterBounds.height / 2
-        : MARGIN_MM + CHAR_BOX_MM / 2;
+        : marginMm + charBoxMm / 2;
     textTranslateY = charCenterY - (bbox.y1 + bbox.y2) / 2;
   } else {
-    textTranslateX = MARGIN_MM - bbox.x1;
-    textTranslateY = MARGIN_MM - bbox.y1;
+    textTranslateX = marginMm - bbox.x1;
+    textTranslateY = marginMm - bbox.y1;
+    textAnchorX = marginMm;
   }
 
-  const textSegments: GlyphSegment[] = segments.map((segment) => ({
-    d: translatePathData(segment.d, textTranslateX, textTranslateY),
-    color: segment.color,
-  }));
+  const textSegments: GlyphSegment[] = segments.map((segment) => {
+    const translated = translatePathData(segment.d, textTranslateX, textTranslateY);
+    const d = textSqueezeX === 1 ? translated : squeezeHorizontalPathData(translated, textSqueezeX, textAnchorX);
+    return { d, color: segment.color };
+  });
 
   const shapesForOutline = [...characterShapes, ...textSegments.map((s) => s.d)];
 
@@ -235,14 +280,17 @@ export function renderKeychainText(
   // isn't actually part of the cut shape). A manual per-template nudge (mm)
   // shifts the preferred spot first — e.g. pulling it inward from an edge
   // that's prone to snapping off — then the search below still guarantees
-  // whatever we land on is genuinely inside the welded outline.
+  // whatever we land on is genuinely inside the welded outline. Note the
+  // hole's DIAMETER is intentionally NOT scaled by uniformScale — it's a
+  // fixed hardware-fit spec (the physical keyring must pass through it),
+  // not a design proportion that should shrink with a long name.
   const nominalHoleCenter = {
-    x: MARGIN_MM + RING_HOLE_OFFSET_MM + template.holeOffsetX,
-    y: MARGIN_MM + RING_HOLE_OFFSET_MM + template.holeOffsetY,
+    x: marginMm + ringHoleOffsetMm + holeOffsetX,
+    y: marginMm + ringHoleOffsetMm + holeOffsetY,
   };
   let holeCenter = nominalHoleCenter;
   if (template.isCharacter && outlinePath) {
-    const baseBounds = characterBounds ?? { x: MARGIN_MM, y: MARGIN_MM, width: CHAR_BOX_MM, height: CHAR_BOX_MM };
+    const baseBounds = characterBounds ?? { x: marginMm, y: marginMm, width: charBoxMm, height: charBoxMm };
     const searchBounds = unionBounds(baseBounds, {
       x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
       y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
@@ -260,11 +308,11 @@ export function renderKeychainText(
   const holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
 
   const fallbackWidth = template.isCharacter
-    ? MARGIN_MM + CHAR_BOX_MM + TEXT_GAP_MM + Math.max(bbox.x2 - bbox.x1, 1) + MARGIN_MM
-    : Math.max(bbox.x2 - bbox.x1, 1) + MARGIN_MM * 2;
+    ? marginMm + charBoxMm + textGapMm + Math.max(bbox.x2 - bbox.x1, 1) + marginMm
+    : Math.max(bbox.x2 - bbox.x1, 1) + marginMm * 2;
   const fallbackHeight = template.isCharacter
-    ? CHAR_BOX_MM + MARGIN_MM * 2
-    : Math.max(bbox.y2 - bbox.y1, 1) + MARGIN_MM * 2;
+    ? charBoxMm + marginMm * 2
+    : Math.max(bbox.y2 - bbox.y1, 1) + marginMm * 2;
 
   let bounds =
     getPathBounds(outlinePath ?? shapesForOutline[0]) ?? {
@@ -281,7 +329,7 @@ export function renderKeychainText(
     // reach every edge of that square. Widen the footprint to guarantee it
     // always covers the artwork's reserved space, even though that square
     // isn't part of the actual red cutting line.
-    const nominalCharBoxBounds = getPathBounds(rectPathData(MARGIN_MM, MARGIN_MM, CHAR_BOX_MM, CHAR_BOX_MM));
+    const nominalCharBoxBounds = getPathBounds(rectPathData(marginMm, marginMm, charBoxMm, charBoxMm));
     if (nominalCharBoxBounds) {
       bounds = unionBounds(bounds, nominalCharBoxBounds);
     }
@@ -299,10 +347,70 @@ export function renderKeychainText(
     characterImage: assets.characterImageDataUri
       ? {
           dataUri: assets.characterImageDataUri,
-          x: MARGIN_MM - bounds.x,
-          y: MARGIN_MM - bounds.y,
-          size: CHAR_BOX_MM,
+          x: marginMm - bounds.x,
+          y: marginMm - bounds.y,
+          size: charBoxMm,
         }
       : null,
   };
+}
+
+/** Converge-loop tolerance and iteration cap for `renderKeychainText` below. */
+const WIDTH_CONSTRAINT_TOLERANCE_MM = 0.05;
+const WIDTH_CONSTRAINT_MAX_ITERATIONS = 6;
+
+/**
+ * Public entry point: renders at natural size first, then — only if the
+ * result would exceed MAX_ITEM_WIDTH_MM (a long name stretching the item
+ * arbitrarily wide, wasting acrylic in nesting) — re-renders with a width
+ * constraint applied:
+ *
+ * 1. Uniformly shrink the whole item (character + text + outline together)
+ *    just enough to fit MAX_ITEM_WIDTH_MM, as long as that keeps the text's
+ *    finished cut height at or above MIN_TEXT_CUT_HEIGHT_MM (the low end of
+ *    the locked 25-27mm production spec).
+ * 2. If hitting that height floor still leaves the item too wide (very long
+ *    names), lock the uniform shrink at exactly the floor height, then
+ *    absorb the remaining excess width by condensing the text's horizontal
+ *    letter-spacing only — the character artwork and its cut-line are never
+ *    non-uniformly distorted, which would desync the raster image from its
+ *    outline (see `renderKeychainTextScaled`'s docs).
+ *
+ * The fixed-mm dilate/erode "closing" pass (kept constant regardless of
+ * scale, for the same physical reason RING_HOLE_DIAMETER_MM is) adds a
+ * roughly constant absolute amount to the finished width no matter how much
+ * the glyphs are squeezed, so a single closed-form (uniformScale,
+ * textSqueezeX) solve can slightly overshoot MAX_ITEM_WIDTH_MM for very long
+ * names. Each loop iteration below recomputes the needed correction from the
+ * *actual* previous render's measured width/height rather than assuming a
+ * purely linear relationship, so it converges onto the real target width
+ * regardless of that nonlinearity.
+ */
+export function renderKeychainText(
+  assets: TemplateAssets,
+  template: Template,
+  text: string
+): KeychainRender {
+  let uniformScale = 1;
+  let textSqueezeX = 1;
+  let render = renderKeychainTextScaled(assets, template, text, uniformScale, textSqueezeX);
+
+  for (
+    let i = 0;
+    i < WIDTH_CONSTRAINT_MAX_ITERATIONS && render.width > MAX_ITEM_WIDTH_MM + WIDTH_CONSTRAINT_TOLERANCE_MM;
+    i++
+  ) {
+    const scaleNeeded = MAX_ITEM_WIDTH_MM / render.width;
+    if (render.height * scaleNeeded >= MIN_TEXT_CUT_HEIGHT_MM) {
+      uniformScale *= scaleNeeded;
+    } else {
+      const heightScaleNeeded = MIN_TEXT_CUT_HEIGHT_MM / render.height;
+      uniformScale *= heightScaleNeeded;
+      const widthAfterHeightLock = render.width * heightScaleNeeded;
+      textSqueezeX *= MAX_ITEM_WIDTH_MM / widthAfterHeightLock;
+    }
+    render = renderKeychainTextScaled(assets, template, text, uniformScale, textSqueezeX);
+  }
+
+  return render;
 }

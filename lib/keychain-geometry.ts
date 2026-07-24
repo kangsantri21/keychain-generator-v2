@@ -13,12 +13,9 @@ export const TEXT_GAP_MM = 5;
 /** Outer clearance kept around every item so the dilated outline never clips. */
 export const MARGIN_MM = 3;
 
-/** Cap-height-ish font size used when rendering a name for a standalone font template. */
-export const FONT_SIZE_STANDARD_MM = 18;
-
 /** Ring/keychain hole, offset from the item's top-left corner. */
 export const RING_HOLE_OFFSET_MM = 4;
-export const RING_HOLE_DIAMETER_MM = 3;
+export const RING_HOLE_DIAMETER_MM = 1.9;
 
 /** Manual per-template hole offset nudge (Template.holeOffset* columns) is clamped to this range, in mm. */
 export const MAX_LAYOUT_OFFSET_MM = 15;
@@ -46,6 +43,25 @@ export const ERODE_MM = 1.5;
  */
 export const TEXT_CUT_HEIGHT_MM = 26;
 export const TEXT_RAW_HEIGHT_MM = TEXT_CUT_HEIGHT_MM - 2 * (DILATE_MM - ERODE_MM);
+
+/**
+ * Hard ceiling on a rendered item's total on-sheet width — without this, a
+ * long name (more letters, wider glyph advance) makes the item stretch
+ * proportionally wider with no limit, wasting acrylic in nesting. A name that
+ * would exceed this first shrinks uniformly (see MIN_TEXT_CUT_HEIGHT_MM),
+ * then — if still too wide — gets its letter-spacing condensed horizontally.
+ */
+export const MAX_ITEM_WIDTH_MM = 130;
+
+/**
+ * Floor for the uniform shrink applied to fit MAX_ITEM_WIDTH_MM: the finished
+ * text cut height must never uniformly shrink below the low end of the
+ * documented 25-27mm production spec (TEXT_CUT_HEIGHT_MM's own target range),
+ * no matter how long the name is. Beyond this floor, remaining excess width
+ * is absorbed by condensing horizontal letter-spacing only, never by
+ * shrinking the cut height further.
+ */
+export const MIN_TEXT_CUT_HEIGHT_MM = 25;
 
 /**
  * Visual gap (mm) kept between a character's *actual* cut-line silhouette and

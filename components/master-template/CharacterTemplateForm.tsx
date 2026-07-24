@@ -31,7 +31,7 @@ const CHAR_BOX_SIZE = 96;
 const TEXT_GAP = 18; // ~5mm
 const CANVAS_MARGIN = 24;
 const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
-const RING_HOLE_DIAMETER = 7; // ~0.19mm spec, scaled up for preview visibility
+const RING_HOLE_DIAMETER = 7; // ~1.9mm spec, scaled up for preview visibility
 const OUTLINE_DEBOUNCE_MS = 300;
 // Manual layout offsets are stored/submitted in real-world mm (matching the
 // production renderer); this converts them to the preview's px scale.
