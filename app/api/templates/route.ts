@@ -6,7 +6,14 @@ import { db } from "@/lib/db";
 import { templates } from "@/lib/db/schema";
 import { slugify } from "@/lib/utils";
 import { generateCharacterPreviewSvg } from "@/lib/font-preview";
-import { parseOffset } from "@/lib/template-files";
+import {
+  parseOffset,
+  parseLayoutMode,
+  parseCustomZones,
+  isValidCustomZones,
+  parseTargetHeight,
+} from "@/lib/template-files";
+import { DEFAULT_CHAR_TARGET_HEIGHT_MM, DEFAULT_TEXT_TARGET_HEIGHT_MM } from "@/lib/keychain-geometry";
 
 const CHARACTER_EXTENSIONS = [".svg", ".png"];
 const FONT_EXTENSIONS = [".ttf", ".otf"];
@@ -44,10 +51,32 @@ export async function POST(request: NextRequest) {
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
   const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, 0);
   const holeOffsetY = parseOffset(formData.get("holeOffsetY") as string | null, 0);
+  const charTargetHeight = parseTargetHeight(
+    formData.get("charTargetHeight") as string | null,
+    DEFAULT_CHAR_TARGET_HEIGHT_MM
+  );
+  const textTargetHeight = parseTargetHeight(
+    formData.get("textTargetHeight") as string | null,
+    DEFAULT_TEXT_TARGET_HEIGHT_MM
+  );
   // Manual text offsets were retired (they let letters overlap character
   // artwork) — layout is auto-computed again, so this always saves as 0.
   const textOffsetX = 0;
   const textOffsetY = 0;
+
+  const layoutMode = parseLayoutMode(formData.get("layoutMode") as string | null);
+  const customZonesRaw = formData.get("customZones") as string | null;
+  let customZones = null;
+  if (customZonesRaw) {
+    const parsed = parseCustomZones(customZonesRaw);
+    if (parsed === null) {
+      return badRequest("Data zona kustomisasi tidak valid (bukan JSON yang benar)");
+    }
+    if (!isValidCustomZones(parsed)) {
+      return badRequest("Data zona kustomisasi tidak valid");
+    }
+    customZones = parsed;
+  }
 
   if (!code) {
     return badRequest("Kode template harus diisi");
@@ -174,6 +203,10 @@ export async function POST(request: NextRequest) {
         holeOffsetY,
         textOffsetX,
         textOffsetY,
+        layoutMode,
+        customZones,
+        charTargetHeight,
+        textTargetHeight,
       })
       .returning();
 

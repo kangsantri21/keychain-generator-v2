@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
 import { MAX_LAYOUT_OFFSET_MM } from "@/lib/keychain-geometry";
+import type { CustomZone } from "@/lib/db/schema";
 
 export const CHARACTER_EXTENSIONS = [".svg", ".png"];
 export const FONT_EXTENSIONS = [".ttf", ".otf"];
@@ -43,6 +44,59 @@ export function parseOffset(raw: string | null, fallback: number): number {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(-MAX_LAYOUT_OFFSET_MM, Math.min(MAX_LAYOUT_OFFSET_MM, n));
+}
+
+/** Sane bounds (mm) for Template.charTargetHeight/textTargetHeight — guards against a zero/negative/absurd render target. */
+export const MIN_TARGET_HEIGHT_MM = 1;
+export const MAX_TARGET_HEIGHT_MM = 100;
+
+/** Parses a char/text target height field (mm) from form data; falls back on missing/invalid input. */
+export function parseTargetHeight(raw: string | null, fallback: number): number {
+  if (raw === null) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(MIN_TARGET_HEIGHT_MM, Math.min(MAX_TARGET_HEIGHT_MM, n));
+}
+
+/** Parses the layoutMode field from form data; falls back on missing/invalid input. */
+export function parseLayoutMode(
+  raw: string | null,
+  fallback: "dynamic" | "fixed" = "dynamic"
+): "dynamic" | "fixed" {
+  return raw === "dynamic" || raw === "fixed" ? raw : fallback;
+}
+
+/** Parses a JSON-encoded customZones field from form data; returns null on missing/invalid JSON. */
+export function parseCustomZones(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function isValidCustomZones(value: unknown): value is CustomZone[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((zone) => {
+    if (!zone || typeof zone !== "object") return false;
+    const z = zone as Record<string, unknown>;
+    return (
+      typeof z.id === "string" &&
+      z.id.trim().length > 0 &&
+      (z.type === "text" || z.type === "image") &&
+      typeof z.x === "number" &&
+      Number.isFinite(z.x) &&
+      typeof z.y === "number" &&
+      Number.isFinite(z.y) &&
+      typeof z.width === "number" &&
+      Number.isFinite(z.width) &&
+      z.width > 0 &&
+      typeof z.height === "number" &&
+      Number.isFinite(z.height) &&
+      z.height > 0
+    );
+  });
 }
 
 export interface SavedFile {

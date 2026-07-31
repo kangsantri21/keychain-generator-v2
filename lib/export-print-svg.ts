@@ -27,7 +27,7 @@ export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): 
     .map((item) => {
       if (!item.render) return "";
       const image = item.render.characterImage
-        ? `<image href="${item.render.characterImage.dataUri}" x="${item.render.characterImage.x}" y="${item.render.characterImage.y}" width="${item.render.characterImage.size}" height="${item.render.characterImage.size}" preserveAspectRatio="xMidYMid meet" />`
+        ? `<image href="${item.render.characterImage.dataUri}" x="${item.render.characterImage.x}" y="${item.render.characterImage.y}" width="${item.render.characterImage.width}" height="${item.render.characterImage.height}" preserveAspectRatio="xMidYMid meet" />`
         : "";
       const text = item.render.textSegments
         .map((segment) => `<path d="${segment.d}" fill="${segment.color}" />`)

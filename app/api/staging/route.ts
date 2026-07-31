@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { stagingItems, orders, templates, type Order, type Template } from "@/lib/db/schema";
-import { loadTemplateAssets, renderKeychainText, type TemplateAssets, type KeychainRender } from "@/lib/keychain-render";
+import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
+import { renderTemplateItem } from "@/lib/render-dispatcher";
+import type { KeychainRender } from "@/lib/render-types";
 
 interface StagingItemPayload {
   id: number;
@@ -67,7 +69,7 @@ export async function GET(request: NextRequest) {
       }
       if (assets) {
         try {
-          render = renderKeychainText(assets, row.template, row.customerName);
+          render = renderTemplateItem(assets, row.template, row.customerName);
         } catch {
           render = null;
         }

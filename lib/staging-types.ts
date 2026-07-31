@@ -9,7 +9,8 @@ export interface CharacterImagePayload {
   dataUri: string;
   x: number;
   y: number;
-  size: number;
+  width: number;
+  height: number;
 }
 
 export interface KeychainRenderPayload {

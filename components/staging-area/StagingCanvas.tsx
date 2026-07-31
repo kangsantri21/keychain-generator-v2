@@ -22,8 +22,8 @@ export function StagingCanvas({ sheet }: { sheet: StagingSheet | null }) {
                   href={item.render.characterImage.dataUri}
                   x={item.render.characterImage.x}
                   y={item.render.characterImage.y}
-                  width={item.render.characterImage.size}
-                  height={item.render.characterImage.size}
+                  width={item.render.characterImage.width}
+                  height={item.render.characterImage.height}
                   preserveAspectRatio="xMidYMid meet"
                 />
               )}

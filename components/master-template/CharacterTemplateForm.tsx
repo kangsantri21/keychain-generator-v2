@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import * as opentype from "opentype.js";
+import { Plus, Trash2 } from "lucide-react";
 import { renderColoredGlyphsAtHeight, type ColoredTextRender } from "@/lib/font-preview";
 import {
   DILATE_PX,
@@ -16,30 +17,36 @@ import {
 import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
-import type { Template } from "@/lib/db/schema";
+import type { Template, CustomZone } from "@/lib/db/schema";
 import {
   CHAR_BOX_MM,
   MAX_LAYOUT_OFFSET_MM,
   WELD_CLEARANCE_MM,
-  TEXT_RAW_HEIGHT_MM,
   SEAM_CLOSE_MM,
+  DILATE_MM,
+  ERODE_MM,
+  DEFAULT_CHAR_TARGET_HEIGHT_MM,
+  DEFAULT_TEXT_TARGET_HEIGHT_MM,
 } from "@/lib/keychain-geometry";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
 
 // Live-preview canvas geometry (px), approximating the laser-cut scale.
-const CHAR_BOX_SIZE = 96;
 const TEXT_GAP = 18; // ~5mm
 const CANVAS_MARGIN = 24;
 const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
 const RING_HOLE_DIAMETER = 7; // ~1.9mm spec, scaled up for preview visibility
 const OUTLINE_DEBOUNCE_MS = 300;
 // Manual layout offsets are stored/submitted in real-world mm (matching the
-// production renderer); this converts them to the preview's px scale.
-const PX_PER_MM = CHAR_BOX_SIZE / CHAR_BOX_MM;
-// Raw (pre-dilation) glyph height target in px, mirroring the production
-// spec (TEXT_RAW_HEIGHT_MM) so the preview's finished cut line matches the
-// real 25-27mm production height exactly, regardless of the uploaded font.
-const TEXT_RAW_HEIGHT_PX = TEXT_RAW_HEIGHT_MM * PX_PER_MM;
+// production renderer); this converts them to the preview's px scale. Kept
+// as a fixed reference scale (production itself no longer ties the
+// character's size to CHAR_BOX_MM — see charTargetHeight below).
+const PX_PER_MM = 96 / CHAR_BOX_MM;
+// Net outward growth a dilate+erode closing pass adds to a dimension (both
+// edges combined) — mirrors production's CLOSING_GROWTH_MM
+// (lib/keychain-render.ts) so the preview's raw glyph/box size, rendered
+// this much smaller than its target, nets out to the real finished target
+// height after the preview's own dilate/erode pass below.
+const CLOSING_GROWTH_MM = 2 * (DILATE_MM - ERODE_MM);
 // Extra closing pass (mirrors the production SEAM_CLOSE_MM) applied to the
 // final character+text union so the preview's seam matches the real welded
 // bridge shape instead of showing a fragile-looking notch that isn't there.
@@ -155,6 +162,23 @@ export function CharacterTemplateForm({
     x: CANVAS_MARGIN + RING_HOLE_OFFSET + (editingTemplate?.holeOffsetX ?? 0) * PX_PER_MM,
     y: CANVAS_MARGIN + RING_HOLE_OFFSET + (editingTemplate?.holeOffsetY ?? 0) * PX_PER_MM,
   });
+  // Fixed-Shape Template product line (MVP simple-numbers form): "dynamic"
+  // (default) keeps every existing behavior below untouched; "fixed" reuses
+  // the character image slot as a master SVG that already has its own final
+  // cut-line, with customZones marking where a name/photo gets placed —
+  // see lib/keychain-render-fixed.ts for how production actually renders it.
+  const [layoutMode, setLayoutMode] = useState<"dynamic" | "fixed">(editingTemplate?.layoutMode ?? "dynamic");
+  const [customZones, setCustomZones] = useState<CustomZone[]>(editingTemplate?.customZones ?? []);
+  // "dynamic"-only production spec (lib/db/schema.ts): the character and
+  // text nodes each scale independently to their own finished (post-clipper)
+  // cutting height — see lib/keychain-render.ts. Drives both the submitted
+  // form data and this preview's own box/glyph sizing below.
+  const [charTargetHeight, setCharTargetHeight] = useState(
+    editingTemplate?.charTargetHeight ?? DEFAULT_CHAR_TARGET_HEIGHT_MM
+  );
+  const [textTargetHeight, setTextTargetHeight] = useState(
+    editingTemplate?.textTargetHeight ?? DEFAULT_TEXT_TARGET_HEIGHT_MM
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
@@ -256,25 +280,56 @@ export function CharacterTemplateForm({
     }
   }
 
+  function handleAddZone() {
+    setCustomZones((zones) => [
+      ...zones,
+      { id: crypto.randomUUID(), type: "text", x: 0, y: 0, width: 20, height: 10 },
+    ]);
+  }
+
+  function handleRemoveZone(id: string) {
+    setCustomZones((zones) => zones.filter((zone) => zone.id !== id));
+  }
+
+  function handleZoneChange(id: string, patch: Partial<CustomZone>) {
+    setCustomZones((zones) => zones.map((zone) => (zone.id === id ? { ...zone, ...patch } : zone)));
+  }
+
+  // Raw (pre-dilation) glyph height target in px, mirroring production's
+  // CLOSING_GROWTH_MM compensation (lib/keychain-render.ts) so the preview's
+  // finished cut line matches textTargetHeight exactly, regardless of font.
+  const textRawHeightPx = Math.max((textTargetHeight - CLOSING_GROWTH_MM) * PX_PER_MM, 1);
+  // Side length of the plain (no designer cut-line) character placeholder
+  // box — this box IS dilated in production, so it needs the same
+  // compensation as the text; a designer's own cut-line does not (see
+  // characterFit below).
+  const charBoxRawPx = Math.max((charTargetHeight - CLOSING_GROWTH_MM) * PX_PER_MM, 1);
+  // A designer's own cut-line is unioned verbatim (never itself dilated),
+  // so it scales directly to the *finished* target height with no
+  // compensation — see characterFit below.
+  const charFinishedPx = charTargetHeight * PX_PER_MM;
+
   const textPreview: ColoredTextRender | null = useMemo(() => {
     if (!parsedFont || !defaultText.trim()) return null;
     try {
-      return renderColoredGlyphsAtHeight(parsedFont, defaultText.trim(), TEXT_RAW_HEIGHT_PX, colors);
+      return renderColoredGlyphsAtHeight(parsedFont, defaultText.trim(), textRawHeightPx, colors);
     } catch {
       return null;
     }
-  }, [parsedFont, defaultText, colors]);
+  }, [parsedFont, defaultText, colors, textRawHeightPx]);
 
   // Fit the designer's own cut-line into the character box the same way the
   // production renderer does — computed once here (not just inside the
   // outline effect) so both the text's X origin and the outline computation
   // can be measured against the character's *actual* silhouette bounds.
+  // Height-only scale (matching production): the artwork's own proportions,
+  // not a fixed square, determine its width.
   const characterFit = useMemo(() => {
     if (!characterVector || characterVector.cutLinePaths.length === 0) return null;
     const { bounds: srcBounds } = characterVector;
-    const fitScale = Math.min(CHAR_BOX_SIZE / srcBounds.width, CHAR_BOX_SIZE / srcBounds.height);
-    const cutTx = CANVAS_MARGIN + (CHAR_BOX_SIZE - srcBounds.width * fitScale) / 2 - srcBounds.x * fitScale;
-    const cutTy = CANVAS_MARGIN + (CHAR_BOX_SIZE - srcBounds.height * fitScale) / 2 - srcBounds.y * fitScale;
+    const fitScale = charFinishedPx / srcBounds.height;
+    const cutTx = CANVAS_MARGIN - srcBounds.x * fitScale;
+    const cutTy = CANVAS_MARGIN - srcBounds.y * fitScale;
     const positionedCutLines = characterVector.cutLinePaths.map((d) =>
       scaleAndTranslatePathData(d, fitScale, cutTx, cutTy)
     );
@@ -284,34 +339,34 @@ export function CharacterTemplateForm({
       if (b) bounds = bounds ? unionBounds(bounds, b) : b;
     }
     return bounds ? { positionedCutLines, bounds } : null;
-  }, [characterVector]);
+  }, [characterVector, charFinishedPx]);
 
   // Position the text just clear of the character's *actual* cut-line
-  // silhouette (not the nominal CHAR_BOX_SIZE square, which real artwork
-  // rarely fills) — a small positive clearance gap keeps the raw glyphs from
-  // ever visually overlapping the character artwork, while staying under
-  // the text's net dilation growth so the *dilated* cutting outline still
-  // reaches the character and Clipper welds them into one contour.
+  // silhouette (not a nominal box edge, which real artwork rarely fills) —
+  // a small positive clearance gap keeps the raw glyphs from ever visually
+  // overlapping the character artwork, while staying under the text's net
+  // dilation growth so the *dilated* cutting outline still reaches the
+  // character and Clipper welds them into one contour.
   const WELD_CLEARANCE_PX = WELD_CLEARANCE_MM * PX_PER_MM;
-  const nominalTextOriginX = CANVAS_MARGIN + CHAR_BOX_SIZE + TEXT_GAP;
+  const nominalTextOriginX = CANVAS_MARGIN + charBoxRawPx + TEXT_GAP;
   const textOriginX = characterFit
     ? characterFit.bounds.x + characterFit.bounds.width + WELD_CLEARANCE_PX
     : nominalTextOriginX;
   const textOriginY = CANVAS_MARGIN;
 
   // Center vertically against the character's *actual* silhouette height
-  // when one is known, not the nominal box — an off-center cut-line would
+  // when one is known, not a nominal box — an off-center cut-line would
   // otherwise leave the text looking misaligned next to the artwork.
   const charCenterY = characterFit
     ? characterFit.bounds.y + characterFit.bounds.height / 2
-    : CANVAS_MARGIN + CHAR_BOX_SIZE / 2;
+    : CANVAS_MARGIN + charBoxRawPx / 2;
 
   const textTranslateX = textPreview ? textOriginX - textPreview.bbox.x1 : textOriginX;
   const textTranslateY = textPreview ? charCenterY - (textPreview.bbox.y1 + textPreview.bbox.y2) / 2 : textOriginY;
   const textWidth = textPreview ? Math.max(textPreview.bbox.x2 - textPreview.bbox.x1, 1) : 80;
 
   const canvasWidth = textOriginX + textWidth + CANVAS_MARGIN;
-  const canvasHeight = CHAR_BOX_SIZE + CANVAS_MARGIN * 2;
+  const canvasHeight = (characterFit ? characterFit.bounds.height : charBoxRawPx) + CANVAS_MARGIN * 2;
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -319,6 +374,17 @@ export function CharacterTemplateForm({
         x: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetX * PX_PER_MM,
         y: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetY * PX_PER_MM,
       };
+
+      // "Fixed" templates never run this clipper pipeline in production
+      // (lib/keychain-render-fixed.ts trusts the master SVG's own cut-line
+      // verbatim) — computing one here would just be a misleading preview,
+      // so skip it entirely rather than show a contour production won't
+      // actually produce.
+      if (layoutMode === "fixed") {
+        setOutlinePath(null);
+        setHoleCenter(nominalHoleCenter);
+        return;
+      }
 
       if (!characterPreviewUrl || !textPreview || textPreview.segments.length === 0) {
         setOutlinePath(null);
@@ -368,7 +434,7 @@ export function CharacterTemplateForm({
         }
         setHoleCenter(nextHoleCenter);
       } else {
-        const charBoxD = `M ${CANVAS_MARGIN} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + CHAR_BOX_SIZE} ${CANVAS_MARGIN + CHAR_BOX_SIZE} L ${CANVAS_MARGIN} ${CANVAS_MARGIN + CHAR_BOX_SIZE} Z`;
+        const charBoxD = `M ${CANVAS_MARGIN} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + charBoxRawPx} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + charBoxRawPx} ${CANVAS_MARGIN + charBoxRawPx} L ${CANVAS_MARGIN} ${CANVAS_MARGIN + charBoxRawPx} Z`;
         setOutlinePath(
           computeLaserOutlineClipper([charBoxD, ...glyphShapes], { dilateMm: DILATE_PX, erodeMm: ERODE_PX })
         );
@@ -377,7 +443,17 @@ export function CharacterTemplateForm({
     }, OUTLINE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
-  }, [characterPreviewUrl, textPreview, textTranslateX, textTranslateY, characterFit, holeOffsetX, holeOffsetY]);
+  }, [
+    characterPreviewUrl,
+    textPreview,
+    textTranslateX,
+    textTranslateY,
+    characterFit,
+    holeOffsetX,
+    holeOffsetY,
+    layoutMode,
+    charBoxRawPx,
+  ]);
 
   function resetForm() {
     setCode("");
@@ -392,6 +468,10 @@ export function CharacterTemplateForm({
     setHoleOffsetY(0);
     setHoleCenter({ x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET });
     setColors([DEFAULT_COLOR]);
+    setLayoutMode("dynamic");
+    setCustomZones([]);
+    setCharTargetHeight(DEFAULT_CHAR_TARGET_HEIGHT_MM);
+    setTextTargetHeight(DEFAULT_TEXT_TARGET_HEIGHT_MM);
     if (characterInputRef.current) characterInputRef.current.value = "";
     if (fontInputRef.current) fontInputRef.current.value = "";
   }
@@ -415,6 +495,10 @@ export function CharacterTemplateForm({
       toast.error(`Jumlah warna harus antara ${MIN_COLORS} - ${MAX_COLORS}`);
       return;
     }
+    if (layoutMode === "fixed" && customZones.some((zone) => zone.width <= 0 || zone.height <= 0)) {
+      toast.error("Lebar dan tinggi setiap zona harus lebih dari 0");
+      return;
+    }
 
     const formData = new FormData();
     formData.set("code", code.trim());
@@ -425,6 +509,10 @@ export function CharacterTemplateForm({
     formData.set("defaultText", defaultText.trim() || "Nama");
     formData.set("holeOffsetX", String(holeOffsetX));
     formData.set("holeOffsetY", String(holeOffsetY));
+    formData.set("layoutMode", layoutMode);
+    formData.set("customZones", JSON.stringify(customZones));
+    formData.set("charTargetHeight", String(charTargetHeight));
+    formData.set("textTargetHeight", String(textTargetHeight));
 
     setIsSubmitting(true);
     try {
@@ -535,6 +623,163 @@ export function CharacterTemplateForm({
           </div>
         </div>
 
+        <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+          <span className="text-sm font-medium text-slate-700">Mode Layout</span>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                name="layoutMode"
+                value="dynamic"
+                checked={layoutMode === "dynamic"}
+                onChange={() => setLayoutMode("dynamic")}
+                className="accent-blue-600"
+              />
+              Dynamic (kontur otomatis, seperti sekarang)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                name="layoutMode"
+                value="fixed"
+                checked={layoutMode === "fixed"}
+                onChange={() => setLayoutMode("fixed")}
+                className="accent-blue-600"
+              />
+              Fixed (bentuk terkunci dari file SVG)
+            </label>
+          </div>
+
+          {layoutMode === "dynamic" && (
+            <div className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Tinggi Target Karakter (mm)
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={0.5}
+                  value={charTargetHeight}
+                  onChange={(event) => setCharTargetHeight(Number(event.target.value))}
+                  className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                />
+                <span className="text-[11px] font-normal text-slate-400">
+                  Tinggi potong akhir karakter, independen dari teks.
+                </span>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Tinggi Target Teks (mm)
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={0.5}
+                  value={textTargetHeight}
+                  onChange={(event) => setTextTargetHeight(Number(event.target.value))}
+                  className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                />
+                <span className="text-[11px] font-normal text-slate-400">
+                  Tinggi potong akhir teks nama, independen dari karakter. Teks akan mengecil ke samping
+                  (gepeng) jika total lebar item melebihi 80mm.
+                </span>
+              </label>
+            </div>
+          )}
+
+          {layoutMode === "fixed" && (
+            <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-slate-700">Zona Kustomisasi (Custom Zones)</span>
+                <button
+                  type="button"
+                  onClick={handleAddZone}
+                  className="flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  <Plus size={14} />
+                  Tambah Zona
+                </button>
+              </div>
+
+              {customZones.length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  Belum ada zona. Klik &quot;Tambah Zona&quot; untuk menandai area teks/gambar di file SVG.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {customZones.map((zone, index) => (
+                    <div
+                      key={zone.id}
+                      className="grid grid-cols-2 items-end gap-2 rounded-md border border-slate-200 p-2 sm:grid-cols-6"
+                    >
+                      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 sm:col-span-1">
+                        Zona #{index + 1} — Tipe
+                        <select
+                          value={zone.type}
+                          onChange={(event) =>
+                            handleZoneChange(zone.id, { type: event.target.value as "text" | "image" })
+                          }
+                          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                        >
+                          <option value="text">Text</option>
+                          <option value="image">Image</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        X (mm)
+                        <input
+                          type="number"
+                          value={zone.x}
+                          onChange={(event) => handleZoneChange(zone.id, { x: Number(event.target.value) })}
+                          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        Y (mm)
+                        <input
+                          type="number"
+                          value={zone.y}
+                          onChange={(event) => handleZoneChange(zone.id, { y: Number(event.target.value) })}
+                          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        Lebar (mm)
+                        <input
+                          type="number"
+                          value={zone.width}
+                          onChange={(event) => handleZoneChange(zone.id, { width: Number(event.target.value) })}
+                          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        Tinggi (mm)
+                        <input
+                          type="number"
+                          value={zone.height}
+                          onChange={(event) => handleZoneChange(zone.id, { height: Number(event.target.value) })}
+                          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveZone(zone.id)}
+                        aria-label="Hapus zona ini"
+                        className="flex h-fit items-center justify-center rounded-md p-2 text-red-600 transition-colors hover:bg-red-50"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-slate-400">
+                Koordinat X/Y/Lebar/Tinggi mengikuti ukuran asli file SVG (mm). Pratinjau kontur di bawah
+                dinonaktifkan untuk mode Fixed karena garis potong diambil langsung dari file SVG.
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center gap-3 sm:col-span-2">
           <button
             type="submit"
@@ -577,16 +822,16 @@ export function CharacterTemplateForm({
                 href={characterPreviewUrl}
                 x={CANVAS_MARGIN}
                 y={CANVAS_MARGIN}
-                width={CHAR_BOX_SIZE}
-                height={CHAR_BOX_SIZE}
+                width={characterFit ? characterFit.bounds.width : charBoxRawPx}
+                height={characterFit ? characterFit.bounds.height : charBoxRawPx}
                 preserveAspectRatio="xMidYMid meet"
               />
             ) : (
               <rect
                 x={CANVAS_MARGIN}
                 y={CANVAS_MARGIN}
-                width={CHAR_BOX_SIZE}
-                height={CHAR_BOX_SIZE}
+                width={charBoxRawPx}
+                height={charBoxRawPx}
                 rx={12}
                 fill="#f8fafc"
                 stroke="#cbd5e1"
@@ -612,7 +857,7 @@ export function CharacterTemplateForm({
             ) : (
               <text
                 x={textOriginX}
-                y={CANVAS_MARGIN + CHAR_BOX_SIZE / 2}
+                y={CANVAS_MARGIN + charBoxRawPx / 2}
                 dominantBaseline="middle"
                 fontSize={14}
                 fill="#94a3b8"

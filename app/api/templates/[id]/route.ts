@@ -17,6 +17,10 @@ import {
   parseColors,
   isValidColorPalette,
   parseOffset,
+  parseLayoutMode,
+  parseCustomZones,
+  isValidCustomZones,
+  parseTargetHeight,
   saveUploadedFile,
   readPublicFile,
   removePublicFile,
@@ -111,11 +115,33 @@ export async function PUT(
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
   const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, existing.holeOffsetX);
   const holeOffsetY = parseOffset(formData.get("holeOffsetY") as string | null, existing.holeOffsetY);
+  const charTargetHeight = parseTargetHeight(
+    formData.get("charTargetHeight") as string | null,
+    existing.charTargetHeight
+  );
+  const textTargetHeight = parseTargetHeight(
+    formData.get("textTargetHeight") as string | null,
+    existing.textTargetHeight
+  );
   // Manual text offsets were retired (they let letters overlap character
   // artwork) — layout is auto-computed again, so these always save as 0
   // regardless of what an older row (or stray request) might carry.
   const textOffsetX = 0;
   const textOffsetY = 0;
+
+  const layoutMode = parseLayoutMode(formData.get("layoutMode") as string | null, existing.layoutMode);
+  const customZonesRaw = formData.get("customZones") as string | null;
+  let customZones = existing.customZones;
+  if (customZonesRaw) {
+    const parsed = parseCustomZones(customZonesRaw);
+    if (parsed === null) {
+      return badRequest("Data zona kustomisasi tidak valid (bukan JSON yang benar)");
+    }
+    if (!isValidCustomZones(parsed)) {
+      return badRequest("Data zona kustomisasi tidak valid");
+    }
+    customZones = parsed;
+  }
 
   if (!code) {
     return badRequest("Kode template harus diisi");
@@ -230,6 +256,10 @@ export async function PUT(
         holeOffsetY,
         textOffsetX,
         textOffsetY,
+        layoutMode,
+        customZones,
+        charTargetHeight,
+        textTargetHeight,
       })
       .where(eq(templates.id, templateId))
       .returning();

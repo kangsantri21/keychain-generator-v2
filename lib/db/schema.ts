@@ -1,5 +1,23 @@
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { DEFAULT_CHAR_TARGET_HEIGHT_MM, DEFAULT_TEXT_TARGET_HEIGHT_MM } from "@/lib/keychain-geometry";
+
+/**
+ * A named placement zone inside a "fixed" layoutMode template's own master
+ * SVG (which already carries its own final, paten cut-line) — x/y/width/
+ * height are in mm, in that source SVG's own coordinate space. `type`
+ * determines whether the fixed-shape renderer (lib/keychain-render-fixed.ts)
+ * auto-shrinks a name's text into the zone, or fits/masks an uploaded photo
+ * into it. Only meaningful when the owning Template's layoutMode is "fixed".
+ */
+export interface CustomZone {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  type: "text" | "image";
+}
 
 export const templates = sqliteTable("templates", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -11,6 +29,17 @@ export const templates = sqliteTable("templates", {
   colors: text("colors", { mode: "json" }).$type<string[]>().notNull(),
   defaultText: text("default_text").notNull().default("Nama"),
   isCharacter: integer("is_character", { mode: "boolean" }).notNull().default(false),
+  // "dynamic" (default, existing behavior): lib/keychain-render.ts's
+  // clipper/font auto-layout engine computes the cut-line at render time —
+  // untouched by the Fixed-Shape Template product line below. "fixed": the
+  // template's own master SVG already carries its final cut-line; the
+  // renderer only fits text/images into customZones, never recomputing the
+  // outline. Defaults to "dynamic" so every pre-existing row keeps working
+  // unchanged with no migration backfill needed.
+  layoutMode: text("layout_mode").$type<"dynamic" | "fixed">().notNull().default("dynamic"),
+  // Only populated (and only meaningful) when layoutMode is "fixed" — see
+  // the CustomZone doc comment above.
+  customZones: text("custom_zones", { mode: "json" }).$type<CustomZone[] | null>(),
   // Manual layout tweaks (mm, real-world scale) for character templates whose
   // irregular silhouette makes the static auto-layout imperfect — nudges the
   // ring hole and name text away from the auto-computed position. Zero means
@@ -19,6 +48,13 @@ export const templates = sqliteTable("templates", {
   holeOffsetY: real("hole_offset_y").notNull().default(0),
   textOffsetX: real("text_offset_x").notNull().default(0),
   textOffsetY: real("text_offset_y").notNull().default(0),
+  // "dynamic"-only production spec: the *finished* (post-clipper) cutting
+  // height, in mm, each node is independently scaled to hit — see
+  // lib/keychain-render.ts. Replaces the old single shared TEXT_CUT_HEIGHT_MM
+  // constant now that character artwork and name text scale independently
+  // instead of together under one uniformScale.
+  charTargetHeight: real("char_target_height").notNull().default(DEFAULT_CHAR_TARGET_HEIGHT_MM),
+  textTargetHeight: real("text_target_height").notNull().default(DEFAULT_TEXT_TARGET_HEIGHT_MM),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
 });
 

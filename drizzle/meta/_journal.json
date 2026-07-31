@@ -50,6 +50,20 @@
       "when": 1784048251059,
       "tag": "0006_jazzy_starjammers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1784904545240,
+      "tag": "0007_steep_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1785489451206,
+      "tag": "0008_lumpy_shadow_king",
+      "breakpoints": true
     }
   ]
 }

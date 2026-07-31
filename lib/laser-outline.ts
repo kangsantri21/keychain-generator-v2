@@ -63,9 +63,9 @@ export function scaleAndTranslatePathData(d: string, scale: number, tx: number, 
 /**
  * Scales raw SVG path data horizontally only (vertical axis untouched),
  * anchored at a fixed x so geometry does not shift at that x — used to
- * condense a name's letter-spacing when it would otherwise exceed
- * MAX_ITEM_WIDTH_MM, without touching the text's cut height (a locked
- * production spec, see MIN_TEXT_CUT_HEIGHT_MM in keychain-geometry.ts).
+ * condense ("gepeng") a name's text when it would otherwise push the item
+ * past MAX_ITEM_WIDTH_MM, without touching the text's own target cut height
+ * (Template.textTargetHeight, a locked scale-Y, see keychain-render.ts).
  */
 export function squeezeHorizontalPathData(d: string, scaleX: number, anchorX: number): string {
   if (!ensureScope()) return d;

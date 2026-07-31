@@ -6,7 +6,13 @@ export const SHEET_HEIGHT_MM = 470;
 /** Gap the packer keeps between neighboring items, for safe laser cutting. */
 export const ITEM_PADDING_MM = 2;
 
-/** Character image footprint (square) for Template Karakter items. */
+/**
+ * Legacy nominal character footprint — no longer drives production sizing
+ * (lib/keychain-render.ts scales the character node by Template.
+ * charTargetHeight instead, independently of the text). Kept only as the
+ * live admin preview's px-per-mm reference scale (components/master-template/
+ * CharacterTemplateForm.tsx).
+ */
 export const CHAR_BOX_MM = 25;
 /** Gap between the character box and its name text. */
 export const TEXT_GAP_MM = 5;
@@ -30,38 +36,28 @@ export const DILATE_MM = 4.0;
 export const ERODE_MM = 1.5;
 
 /**
- * Production spec for a character template's name text: the *final* cutting
- * outline height (raw glyphs + the dilate/erode closing pass on both the top
- * and bottom edges) must land in the 25-27mm range, target 26mm. Since the
- * closing pass grows a locally-flat edge outward by (DILATE_MM - ERODE_MM)
- * on each side, the raw glyphs must be rendered at that much less than the
- * target so the *finished* cut line comes out at TEXT_CUT_HEIGHT_MM — not
- * the glyphs themselves. Font size is then back-calculated per render (see
- * `renderColoredGlyphsAtHeight` in lib/font-preview.ts) so this holds
- * regardless of the uploaded font's own metrics or which characters (with or
- * without descenders) appear in a given name.
+ * Default *finished* (post-clipper) cutting heights, in mm, for a "dynamic"
+ * layoutMode template's two independently-scaled nodes — the character
+ * artwork/box and the name text (Template.charTargetHeight/textTargetHeight,
+ * lib/db/schema.ts). Each node's raw (pre-dilation) size is back-calculated
+ * per render from its own target so the *finished* cut line lands exactly on
+ * target regardless of font metrics or artwork aspect ratio — see
+ * lib/keychain-render.ts.
  */
-export const TEXT_CUT_HEIGHT_MM = 26;
-export const TEXT_RAW_HEIGHT_MM = TEXT_CUT_HEIGHT_MM - 2 * (DILATE_MM - ERODE_MM);
+export const DEFAULT_CHAR_TARGET_HEIGHT_MM = 26;
+export const DEFAULT_TEXT_TARGET_HEIGHT_MM = 20;
 
 /**
- * Hard ceiling on a rendered item's total on-sheet width — without this, a
- * long name (more letters, wider glyph advance) makes the item stretch
- * proportionally wider with no limit, wasting acrylic in nesting. A name that
- * would exceed this first shrinks uniformly (see MIN_TEXT_CUT_HEIGHT_MM),
- * then — if still too wide — gets its letter-spacing condensed horizontally.
+ * Hard, absolute ceiling on a rendered item's total on-sheet width (bounding
+ * box left to right, including the cut-line) — without this, a long name
+ * (more letters, wider glyph advance) makes the item stretch proportionally
+ * wider with no limit, wasting acrylic in nesting. Unlike the old two-stage
+ * uniform-shrink-then-squeeze scheme, character height is NEVER reduced to
+ * fit this cap — only the text may condense horizontally (scale-X only,
+ * "gepeng") once it would push the total past this limit; see
+ * lib/keychain-render.ts.
  */
-export const MAX_ITEM_WIDTH_MM = 130;
-
-/**
- * Floor for the uniform shrink applied to fit MAX_ITEM_WIDTH_MM: the finished
- * text cut height must never uniformly shrink below the low end of the
- * documented 25-27mm production spec (TEXT_CUT_HEIGHT_MM's own target range),
- * no matter how long the name is. Beyond this floor, remaining excess width
- * is absorbed by condensing horizontal letter-spacing only, never by
- * shrinking the cut height further.
- */
-export const MIN_TEXT_CUT_HEIGHT_MM = 25;
+export const MAX_ITEM_WIDTH_MM = 80;
 
 /**
  * Visual gap (mm) kept between a character's *actual* cut-line silhouette and

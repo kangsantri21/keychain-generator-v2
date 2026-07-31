@@ -3,7 +3,8 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { MaxRectsPacker, PACKING_LOGIC, Rectangle } from "maxrects-packer";
 import { db } from "@/lib/db";
 import { orders, orderItems, templates, stagingItems, type NewStagingItem } from "@/lib/db/schema";
-import { loadTemplateAssets, renderKeychainText, type TemplateAssets } from "@/lib/keychain-render";
+import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
+import { renderTemplateItem } from "@/lib/render-dispatcher";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM } from "@/lib/keychain-geometry";
 
 interface PackData {
@@ -87,7 +88,7 @@ export async function POST() {
 
     for (const name of item.customerNames) {
       try {
-        const rendered = renderKeychainText(assets, template, name);
+        const rendered = renderTemplateItem(assets, template, name);
         const data: PackData = { orderId: item.orderId, templateId: template.id, customerName: name };
         const rect = new Rectangle(rendered.width, rendered.height);
         rect.data = data;
