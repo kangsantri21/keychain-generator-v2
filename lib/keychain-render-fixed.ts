@@ -3,8 +3,8 @@ import type { TemplateAssets } from "@/lib/keychain-render";
 import type { KeychainRender } from "@/lib/render-types";
 import { renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
 import { translatePathData, scaleAndTranslatePathData, getPathBounds, type PathBounds } from "@/lib/laser-outline";
-import { computeLaserOutlineClipper } from "@/lib/clipper-outline";
-import { MAX_ITEM_WIDTH_MM, DILATE_MM, ERODE_MM } from "@/lib/keychain-geometry";
+import { unionOutlines } from "@/lib/clipper-outline";
+import { MAX_ITEM_WIDTH_MM } from "@/lib/keychain-geometry";
 
 /**
  * Renders one nested unit for a "fixed" layoutMode template - the
@@ -18,11 +18,22 @@ import { MAX_ITEM_WIDTH_MM, DILATE_MM, ERODE_MM } from "@/lib/keychain-geometry"
  * design team repeatedly mis-tagged an inner design element as the
  * cut-line (a stray id, or an untended reddish/unfilled inner shape), which
  * then sliced straight through the artwork instead of wrapping it. Instead,
- * EVERY shape in the master SVG is unioned together and run through the
- * same Clipper dilate-then-erode closing pass the dynamic engine's own
- * outline uses (lib/clipper-outline.ts, DILATE_MM/ERODE_MM) to auto-compute
- * one clean outer silhouette hugging the artwork's true outer boundary -
- * the same outline algorithm, the same resilience, as the dynamic engine.
+ * EVERY shape in the master SVG is unioned together (via `unionOutlines`,
+ * lib/clipper-outline.ts) into one clean outer silhouette hugging the
+ * artwork's true outer boundary - the same Clipper union the dynamic
+ * engine's own designer-cut-line path uses to weld shapes together.
+ *
+ * Deliberately NOT run through the dynamic engine's DILATE_MM/ERODE_MM
+ * closing pass, though: that pass exists purely to grow a bit of extra
+ * white-border clearance around auto-laid-out text/character boxes (see
+ * lib/keychain-geometry.ts's own docs on DILATE_MM/ERODE_MM). A fixed-mode
+ * master SVG is the opposite case - the designer has already drawn its own
+ * finished white border and black outer line directly into the artwork -
+ * so ANY extra padding here would double up on that and push the red
+ * cut-line further out than the file's own outer edge. The union above is a
+ * plain boolean union (zero offset), so the red line sits tight against
+ * whatever the master SVG's outermost boundary actually is, no padding
+ * added or removed.
  *
  * `template.customZones` (lib/db/schema.ts) mark invisible placement zones
  * inside that same master SVG. This pass only handles `type: "text"` zones:
@@ -72,26 +83,27 @@ export function renderFixedShapeTemplate(
     height: bounds.height * baseScale,
   };
 
-  // Every shape in the master, scaled to real output mm FIRST - the
-  // dilate/erode closing pass below is a real physical clearance spec (the
-  // same DILATE_MM/ERODE_MM the dynamic engine uses), so it must operate in
-  // genuine output units, not the SVG's arbitrary native scale.
+  // Every shape in the master, scaled to real output mm first, so the union
+  // below (and everything normalized against it) is in genuine output
+  // units, not the SVG's arbitrary native scale.
   const scaledShapes = allShapePaths.map((d) => scaleAndTranslatePathData(d, baseScale, 0, 0));
 
-  // Auto-computed cut-line: union every shape in the master artwork, then
-  // dilate+erode with round joins - drops any interior holes/counters the
-  // same way the dynamic engine's glyph outlines do, and produces a single
-  // clean outer silhouette no matter how many overlapping layers the
-  // designer file has, without ever needing to guess which one is "the"
-  // cut-line.
-  const outlinePathScaled = computeLaserOutlineClipper(scaledShapes, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
+  // Auto-computed cut-line: a plain boolean union (zero offset - no
+  // dilate/erode padding, see this file's top-level doc comment) of every
+  // shape in the master artwork. Still drops any interior holes/counters
+  // (unionOutlines keeps only the outermost perimeter), producing a single
+  // clean outer silhouette tight against the artwork's own outer edge, no
+  // matter how many overlapping layers the designer file has, without ever
+  // needing to guess which one is "the" cut-line.
+  const outlinePathScaled = unionOutlines(scaledShapes);
 
   // Every other shape (artwork image, zone text) normalizes against the
-  // outline's own bounds - which legitimately extends a little beyond the
-  // raw artwork edges once dilated, exactly like the dynamic engine. Falls
-  // back to the plain scaled SVG bounds only if Clipper produced nothing at
-  // all (e.g. a master with no closed shapes), so the render never throws
-  // even on a degenerate file.
+  // outline's own bounds - which should sit tight against the raw artwork
+  // edges now (zero padding), but is measured from the real computed
+  // outline rather than assumed, in case the union's polygon flattening
+  // moves it by a hair. Falls back to the plain scaled SVG bounds only if
+  // Clipper produced nothing at all (e.g. a master with no closed shapes),
+  // so the render never throws even on a degenerate file.
   const normalizeBounds = (outlinePathScaled ? getPathBounds(outlinePathScaled) : null) ?? scaledNativeBounds;
 
   const outlinePath = outlinePathScaled

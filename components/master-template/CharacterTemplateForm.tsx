@@ -471,9 +471,12 @@ export function CharacterTemplateForm({
   }, [layoutMode, parsedFont, defaultText, colors, customZones, fixedBaseScale, fixedOriginX, fixedOriginY]);
 
   // Auto-computed cut-line preview: mirrors lib/keychain-render-fixed.ts's
-  // Clipper union+dilate/erode over EVERY shape in the master SVG exactly
-  // (same DILATE_PX/ERODE_PX this file's dynamic-mode preview above already
-  // uses, at the same PX_PER_MM scale) — so what the admin sees here is the
+  // plain Clipper union (zero offset — no dilate/erode padding) over EVERY
+  // shape in the master SVG exactly — a fixed-mode master already has its
+  // own finished white border and outer line drawn into the artwork, so
+  // (unlike the dynamic-mode preview above, which deliberately grows its
+  // outline via DILATE_PX/ERODE_PX) this stays tight against the file's own
+  // outer edge with zero added padding. What the admin sees here is the
   // same silhouette that will actually get cut, never a "trust the file's
   // own tagged cut-line" guess a multi-layer designer export routinely got
   // wrong.
@@ -483,7 +486,7 @@ export function CharacterTemplateForm({
     const tx = CANVAS_MARGIN - fixedOriginX * PX_PER_MM;
     const ty = CANVAS_MARGIN - fixedOriginY * PX_PER_MM;
     const scaledShapes = characterVector.allShapePaths.map((d) => scaleAndTranslatePathData(d, scale, tx, ty));
-    return computeLaserOutlineClipper(scaledShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
+    return unionOutlines(scaledShapes);
   }, [layoutMode, characterVector, fixedBaseScale, fixedOriginX, fixedOriginY]);
   // --- end "fixed" layoutMode preview ---
 
