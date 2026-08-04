@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
   const fontFile = formData.get("file") as File | null;
   const characterImageFile = formData.get("characterImage") as File | null;
   const thumbnailImageFile = formData.get("thumbnailImage") as File | null;
+  const coverThumbnailFile = formData.get("coverThumbnail") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
   const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, 0);
@@ -112,6 +113,14 @@ export async function POST(request: NextRequest) {
     const thumbnailExt = path.extname(thumbnailImageFile.name).toLowerCase();
     if (!THUMBNAIL_EXTENSIONS.includes(thumbnailExt)) {
       return badRequest("File thumbnail harus berformat PNG atau JPG");
+    }
+  }
+
+  const hasCoverThumbnail = Boolean(coverThumbnailFile && coverThumbnailFile.size > 0);
+  if (hasCoverThumbnail) {
+    const coverExt = path.extname(coverThumbnailFile!.name).toLowerCase();
+    if (!THUMBNAIL_EXTENSIONS.includes(coverExt)) {
+      return badRequest("File cover/thumbnail katalog harus berformat PNG atau JPG");
     }
   }
 
@@ -187,6 +196,19 @@ export async function POST(request: NextRequest) {
     publicThumbnailPath = `/uploads/thumbnails/${thumbFileName}`;
   }
 
+  let publicCoverThumbnailPath: string | null = null;
+  let absoluteCoverThumbnailPath: string | null = null;
+
+  if (hasCoverThumbnail) {
+    const coverExt = path.extname(coverThumbnailFile!.name).toLowerCase();
+    const coversDir = path.join(process.cwd(), "public", "uploads", "covers");
+    await fs.mkdir(coversDir, { recursive: true });
+    const coverFileName = `${uniqueId}${coverExt}`;
+    absoluteCoverThumbnailPath = path.join(coversDir, coverFileName);
+    await fs.writeFile(absoluteCoverThumbnailPath, Buffer.from(await coverThumbnailFile!.arrayBuffer()));
+    publicCoverThumbnailPath = `/uploads/covers/${coverFileName}`;
+  }
+
   try {
     const [created] = await db
       .insert(templates)
@@ -196,6 +218,7 @@ export async function POST(request: NextRequest) {
         filePath: publicFontPath,
         characterImagePath: publicCharacterImagePath,
         thumbnailPath: publicThumbnailPath,
+        thumbnailUrl: publicCoverThumbnailPath,
         colors,
         defaultText,
         isCharacter: category === "character",
@@ -217,6 +240,9 @@ export async function POST(request: NextRequest) {
       await fs.rm(absoluteCharacterImagePath, { force: true });
     }
     await fs.rm(absoluteThumbnailPath, { force: true });
+    if (absoluteCoverThumbnailPath) {
+      await fs.rm(absoluteCoverThumbnailPath, { force: true });
+    }
 
     if (isUniqueConstraintError(error)) {
       return badRequest("Kode template sudah digunakan", 409);

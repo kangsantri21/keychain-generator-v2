@@ -55,6 +55,12 @@ export const templates = sqliteTable("templates", {
   // instead of together under one uniformScale.
   charTargetHeight: real("char_target_height").notNull().default(DEFAULT_CHAR_TARGET_HEIGHT_MM),
   textTargetHeight: real("text_target_height").notNull().default(DEFAULT_TEXT_TARGET_HEIGHT_MM),
+  // Optional admin-uploaded cover image for the Master Template catalog grid
+  // (components/master-template/TemplateGallery.tsx) — a plain flat photo,
+  // distinct from thumbnailPath (which for character templates is a
+  // generated composite SVG of the character + colored name text, prone to
+  // looking cluttered at small grid sizes). Null falls back to thumbnailPath.
+  thumbnailUrl: text("thumbnail_url"),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
 });
 

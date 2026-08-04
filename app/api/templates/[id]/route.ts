@@ -81,7 +81,7 @@ export async function DELETE(
   }
 
   const relativePaths = new Set(
-    [existing.filePath, existing.thumbnailPath, existing.characterImagePath].filter(
+    [existing.filePath, existing.thumbnailPath, existing.characterImagePath, existing.thumbnailUrl].filter(
       (p): p is string => Boolean(p)
     )
   );
@@ -111,6 +111,7 @@ export async function PUT(
   const fontFile = formData.get("file") as File | null;
   const characterImageFile = formData.get("characterImage") as File | null;
   const thumbnailImageFile = formData.get("thumbnailImage") as File | null;
+  const coverThumbnailFile = formData.get("coverThumbnail") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
   const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, existing.holeOffsetX);
@@ -156,6 +157,7 @@ export async function PUT(
   const hasNewFont = Boolean(fontFile && fontFile.size > 0);
   const hasNewCharacterImage = existing.isCharacter && Boolean(characterImageFile && characterImageFile.size > 0);
   const hasNewThumbnail = !existing.isCharacter && Boolean(thumbnailImageFile && thumbnailImageFile.size > 0);
+  const hasNewCoverThumbnail = Boolean(coverThumbnailFile && coverThumbnailFile.size > 0);
 
   if (hasNewFont) {
     const ext = path.extname(fontFile!.name).toLowerCase();
@@ -173,6 +175,12 @@ export async function PUT(
     const ext = path.extname(thumbnailImageFile!.name).toLowerCase();
     if (!THUMBNAIL_EXTENSIONS.includes(ext)) {
       return badRequest("File thumbnail harus berformat PNG atau JPG");
+    }
+  }
+  if (hasNewCoverThumbnail) {
+    const ext = path.extname(coverThumbnailFile!.name).toLowerCase();
+    if (!THUMBNAIL_EXTENSIONS.includes(ext)) {
+      return badRequest("File cover/thumbnail katalog harus berformat PNG atau JPG");
     }
   }
 
@@ -242,6 +250,15 @@ export async function PUT(
       thumbnailPath = saved.publicPath;
     }
 
+    let thumbnailUrl = existing.thumbnailUrl;
+
+    if (hasNewCoverThumbnail) {
+      const saved = await saveUploadedFile(coverThumbnailFile!, "covers", uniqueId);
+      if (thumbnailUrl) staleFiles.push(thumbnailUrl);
+      newFiles.push(saved.publicPath);
+      thumbnailUrl = saved.publicPath;
+    }
+
     const [updated] = await db
       .update(templates)
       .set({
@@ -250,6 +267,7 @@ export async function PUT(
         filePath,
         characterImagePath,
         thumbnailPath,
+        thumbnailUrl,
         colors,
         defaultText,
         holeOffsetX,

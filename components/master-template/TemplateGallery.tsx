@@ -30,12 +30,19 @@ function TemplateCard({
     }
   }
 
+  // A plain admin-uploaded cover photo (thumbnailUrl) always wins over the
+  // auto-generated preview (thumbnailPath — for character templates, a
+  // composite of the character image + colored name text that can look
+  // cluttered at small grid sizes); falls back to the latter when no cover
+  // was uploaded, so every existing template keeps rendering unchanged.
+  const cardImageSrc = template.thumbnailUrl ?? template.thumbnailPath;
+
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex h-32 items-center justify-center bg-slate-50">
+    <div className="flex flex-col overflow-hidden rounded-none border border-slate-200 bg-white shadow-sm">
+      <div className="flex h-32 items-center justify-center rounded-none bg-slate-50">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={template.thumbnailPath}
+          src={cardImageSrc}
           alt={template.code}
           className="max-h-28 max-w-full object-contain"
         />

@@ -57,6 +57,10 @@ function isSvgFile(file: File): boolean {
   return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
 }
 
+function isRasterImageFile(file: File): boolean {
+  return /\.(png|jpe?g)$/i.test(file.name) || file.type === "image/png" || file.type === "image/jpeg";
+}
+
 const OFFSET_SLIDER_STEP = 0.5;
 
 function OffsetSlider({
@@ -142,6 +146,14 @@ export function CharacterTemplateForm({
   const [defaultText, setDefaultText] = useState(editingTemplate?.defaultText ?? "Nama");
   const [characterFile, setCharacterFile] = useState<File | null>(null);
   const [fontFile, setFontFile] = useState<File | null>(null);
+  const [coverThumbnailFile, setCoverThumbnailFile] = useState<File | null>(null);
+  // Optional admin-uploaded cover image for the Master Template catalog grid
+  // (components/master-template/TemplateGallery.tsx) — a plain flat photo,
+  // separate from the auto-generated character+text composite thumbnail,
+  // which can look cluttered at small grid sizes.
+  const [coverThumbnailPreviewUrl, setCoverThumbnailPreviewUrl] = useState<string | null>(
+    editingTemplate?.thumbnailUrl ?? null
+  );
   const [colors, setColors] = useState<string[]>(
     editingTemplate && editingTemplate.colors.length > 0 ? editingTemplate.colors : [DEFAULT_COLOR]
   );
@@ -183,6 +195,7 @@ export function CharacterTemplateForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
+  const coverThumbnailInputRef = useRef<HTMLInputElement>(null);
   const addTemplate = useTemplateStore((state) => state.addTemplate);
   const updateTemplate = useTemplateStore((state) => state.updateTemplate);
 
@@ -193,6 +206,12 @@ export function CharacterTemplateForm({
       if (characterPreviewUrl?.startsWith("blob:")) URL.revokeObjectURL(characterPreviewUrl);
     };
   }, [characterPreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (coverThumbnailPreviewUrl?.startsWith("blob:")) URL.revokeObjectURL(coverThumbnailPreviewUrl);
+    };
+  }, [coverThumbnailPreviewUrl]);
 
   // Fetch the existing font (and, if it's an SVG, the character cut-line)
   // once, for an accurate live preview when opened in edit mode.
@@ -298,6 +317,21 @@ export function CharacterTemplateForm({
       setParsedFont(null);
       toast.error("File font tidak dapat dibaca");
     }
+  }
+
+  function handleCoverThumbnailChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0] ?? null;
+
+    if (selected && !isRasterImageFile(selected)) {
+      toast.error("File cover/thumbnail harus berformat PNG atau JPG");
+      event.target.value = "";
+      setCoverThumbnailFile(null);
+      setCoverThumbnailPreviewUrl(editingTemplate?.thumbnailUrl ?? null);
+      return;
+    }
+
+    setCoverThumbnailFile(selected);
+    setCoverThumbnailPreviewUrl(selected ? URL.createObjectURL(selected) : (editingTemplate?.thumbnailUrl ?? null));
   }
 
   function handleAddZone() {
@@ -620,8 +654,11 @@ export function CharacterTemplateForm({
     setCustomZones([]);
     setCharTargetHeight(DEFAULT_CHAR_TARGET_HEIGHT_MM);
     setTextTargetHeight(DEFAULT_TEXT_TARGET_HEIGHT_MM);
+    setCoverThumbnailFile(null);
+    setCoverThumbnailPreviewUrl(null);
     if (characterInputRef.current) characterInputRef.current.value = "";
     if (fontInputRef.current) fontInputRef.current.value = "";
+    if (coverThumbnailInputRef.current) coverThumbnailInputRef.current.value = "";
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -653,6 +690,7 @@ export function CharacterTemplateForm({
     formData.set("category", "character");
     if (fontFile) formData.set("file", fontFile);
     if (characterFile) formData.set("characterImage", characterFile);
+    if (coverThumbnailFile) formData.set("coverThumbnail", coverThumbnailFile);
     formData.set("colors", JSON.stringify(colors));
     formData.set("defaultText", defaultText.trim() || "Nama");
     formData.set("holeOffsetX", String(holeOffsetX));
@@ -745,6 +783,31 @@ export function CharacterTemplateForm({
               (Biarkan kosong jika tidak ingin mengubah file)
             </span>
           )}
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 sm:col-span-2">
+          Gambar Cover / Thumbnail <span className="font-normal text-slate-400">(opsional)</span>
+          <div className="flex items-center gap-3">
+            <input
+              ref={coverThumbnailInputRef}
+              type="file"
+              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+              onChange={handleCoverThumbnailChange}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
+            />
+            {coverThumbnailPreviewUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={coverThumbnailPreviewUrl}
+                alt="Pratinjau cover"
+                className="h-14 w-14 flex-shrink-0 border border-slate-200 object-cover"
+              />
+            )}
+          </div>
+          <span className="text-xs text-slate-400">
+            Foto rapi khusus untuk kartu katalog di halaman Master Template. Jika kosong, katalog memakai
+            pratinjau kontur otomatis seperti biasa.
+          </span>
         </label>
 
         <div className="sm:col-span-2">
