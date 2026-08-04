@@ -71,6 +71,13 @@
       "when": 1785818421886,
       "tag": "0009_mean_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1785830290579,
+      "tag": "0010_great_praxagora",
+      "breakpoints": true
     }
   ]
 }

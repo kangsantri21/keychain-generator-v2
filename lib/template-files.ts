@@ -58,6 +58,30 @@ export function parseTargetHeight(raw: string | null, fallback: number): number 
   return Math.max(MIN_TARGET_HEIGHT_MM, Math.min(MAX_TARGET_HEIGHT_MM, n));
 }
 
+/** Slider bounds (mm) for Template.dynamicGapX — matches CharacterTemplateForm.tsx's "Geser Jarak Teks (X)" range. */
+export const MIN_DYNAMIC_GAP_X_MM = -20;
+export const MAX_DYNAMIC_GAP_X_MM = 50;
+
+/** Parses the dynamic-mode text horizontal gap field (mm) from form data; falls back on missing/invalid input. */
+export function parseDynamicGapX(raw: string | null, fallback: number): number {
+  if (raw === null) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(MIN_DYNAMIC_GAP_X_MM, Math.min(MAX_DYNAMIC_GAP_X_MM, n));
+}
+
+/** Slider bounds (mm) for Template.dynamicOffsetY — matches CharacterTemplateForm.tsx's "Geser Posisi Vertikal Teks (Y)" range. */
+export const MIN_DYNAMIC_OFFSET_Y_MM = -30;
+export const MAX_DYNAMIC_OFFSET_Y_MM = 30;
+
+/** Parses the dynamic-mode text vertical offset field (mm) from form data; falls back on missing/invalid input. */
+export function parseDynamicOffsetY(raw: string | null, fallback: number): number {
+  if (raw === null) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(MIN_DYNAMIC_OFFSET_Y_MM, Math.min(MAX_DYNAMIC_OFFSET_Y_MM, n));
+}
+
 /** Parses the layoutMode field from form data; falls back on missing/invalid input. */
 export function parseLayoutMode(
   raw: string | null,

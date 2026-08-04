@@ -12,8 +12,14 @@ import {
   parseCustomZones,
   isValidCustomZones,
   parseTargetHeight,
+  parseDynamicGapX,
+  parseDynamicOffsetY,
 } from "@/lib/template-files";
-import { DEFAULT_CHAR_TARGET_HEIGHT_MM, DEFAULT_TEXT_TARGET_HEIGHT_MM } from "@/lib/keychain-geometry";
+import {
+  DEFAULT_CHAR_TARGET_HEIGHT_MM,
+  DEFAULT_TEXT_TARGET_HEIGHT_MM,
+  WELD_CLEARANCE_MM,
+} from "@/lib/keychain-geometry";
 
 const CHARACTER_EXTENSIONS = [".svg", ".png"];
 const FONT_EXTENSIONS = [".ttf", ".otf"];
@@ -60,6 +66,8 @@ export async function POST(request: NextRequest) {
     formData.get("textTargetHeight") as string | null,
     DEFAULT_TEXT_TARGET_HEIGHT_MM
   );
+  const dynamicGapX = parseDynamicGapX(formData.get("dynamicGapX") as string | null, WELD_CLEARANCE_MM);
+  const dynamicOffsetY = parseDynamicOffsetY(formData.get("dynamicOffsetY") as string | null, 0);
   // Manual text offsets were retired (they let letters overlap character
   // artwork) — layout is auto-computed again, so this always saves as 0.
   const textOffsetX = 0;
@@ -230,6 +238,8 @@ export async function POST(request: NextRequest) {
         customZones,
         charTargetHeight,
         textTargetHeight,
+        dynamicGapX,
+        dynamicOffsetY,
       })
       .returning();
 

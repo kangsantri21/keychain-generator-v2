@@ -32,7 +32,6 @@ import {
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
 
 // Live-preview canvas geometry (px), approximating the laser-cut scale.
-const TEXT_GAP = 18; // ~5mm
 const CANVAS_MARGIN = 24;
 const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
 const RING_HOLE_DIAMETER = 7; // ~1.9mm spec, scaled up for preview visibility
@@ -68,11 +67,15 @@ function OffsetSlider({
   value,
   onChange,
   hint,
+  min = -MAX_LAYOUT_OFFSET_MM,
+  max = MAX_LAYOUT_OFFSET_MM,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   hint: string;
+  min?: number;
+  max?: number;
 }) {
   return (
     <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
@@ -82,8 +85,8 @@ function OffsetSlider({
       </div>
       <input
         type="range"
-        min={-MAX_LAYOUT_OFFSET_MM}
-        max={MAX_LAYOUT_OFFSET_MM}
+        min={min}
+        max={max}
         step={OFFSET_SLIDER_STEP}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
@@ -192,6 +195,14 @@ export function CharacterTemplateForm({
   const [textTargetHeight, setTextTargetHeight] = useState(
     editingTemplate?.textTargetHeight ?? DEFAULT_TEXT_TARGET_HEIGHT_MM
   );
+  // "dynamic"-only, isCharacter-only manual nudge (lib/db/schema.ts): moves
+  // the text relative to the character's auto-computed outline, re-welded by
+  // Clipper live on every change — see lib/keychain-render.ts. Defaults
+  // match production's own backward-compatible defaults exactly (dynamicGapX
+  // = WELD_CLEARANCE_MM keeps today's weld, dynamicOffsetY = 0 keeps today's
+  // exact vertical centering).
+  const [dynamicGapX, setDynamicGapX] = useState(editingTemplate?.dynamicGapX ?? WELD_CLEARANCE_MM);
+  const [dynamicOffsetY, setDynamicOffsetY] = useState(editingTemplate?.dynamicOffsetY ?? 0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
@@ -372,27 +383,28 @@ export function CharacterTemplateForm({
     }
   }, [parsedFont, defaultText, colors, textRawHeightPx]);
 
-  // Fit the designer's own cut-line into the character box the same way the
-  // production renderer does — computed once here (not just inside the
-  // outline effect) so both the text's X origin and the outline computation
-  // can be measured against the character's *actual* silhouette bounds.
-  // Height-only scale (matching production): the artwork's own proportions,
-  // not a fixed square, determine its width.
+  // Auto-computes the character's outline exactly like the production
+  // renderer does (lib/keychain-render.ts): union EVERY shape in the
+  // character's SVG via Clipper (`unionOutlines` — a plain boolean union,
+  // no dilate/erode, dropping interior holes/counters) into one solid outer
+  // boundary, instead of trusting a single tagged "cut-line" layer that
+  // routinely broke on files with no clean pre-made cut-line at all.
+  // Computed once here (not just inside the outline effect) so both the
+  // text's X origin and the outline computation can be measured against the
+  // character's *actual* silhouette bounds. Height-only scale (matching
+  // production): the artwork's own proportions, not a fixed square,
+  // determine its width.
   const characterFit = useMemo(() => {
-    if (!characterVector || characterVector.cutLinePaths.length === 0) return null;
+    if (!characterVector || characterVector.allShapePaths.length === 0) return null;
     const { bounds: srcBounds } = characterVector;
     const fitScale = charFinishedPx / srcBounds.height;
     const cutTx = CANVAS_MARGIN - srcBounds.x * fitScale;
     const cutTy = CANVAS_MARGIN - srcBounds.y * fitScale;
-    const positionedCutLines = characterVector.cutLinePaths.map((d) =>
-      scaleAndTranslatePathData(d, fitScale, cutTx, cutTy)
-    );
-    let bounds: PathBounds | null = null;
-    for (const d of positionedCutLines) {
-      const b = getPathBounds(d);
-      if (b) bounds = bounds ? unionBounds(bounds, b) : b;
-    }
-    return bounds ? { positionedCutLines, bounds } : null;
+    const scaledShapes = characterVector.allShapePaths.map((d) => scaleAndTranslatePathData(d, fitScale, cutTx, cutTy));
+    const autoOutline = unionOutlines(scaledShapes);
+    if (!autoOutline) return null;
+    const bounds = getPathBounds(autoOutline);
+    return bounds ? { positionedOutline: [autoOutline], bounds } : null;
   }, [characterVector, charFinishedPx]);
 
   // --- "fixed" layoutMode preview: customZones live inside the master SVG's
@@ -524,25 +536,27 @@ export function CharacterTemplateForm({
   }, [layoutMode, characterVector, fixedBaseScale, fixedOriginX, fixedOriginY]);
   // --- end "fixed" layoutMode preview ---
 
-  // Position the text just clear of the character's *actual* cut-line
-  // silhouette (not a nominal box edge, which real artwork rarely fills) —
-  // a small positive clearance gap keeps the raw glyphs from ever visually
-  // overlapping the character artwork, while staying under the text's net
-  // dilation growth so the *dilated* cutting outline still reaches the
-  // character and Clipper welds them into one contour.
-  const WELD_CLEARANCE_PX = WELD_CLEARANCE_MM * PX_PER_MM;
-  const nominalTextOriginX = CANVAS_MARGIN + charBoxRawPx + TEXT_GAP;
+  // Position the text relative to the character's *actual* auto-computed
+  // outline (not a nominal box edge, which real artwork rarely fills), using
+  // the admin-tunable dynamicGapX/dynamicOffsetY state below — exactly
+  // mirroring production (lib/keychain-render.ts). Live-adjustable via the
+  // "Geser Jarak Teks (X)" / "Geser Posisi Vertikal Teks (Y)" sliders, so
+  // this preview (and the outline union effect further down, which depends
+  // on textTranslateX/textTranslateY) recalculates on every drag.
+  const dynamicGapXPx = dynamicGapX * PX_PER_MM;
+  const nominalTextOriginX = CANVAS_MARGIN + charBoxRawPx + dynamicGapXPx;
   const textOriginX = characterFit
-    ? characterFit.bounds.x + characterFit.bounds.width + WELD_CLEARANCE_PX
+    ? characterFit.bounds.x + characterFit.bounds.width + dynamicGapXPx
     : nominalTextOriginX;
   const textOriginY = CANVAS_MARGIN;
 
-  // Center vertically against the character's *actual* silhouette height
-  // when one is known, not a nominal box — an off-center cut-line would
-  // otherwise leave the text looking misaligned next to the artwork.
-  const charCenterY = characterFit
-    ? characterFit.bounds.y + characterFit.bounds.height / 2
-    : CANVAS_MARGIN + charBoxRawPx / 2;
+  // Centered vertically against the character's *actual* silhouette height
+  // when one is known, not a nominal box, then nudged by dynamicOffsetY (0 =
+  // exact center) — an off-center cut-line would otherwise leave the text
+  // looking misaligned next to the artwork with no way to correct it.
+  const charCenterY =
+    (characterFit ? characterFit.bounds.y + characterFit.bounds.height / 2 : CANVAS_MARGIN + charBoxRawPx / 2) +
+    dynamicOffsetY * PX_PER_MM;
 
   const textTranslateX = textPreview ? textOriginX - textPreview.bbox.x1 : textOriginX;
   const textTranslateY = textPreview ? charCenterY - (textPreview.bbox.y1 + textPreview.bbox.y2) / 2 : textOriginY;
@@ -579,11 +593,12 @@ export function CharacterTemplateForm({
       );
 
       if (characterFit) {
-        // Union the designer's cut-line with the text outline as-is — no
-        // re-dilating a contour that's already the final intended shape.
+        // Union the auto-computed character outline with the text outline
+        // as-is — no re-dilating a contour that's already the final
+        // intended shape.
         const textOutline = computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
         const welded = unionOutlines(
-          textOutline ? [textOutline, ...characterFit.positionedCutLines] : characterFit.positionedCutLines
+          textOutline ? [textOutline, ...characterFit.positionedOutline] : characterFit.positionedOutline
         );
         // A plain union of two shapes that only just touch leaves a sharp,
         // narrow concave notch at the seam — a fragile neck once laser-cut.
@@ -654,6 +669,8 @@ export function CharacterTemplateForm({
     setCustomZones([]);
     setCharTargetHeight(DEFAULT_CHAR_TARGET_HEIGHT_MM);
     setTextTargetHeight(DEFAULT_TEXT_TARGET_HEIGHT_MM);
+    setDynamicGapX(WELD_CLEARANCE_MM);
+    setDynamicOffsetY(0);
     setCoverThumbnailFile(null);
     setCoverThumbnailPreviewUrl(null);
     if (characterInputRef.current) characterInputRef.current.value = "";
@@ -699,6 +716,8 @@ export function CharacterTemplateForm({
     formData.set("customZones", JSON.stringify(customZones));
     formData.set("charTargetHeight", String(charTargetHeight));
     formData.set("textTargetHeight", String(textTargetHeight));
+    formData.set("dynamicGapX", String(dynamicGapX));
+    formData.set("dynamicOffsetY", String(dynamicOffsetY));
 
     setIsSubmitting(true);
     try {
@@ -894,6 +913,32 @@ export function CharacterTemplateForm({
                   (gepeng) jika total lebar item melebihi 80mm.
                 </span>
               </label>
+              <div className="sm:col-span-2">
+                <span className="text-xs font-medium text-slate-600">
+                  Posisi Manual Teks{" "}
+                  <span className="font-normal text-slate-400">
+                    (opsional — kontur merah otomatis digabung ulang saat digeser)
+                  </span>
+                </span>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  <OffsetSlider
+                    label="Geser Jarak Teks (X)"
+                    value={dynamicGapX}
+                    onChange={setDynamicGapX}
+                    hint="Jarak horizontal dari karakter ke awal teks"
+                    min={-20}
+                    max={50}
+                  />
+                  <OffsetSlider
+                    label="Geser Posisi Vertikal Teks (Y)"
+                    value={dynamicOffsetY}
+                    onChange={setDynamicOffsetY}
+                    hint="Naik / turun relatif terhadap tengah karakter"
+                    min={-30}
+                    max={30}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -1021,9 +1066,9 @@ export function CharacterTemplateForm({
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-slate-700">Live Preview</span>
-          {characterVector && characterVector.cutLinePaths.length > 0 && (
+          {characterVector && characterVector.allShapePaths.length > 0 && (
             <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-              Kontur SVG terdeteksi
+              Kontur SVG dihitung otomatis
             </span>
           )}
           {layoutMode === "fixed" && fixedBaseScale < 1 && masterSvgBounds && (

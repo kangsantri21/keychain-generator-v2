@@ -1,6 +1,10 @@
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
-import { DEFAULT_CHAR_TARGET_HEIGHT_MM, DEFAULT_TEXT_TARGET_HEIGHT_MM } from "@/lib/keychain-geometry";
+import {
+  DEFAULT_CHAR_TARGET_HEIGHT_MM,
+  DEFAULT_TEXT_TARGET_HEIGHT_MM,
+  WELD_CLEARANCE_MM,
+} from "@/lib/keychain-geometry";
 
 /**
  * A named placement zone inside a "fixed" layoutMode template's own master
@@ -55,6 +59,22 @@ export const templates = sqliteTable("templates", {
   // instead of together under one uniformScale.
   charTargetHeight: real("char_target_height").notNull().default(DEFAULT_CHAR_TARGET_HEIGHT_MM),
   textTargetHeight: real("text_target_height").notNull().default(DEFAULT_TEXT_TARGET_HEIGHT_MM),
+  // "dynamic"-only, isCharacter-only: per-template manual control over the
+  // name text's placement relative to the character's auto-computed outline
+  // (lib/keychain-render.ts) — a different, narrower feature than the
+  // retired textOffsetX/textOffsetY above (which let text drift freely
+  // enough to overlap the character artwork and was disabled for that
+  // reason). dynamicGapX is the horizontal gap between the character's
+  // bounding box and the text's start (replacing the fixed WELD_CLEARANCE_MM
+  // gap for characters with a real computed outline); default matches
+  // WELD_CLEARANCE_MM exactly so every pre-existing row keeps the identical
+  // weld behavior it already has. dynamicOffsetY nudges the text vertically
+  // away from dead-center against the character; default 0 keeps today's
+  // exact centering. Both are re-unioned by Clipper live on every change —
+  // an admin can visually verify text never overlaps the artwork before
+  // saving, unlike the old retired offsets.
+  dynamicGapX: real("dynamic_gap_x").notNull().default(WELD_CLEARANCE_MM),
+  dynamicOffsetY: real("dynamic_offset_y").notNull().default(0),
   // Optional admin-uploaded cover image for the Master Template catalog grid
   // (components/master-template/TemplateGallery.tsx) — a plain flat photo,
   // distinct from thumbnailPath (which for character templates is a

@@ -21,6 +21,8 @@ import {
   parseCustomZones,
   isValidCustomZones,
   parseTargetHeight,
+  parseDynamicGapX,
+  parseDynamicOffsetY,
   saveUploadedFile,
   readPublicFile,
   removePublicFile,
@@ -123,6 +125,11 @@ export async function PUT(
   const textTargetHeight = parseTargetHeight(
     formData.get("textTargetHeight") as string | null,
     existing.textTargetHeight
+  );
+  const dynamicGapX = parseDynamicGapX(formData.get("dynamicGapX") as string | null, existing.dynamicGapX);
+  const dynamicOffsetY = parseDynamicOffsetY(
+    formData.get("dynamicOffsetY") as string | null,
+    existing.dynamicOffsetY
   );
   // Manual text offsets were retired (they let letters overlap character
   // artwork) — layout is auto-computed again, so these always save as 0
@@ -278,6 +285,8 @@ export async function PUT(
         customZones,
         charTargetHeight,
         textTargetHeight,
+        dynamicGapX,
+        dynamicOffsetY,
       })
       .where(eq(templates.id, templateId))
       .returning();

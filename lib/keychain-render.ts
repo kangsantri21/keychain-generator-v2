@@ -15,13 +15,11 @@ import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg-ser
 import type { Template } from "@/lib/db/schema";
 import type { KeychainRender } from "@/lib/render-types";
 import {
-  TEXT_GAP_MM,
   MARGIN_MM,
   RING_HOLE_OFFSET_MM,
   RING_HOLE_DIAMETER_MM,
   DILATE_MM,
   ERODE_MM,
-  WELD_CLEARANCE_MM,
   SEAM_CLOSE_MM,
   MAX_ITEM_WIDTH_MM,
 } from "@/lib/keychain-geometry";
@@ -32,9 +30,9 @@ import {
  * pre-clipper shape must be rendered this much *smaller* than its finished
  * target height so the shape that comes out the other end of the clipper
  * pipeline lands exactly on target. Applies to any node whose path actually
- * goes through that closing pass; a designer's own cut-line does not (see
- * `renderKeychainTextScaled`'s character-sizing branch below), so it needs
- * no such compensation.
+ * goes through that closing pass; the character's own auto-computed outline
+ * does not (see `renderKeychainTextScaled`'s character-sizing branch below),
+ * so it needs no such compensation.
  */
 const CLOSING_GROWTH_MM = 2 * (DILATE_MM - ERODE_MM);
 
@@ -169,8 +167,12 @@ interface ScaledRenderResult {
  * constants, not design proportions): DILATE_MM/ERODE_MM/SEAM_CLOSE_MM
  * (laser kerf & seam-closing are properties of the cutting process, not the
  * drawn size), RING_HOLE_DIAMETER_MM (a fixed hardware-fit spec), and
- * MARGIN_MM/TEXT_GAP_MM/RING_HOLE_OFFSET_MM/WELD_CLEARANCE_MM/holeOffsetX/Y
- * (fixed real-world layout spacing, not tied to either node's own size).
+ * MARGIN_MM/RING_HOLE_OFFSET_MM/holeOffsetX/Y (fixed real-world layout
+ * spacing, not tied to either node's own size). template.dynamicGapX/
+ * dynamicOffsetY are the one exception to "fixed" here - a per-template,
+ * admin-tunable horizontal gap and vertical nudge for the text relative to
+ * the character, applied below before the Clipper union so the weld
+ * recalculates live with every change.
  */
 function renderKeychainTextScaled(
   assets: TemplateAssets,
@@ -181,8 +183,6 @@ function renderKeychainTextScaled(
   const sampleText = text.trim() || template.defaultText || "Nama";
 
   const marginMm = MARGIN_MM;
-  const textGapMm = TEXT_GAP_MM;
-  const weldClearanceMm = WELD_CLEARANCE_MM;
   const ringHoleOffsetMm = RING_HOLE_OFFSET_MM;
   const holeOffsetX = template.holeOffsetX;
   const holeOffsetY = template.holeOffsetY;
@@ -198,41 +198,61 @@ function renderKeychainTextScaled(
   const { segments, bbox } = renderColoredGlyphsAtHeight(assets.font, sampleText, textRawHeightMm, template.colors);
   const rawTextWidthMm = Math.max(bbox.x2 - bbox.x1, 1e-6);
 
-  const cutLines = template.isCharacter ? (assets.characterVector?.cutLinePaths ?? []) : [];
-  const hasDesignerCutLine = cutLines.length > 0;
+  // Character outline is auto-computed via Clipper, exactly like the
+  // "fixed" layoutMode engine's own resilience fix (lib/keychain-render-
+  // fixed.ts): the old approach trusted a single tagged "cut-line" layer
+  // inside the designer's SVG (id="cut-line" / reddish stroke / bare
+  // fill:none), which routinely broke on files with no clean pre-made
+  // cut-line layer at all - e.g. a starfish upload whose reddish stroke
+  // lived on an inner design element, not a proper outer silhouette,
+  // cutting straight through the artwork's internal detail instead of
+  // wrapping it. Instead, EVERY shape in the character's SVG is unioned
+  // together via Clipper (`unionOutlines` - a plain boolean union, no
+  // dilate/erode, and it already drops interior holes/counters via
+  // keepOuterOrientation) into one solid outer boundary with no internal
+  // holes, no matter how the designer's file is laid out.
+  const characterAllShapes = template.isCharacter ? (assets.characterVector?.allShapePaths ?? []) : [];
+  const hasCharacterVectorShapes = characterAllShapes.length > 0;
 
-  // Side length of the plain (no designer cut-line) character placeholder
-  // box - this box IS dilated (as part of `shapesForOutline` below), so like
-  // the text it needs the same closing-pass compensation to land its
-  // *finished* height on template.charTargetHeight exactly.
+  // Side length of the plain (no usable vector artwork - a raster PNG
+  // upload, or a degenerate SVG Clipper couldn't union into anything)
+  // character placeholder box - this box IS dilated (as part of
+  // `shapesForOutline` below), so like the text it needs the same
+  // closing-pass compensation to land its *finished* height on
+  // template.charTargetHeight exactly.
   const charBoxMm = Math.max(template.charTargetHeight - CLOSING_GROWTH_MM, 1);
 
   // Reference shapes for the character's contribution to the outline, and as
   // a bounds fallback if outline computation fails entirely. Computed before
   // text placement so the text's X origin can be measured against the
-  // character cut-line's *actual* silhouette instead of assuming it reaches
-  // a nominal edge (real artwork rarely does).
+  // character's *actual* auto-computed silhouette instead of assuming it
+  // reaches a nominal edge (real artwork rarely does).
   const characterShapes: string[] = [];
-  let positionedCutLines: string[] = [];
+  let positionedCharacterOutline: string[] = [];
   let characterBounds: PathBounds | null = null;
+  let hasCharacterOutline = false;
   if (template.isCharacter) {
-    if (hasDesignerCutLine) {
-      // A designer's own cut-line is unioned into the final outline verbatim
-      // (never itself dilated - only the near-zero-net SEAM_CLOSE_MM closing
-      // pass touches the welded union, see the outline branch below), so it
-      // needs no offset compensation: scale directly, by height only, so the
-      // artwork's real proportions (not a fixed square) determine its width.
+    if (hasCharacterVectorShapes) {
+      // Scale every shape to the real target height FIRST (around the SVG's
+      // own origin, height-only so the artwork's real proportions - not a
+      // fixed square - determine its width), THEN union - Clipper's offset
+      // math needs genuine output-mm coordinates, not the SVG's arbitrary
+      // native scale.
       const srcBounds = assets.characterVector!.bounds;
       const fitScale = template.charTargetHeight / srcBounds.height;
       const cutTx = marginMm - srcBounds.x * fitScale;
       const cutTy = marginMm - srcBounds.y * fitScale;
-      positionedCutLines = cutLines.map((d) => scaleAndTranslatePathData(d, fitScale, cutTx, cutTy));
-      characterShapes.push(...positionedCutLines);
-      for (const d of positionedCutLines) {
-        const b = getPathBounds(d);
-        if (b) characterBounds = characterBounds ? unionBounds(characterBounds, b) : b;
+      const scaledShapes = characterAllShapes.map((d) => scaleAndTranslatePathData(d, fitScale, cutTx, cutTy));
+      const autoOutline = unionOutlines(scaledShapes);
+      if (autoOutline) {
+        positionedCharacterOutline = [autoOutline];
+        characterShapes.push(autoOutline);
+        const b = getPathBounds(autoOutline);
+        if (b) characterBounds = b;
+        hasCharacterOutline = true;
       }
-    } else {
+    }
+    if (!hasCharacterOutline) {
       characterShapes.push(rectPathData(marginMm, marginMm, charBoxMm, charBoxMm));
     }
   }
@@ -245,28 +265,31 @@ function renderKeychainTextScaled(
   let textAnchorX: number;
 
   if (template.isCharacter) {
-    // Position the text just clear of the character's *actual* cut-line
-    // silhouette (not a nominal box edge, which real artwork rarely fills)
-    // - a small positive WELD_CLEARANCE_MM gap keeps the raw glyphs from
-    // ever visually overlapping the character artwork, while staying under
-    // the text's net dilation growth (DILATE_MM - ERODE_MM) so the *dilated*
+    // Position the text relative to the character's *actual* auto-computed
+    // outline (not a nominal box edge, which real artwork rarely fills).
+    // template.dynamicGapX is an admin-tunable horizontal gap (default
+    // WELD_CLEARANCE_MM, a value verified small enough to stay under the
+    // text's net dilation growth - DILATE_MM - ERODE_MM - so the *dilated*
     // cutting outline still reaches the character and Clipper welds the two
-    // into one contour.
-    const nominalTextOriginX = marginMm + charBoxMm + textGapMm;
+    // into one contour) - an admin can widen it to separate them, or shrink
+    // it further, and the union below re-welds (or un-welds) live.
+    const nominalTextOriginX = marginMm + charBoxMm + template.dynamicGapX;
     const textOriginX =
-      hasDesignerCutLine && characterBounds
-        ? characterBounds.x + characterBounds.width + weldClearanceMm
+      hasCharacterOutline && characterBounds
+        ? characterBounds.x + characterBounds.width + template.dynamicGapX
         : nominalTextOriginX;
     textTranslateX = textOriginX - bbox.x1;
     textAnchorX = textOriginX;
-    // Center the text vertically against the character's *actual* silhouette
-    // height when one is known, not a nominal box - an off-center cut-line
-    // would otherwise leave the text looking misaligned next to the artwork.
+    // Centered vertically against the character's *actual* silhouette height
+    // when one is known, not a nominal box, then nudged by the admin-tunable
+    // template.dynamicOffsetY (0 = exact center, matching the old fixed
+    // behavior) - an off-center cut-line would otherwise leave the text
+    // looking misaligned next to the artwork with no way to correct it.
     const charCenterY =
-      hasDesignerCutLine && characterBounds
+      hasCharacterOutline && characterBounds
         ? characterBounds.y + characterBounds.height / 2
         : marginMm + charBoxMm / 2;
-    textTranslateY = charCenterY - (bbox.y1 + bbox.y2) / 2;
+    textTranslateY = charCenterY - (bbox.y1 + bbox.y2) / 2 + template.dynamicOffsetY;
   } else {
     textTranslateX = marginMm - bbox.x1;
     textTranslateY = marginMm - bbox.y1;
@@ -286,15 +309,18 @@ function renderKeychainTextScaled(
   const shapesForOutline = [...characterShapes, ...textSegments.map((s) => s.d)];
 
   let outlinePath: string | null;
-  if (hasDesignerCutLine) {
-    // The designer's cut-line is already the final intended contour - dilate
-    // only the (already-squeezed) text, then union the two as-is instead of
-    // re-dilating (and thereby distorting) the character's own geometry.
+  if (hasCharacterOutline) {
+    // The auto-computed character outline is already the final intended
+    // contour - dilate only the (already-squeezed) text, then union the two
+    // as-is instead of re-dilating (and thereby distorting) the character's
+    // own geometry.
     const textOutline = computeLaserOutlineClipper(textSegments.map((s) => s.d), {
       dilateMm: DILATE_MM,
       erodeMm: ERODE_MM,
     });
-    const welded = unionOutlines(textOutline ? [textOutline, ...positionedCutLines] : positionedCutLines);
+    const welded = unionOutlines(
+      textOutline ? [textOutline, ...positionedCharacterOutline] : positionedCharacterOutline
+    );
     // A plain union of two shapes that only just touch leaves a sharp,
     // narrow concave notch right at the seam - a fragile neck once laser-cut
     // from acrylic, even though it's already topologically one piece. An
@@ -339,7 +365,7 @@ function renderKeychainTextScaled(
   const holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
 
   const fallbackWidth = template.isCharacter
-    ? marginMm + template.charTargetHeight + textGapMm + Math.max(bbox.x2 - bbox.x1, 1) + marginMm
+    ? marginMm + template.charTargetHeight + template.dynamicGapX + Math.max(bbox.x2 - bbox.x1, 1) + marginMm
     : Math.max(bbox.x2 - bbox.x1, 1) + marginMm * 2;
   const fallbackHeight = template.isCharacter
     ? template.charTargetHeight + marginMm * 2
@@ -354,11 +380,11 @@ function renderKeychainTextScaled(
     };
 
   // The artwork/box image slot is sized to exactly the character's own
-  // computed footprint (real cut-line bounds for a designer SVG, or the
+  // computed footprint (the auto-computed outline's real bounds, or the
   // square placeholder box otherwise) - no extra reserved padding, since
   // that footprint is already what the outline above was built from.
-  const characterWidthMm = hasDesignerCutLine && characterBounds ? characterBounds.width : charBoxMm;
-  const characterHeightMm = hasDesignerCutLine && characterBounds ? characterBounds.height : charBoxMm;
+  const characterWidthMm = hasCharacterOutline && characterBounds ? characterBounds.width : charBoxMm;
+  const characterHeightMm = hasCharacterOutline && characterBounds ? characterBounds.height : charBoxMm;
 
   return {
     render: {
