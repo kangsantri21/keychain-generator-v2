@@ -16,6 +16,7 @@ import {
 } from "@/lib/laser-outline";
 import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template, CustomZone } from "@/lib/db/schema";
 import {
@@ -36,6 +37,12 @@ const CANVAS_MARGIN = 24;
 const RING_HOLE_OFFSET = 11; // ~3mm from the character box's top-left corner
 const RING_HOLE_DIAMETER = 7; // ~1.9mm spec, scaled up for preview visibility
 const OUTLINE_DEBOUNCE_MS = 300;
+// How long a slider (Lubang Ganci X/Y, Jarak Teks X, Vertikal Teks Y) must
+// sit still before its value reaches the Live Preview's Clipper
+// recomputation — the slider thumb and its "x.x mm" label still track the
+// raw value every tick (instant, cheap), only the expensive outline re-weld
+// waits this long. See lib/hooks/useDebounce.ts.
+const SLIDER_DEBOUNCE_MS = 400;
 // Manual layout offsets are stored/submitted in real-world mm (matching the
 // production renderer); this converts them to the preview's px scale. Kept
 // as a fixed reference scale (production itself no longer ties the
@@ -174,6 +181,12 @@ export function CharacterTemplateForm({
   // it be manually offset let letters overlap the character artwork.
   const [holeOffsetX, setHoleOffsetX] = useState(editingTemplate?.holeOffsetX ?? 0);
   const [holeOffsetY, setHoleOffsetY] = useState(editingTemplate?.holeOffsetY ?? 0);
+  // Debounced views of the sliders above, read by every Live Preview
+  // computation below instead of the raw state — the slider itself still
+  // binds to the raw value for instant, smooth dragging (see
+  // SLIDER_DEBOUNCE_MS).
+  const debouncedHoleOffsetX = useDebounce(holeOffsetX, SLIDER_DEBOUNCE_MS);
+  const debouncedHoleOffsetY = useDebounce(holeOffsetY, SLIDER_DEBOUNCE_MS);
   const [holeCenter, setHoleCenter] = useState({
     x: CANVAS_MARGIN + RING_HOLE_OFFSET + (editingTemplate?.holeOffsetX ?? 0) * PX_PER_MM,
     y: CANVAS_MARGIN + RING_HOLE_OFFSET + (editingTemplate?.holeOffsetY ?? 0) * PX_PER_MM,
@@ -203,6 +216,9 @@ export function CharacterTemplateForm({
   // exact vertical centering).
   const [dynamicGapX, setDynamicGapX] = useState(editingTemplate?.dynamicGapX ?? WELD_CLEARANCE_MM);
   const [dynamicOffsetY, setDynamicOffsetY] = useState(editingTemplate?.dynamicOffsetY ?? 0);
+  // See debouncedHoleOffsetX/Y above — same instant-slider/debounced-preview split.
+  const debouncedDynamicGapX = useDebounce(dynamicGapX, SLIDER_DEBOUNCE_MS);
+  const debouncedDynamicOffsetY = useDebounce(dynamicOffsetY, SLIDER_DEBOUNCE_MS);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
@@ -538,12 +554,13 @@ export function CharacterTemplateForm({
 
   // Position the text relative to the character's *actual* auto-computed
   // outline (not a nominal box edge, which real artwork rarely fills), using
-  // the admin-tunable dynamicGapX/dynamicOffsetY state below — exactly
-  // mirroring production (lib/keychain-render.ts). Live-adjustable via the
-  // "Geser Jarak Teks (X)" / "Geser Posisi Vertikal Teks (Y)" sliders, so
-  // this preview (and the outline union effect further down, which depends
-  // on textTranslateX/textTranslateY) recalculates on every drag.
-  const dynamicGapXPx = dynamicGapX * PX_PER_MM;
+  // the *debounced* dynamicGapX/dynamicOffsetY — exactly mirroring
+  // production (lib/keychain-render.ts). Reading the debounced value here
+  // (not the raw slider state) is what keeps dragging smooth: this feeds the
+  // glyph transform and the outline union effect below, so using the raw
+  // value would recompute/re-render those on every single drag tick instead
+  // of once after the slider settles.
+  const dynamicGapXPx = debouncedDynamicGapX * PX_PER_MM;
   const nominalTextOriginX = CANVAS_MARGIN + charBoxRawPx + dynamicGapXPx;
   const textOriginX = characterFit
     ? characterFit.bounds.x + characterFit.bounds.width + dynamicGapXPx
@@ -551,12 +568,13 @@ export function CharacterTemplateForm({
   const textOriginY = CANVAS_MARGIN;
 
   // Centered vertically against the character's *actual* silhouette height
-  // when one is known, not a nominal box, then nudged by dynamicOffsetY (0 =
-  // exact center) — an off-center cut-line would otherwise leave the text
-  // looking misaligned next to the artwork with no way to correct it.
+  // when one is known, not a nominal box, then nudged by the debounced
+  // dynamicOffsetY (0 = exact center) — an off-center cut-line would
+  // otherwise leave the text looking misaligned next to the artwork with no
+  // way to correct it.
   const charCenterY =
     (characterFit ? characterFit.bounds.y + characterFit.bounds.height / 2 : CANVAS_MARGIN + charBoxRawPx / 2) +
-    dynamicOffsetY * PX_PER_MM;
+    debouncedDynamicOffsetY * PX_PER_MM;
 
   const textTranslateX = textPreview ? textOriginX - textPreview.bbox.x1 : textOriginX;
   const textTranslateY = textPreview ? charCenterY - (textPreview.bbox.y1 + textPreview.bbox.y2) / 2 : textOriginY;
@@ -568,8 +586,8 @@ export function CharacterTemplateForm({
   useEffect(() => {
     const timeout = setTimeout(() => {
       const nominalHoleCenter = {
-        x: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetX * PX_PER_MM,
-        y: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetY * PX_PER_MM,
+        x: CANVAS_MARGIN + RING_HOLE_OFFSET + debouncedHoleOffsetX * PX_PER_MM,
+        y: CANVAS_MARGIN + RING_HOLE_OFFSET + debouncedHoleOffsetY * PX_PER_MM,
       };
 
       // "Fixed" templates never run THIS particular clipper pipeline (it's
@@ -646,8 +664,8 @@ export function CharacterTemplateForm({
     textTranslateX,
     textTranslateY,
     characterFit,
-    holeOffsetX,
-    holeOffsetY,
+    debouncedHoleOffsetX,
+    debouncedHoleOffsetY,
     layoutMode,
     charBoxRawPx,
   ]);
