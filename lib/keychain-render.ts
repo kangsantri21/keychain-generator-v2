@@ -119,14 +119,22 @@ export async function loadTemplateAssets(template: Template): Promise<TemplateAs
   if ((template.isCharacter || template.layoutMode === "fixed") && template.characterImagePath) {
     const imageBuffer = await readPublicFile(template.characterImagePath);
     const ext = path.extname(template.characterImagePath).toLowerCase();
+    const rawDataUri = `data:${ext === ".svg" ? "image/svg+xml" : "image/png"};base64,${imageBuffer.toString("base64")}`;
 
     if (ext === ".svg") {
       characterVector = parseCharacterSvg(imageBuffer.toString("utf8"));
     }
 
-    characterImageDataUri = characterVector
-      ? characterVector.artworkDataUri
-      : `data:${ext === ".svg" ? "image/svg+xml" : "image/png"};base64,${imageBuffer.toString("base64")}`;
+    // "fixed" layoutMode master SVGs are multi-layer designer files where
+    // the cut-line-detection heuristic below (tuned for single-character
+    // dynamic uploads) unreliably mis-tags an inner design layer as the
+    // cut-line and strips it out of characterVector.artworkDataUri -
+    // corrupting the artwork shown to the customer. The fixed engine
+    // (lib/keychain-render-fixed.ts) computes its own cut-line automatically
+    // instead and never needs a "cleaned" image, so it always gets the
+    // untouched original file, every layer intact.
+    characterImageDataUri =
+      template.layoutMode === "fixed" ? rawDataUri : (characterVector?.artworkDataUri ?? rawDataUri);
   }
 
   return { font, characterImageDataUri, characterVector };

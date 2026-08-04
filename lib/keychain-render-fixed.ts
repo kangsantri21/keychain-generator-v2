@@ -2,29 +2,27 @@ import type { Template } from "@/lib/db/schema";
 import type { TemplateAssets } from "@/lib/keychain-render";
 import type { KeychainRender } from "@/lib/render-types";
 import { renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
-import { translatePathData, scaleAndTranslatePathData } from "@/lib/laser-outline";
-import { MAX_ITEM_WIDTH_MM } from "@/lib/keychain-geometry";
-
-function rectPathData(x: number, y: number, width: number, height: number): string {
-  return `M ${x},${y} H ${x + width} V ${y + height} H ${x} Z`;
-}
+import { translatePathData, scaleAndTranslatePathData, getPathBounds, type PathBounds } from "@/lib/laser-outline";
+import { computeLaserOutlineClipper } from "@/lib/clipper-outline";
+import { MAX_ITEM_WIDTH_MM, DILATE_MM, ERODE_MM } from "@/lib/keychain-geometry";
 
 /**
  * Renders one nested unit for a "fixed" layoutMode template - the
  * Fixed-Shape Template product line, where the master SVG (loaded from
  * `template.characterImagePath`, the same column character templates use)
- * already carries its own final, paten cut-line, drawn once by the
- * designer. Unlike the "dynamic" engine (lib/keychain-render.ts), this
- * NEVER runs the clipper dilate/erode/union pipeline (lib/clipper-outline.ts)
- * - the master's own geometry is trusted as final, verbatim (aside from the
- * base auto-scale below, which resizes it uniformly, never reshapes it):
+ * is a full designer artwork file, not a font-rendered layout.
  *
- * - If the master SVG has a detectable cut-line (same id="cut-line" /
- *   reddish-stroke / bare-fill:none heuristics lib/character-svg.ts already
- *   uses for character templates), its raw path data is used as-is for
- *   `outlinePath` - no union, no dilate/erode.
- * - Otherwise, the SVG's own declared bounding box (its viewBox) becomes a
- *   plain rectangular cut boundary.
+ * Unlike the "dynamic" engine's designer-cut-line path (lib/keychain-
+ * render.ts, for single-character uploads), this NEVER trusts a pre-tagged
+ * "cut-line" layer inside the master SVG: multi-layer exports from the
+ * design team repeatedly mis-tagged an inner design element as the
+ * cut-line (a stray id, or an untended reddish/unfilled inner shape), which
+ * then sliced straight through the artwork instead of wrapping it. Instead,
+ * EVERY shape in the master SVG is unioned together and run through the
+ * same Clipper dilate-then-erode closing pass the dynamic engine's own
+ * outline uses (lib/clipper-outline.ts, DILATE_MM/ERODE_MM) to auto-compute
+ * one clean outer silhouette hugging the artwork's true outer boundary -
+ * the same outline algorithm, the same resilience, as the dynamic engine.
  *
  * `template.customZones` (lib/db/schema.ts) mark invisible placement zones
  * inside that same master SVG. This pass only handles `type: "text"` zones:
@@ -55,31 +53,50 @@ export function renderFixedShapeTemplate(
     );
   }
 
-  const { bounds, cutLinePaths } = vector;
+  const { bounds, allShapePaths } = vector;
   const sampleText = text.trim() || template.defaultText || "Nama";
 
   // Base auto-scale: a designer's master SVG is sometimes exported at an
   // oversized native viewBox (hundreds of mm) - nested and cut at that
-  // literal size, it becomes a giant item that wastes acrylic and corrupts
-  // the cut-line. Uniformly scale the ENTIRE master (artwork, cut-line, and
-  // customZones alike - see below) down around the SVG's own origin so its
-  // width never exceeds MAX_ITEM_WIDTH_MM, before anything else is computed
-  // from it. A no-op (baseScale = 1) for any master already within spec.
+  // literal size, it becomes a giant item that wastes acrylic. Uniformly
+  // scale the ENTIRE master (every shape, and every customZone's
+  // admin-entered coordinates alike - see below) down around the SVG's own
+  // origin so its width never exceeds MAX_ITEM_WIDTH_MM, before anything
+  // else is computed from it. A no-op (baseScale = 1) for any master
+  // already within spec.
   const baseScale = bounds.width > MAX_ITEM_WIDTH_MM ? MAX_ITEM_WIDTH_MM / bounds.width : 1;
-  const scaledBounds = {
+  const scaledNativeBounds: PathBounds = {
     x: bounds.x * baseScale,
     y: bounds.y * baseScale,
     width: bounds.width * baseScale,
     height: bounds.height * baseScale,
   };
 
-  const outlinePathNative =
-    cutLinePaths.length > 0
-      ? cutLinePaths.join(" ")
-      : rectPathData(bounds.x, bounds.y, bounds.width, bounds.height);
-  // Scale (around the SVG's own origin) then translate straight to the
-  // normalized (0,0) origin in one pass, using the *scaled* bounds.
-  const outlinePath = scaleAndTranslatePathData(outlinePathNative, baseScale, -scaledBounds.x, -scaledBounds.y);
+  // Every shape in the master, scaled to real output mm FIRST - the
+  // dilate/erode closing pass below is a real physical clearance spec (the
+  // same DILATE_MM/ERODE_MM the dynamic engine uses), so it must operate in
+  // genuine output units, not the SVG's arbitrary native scale.
+  const scaledShapes = allShapePaths.map((d) => scaleAndTranslatePathData(d, baseScale, 0, 0));
+
+  // Auto-computed cut-line: union every shape in the master artwork, then
+  // dilate+erode with round joins - drops any interior holes/counters the
+  // same way the dynamic engine's glyph outlines do, and produces a single
+  // clean outer silhouette no matter how many overlapping layers the
+  // designer file has, without ever needing to guess which one is "the"
+  // cut-line.
+  const outlinePathScaled = computeLaserOutlineClipper(scaledShapes, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
+
+  // Every other shape (artwork image, zone text) normalizes against the
+  // outline's own bounds - which legitimately extends a little beyond the
+  // raw artwork edges once dilated, exactly like the dynamic engine. Falls
+  // back to the plain scaled SVG bounds only if Clipper produced nothing at
+  // all (e.g. a master with no closed shapes), so the render never throws
+  // even on a degenerate file.
+  const normalizeBounds = (outlinePathScaled ? getPathBounds(outlinePathScaled) : null) ?? scaledNativeBounds;
+
+  const outlinePath = outlinePathScaled
+    ? translatePathData(outlinePathScaled, -normalizeBounds.x, -normalizeBounds.y)
+    : null;
 
   const textSegmentsNative: GlyphSegment[] = [];
   for (const zone of template.customZones ?? []) {
@@ -124,16 +141,16 @@ export function renderFixedShapeTemplate(
 
   // textSegmentsNative are already positioned in "baseScale-adjusted" space
   // (zoneX/zoneY/zoneWidth/zoneHeight above already had baseScale applied),
-  // so only the final normalize-to-(0,0) shift is needed here - no further
-  // scaling.
+  // so only the final normalize-to-(0,0) shift (against the outline's own
+  // bounds) is needed here - no further scaling.
   const textSegments = textSegmentsNative.map((segment) => ({
     ...segment,
-    d: translatePathData(segment.d, -scaledBounds.x, -scaledBounds.y),
+    d: translatePathData(segment.d, -normalizeBounds.x, -normalizeBounds.y),
   }));
 
   return {
-    width: scaledBounds.width,
-    height: scaledBounds.height,
+    width: normalizeBounds.width,
+    height: normalizeBounds.height,
     outlinePath,
     // Not yet computed for fixed-shape templates: a pre-made master SVG's
     // own cut-line may already bake its physical keyring hole into its
@@ -146,10 +163,10 @@ export function renderFixedShapeTemplate(
     characterImage: assets.characterImageDataUri
       ? {
           dataUri: assets.characterImageDataUri,
-          x: -scaledBounds.x,
-          y: -scaledBounds.y,
-          width: scaledBounds.width,
-          height: scaledBounds.height,
+          x: scaledNativeBounds.x - normalizeBounds.x,
+          y: scaledNativeBounds.y - normalizeBounds.y,
+          width: scaledNativeBounds.width,
+          height: scaledNativeBounds.height,
         }
       : null,
     // `type: "image"` customZones (photo insertion) are not handled yet -

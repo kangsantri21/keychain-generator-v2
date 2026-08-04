@@ -218,7 +218,11 @@ export function CharacterTemplateForm({
           const vector = parseCharacterSvg(text);
           if (!cancelled && vector) {
             setCharacterVector(vector);
-            setCharacterPreviewUrl(vector.artworkDataUri);
+            // "Fixed" mode never shows the cut-line-stripped artwork (see
+            // handleCharacterFileChange's matching comment below) — the
+            // initial state already points characterPreviewUrl at the raw
+            // file (editingTemplate.characterImagePath), so leave it as-is.
+            if (layoutMode !== "fixed") setCharacterPreviewUrl(vector.artworkDataUri);
           }
         } catch {
           // Keep the raw image preview if parsing fails — not fatal.
@@ -229,6 +233,12 @@ export function CharacterTemplateForm({
     return () => {
       cancelled = true;
     };
+    // layoutMode is intentionally read only at its initial (mount-time)
+    // value here, matching editingTemplate's own remount-per-template
+    // lifecycle (see this component's top-level doc comment) — it must not
+    // re-run this fetch just because the admin toggles the Mode Layout radio
+    // afterwards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingTemplate]);
 
   async function handleCharacterFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -255,7 +265,16 @@ export function CharacterTemplateForm({
       const text = await selected.text();
       const vector = parseCharacterSvg(text);
       setCharacterVector(vector);
-      setCharacterPreviewUrl(vector ? vector.artworkDataUri : URL.createObjectURL(selected));
+      // "Fixed" master SVGs are multi-layer designer files where the
+      // cut-line-detection heuristic (tuned for single-character dynamic
+      // uploads) unreliably mis-tags an inner design layer as the cut-line
+      // and strips it out of vector.artworkDataUri — always show the raw,
+      // untouched file instead so nothing silently vanishes from the
+      // preview (production applies the same rule, see
+      // lib/keychain-render.ts's loadTemplateAssets).
+      setCharacterPreviewUrl(
+        layoutMode === "fixed" || !vector ? URL.createObjectURL(selected) : vector.artworkDataUri
+      );
     } catch {
       toast.error("Gagal membaca kontur SVG, menampilkan gambar apa adanya");
       setCharacterVector(null);
@@ -450,6 +469,22 @@ export function CharacterTemplateForm({
 
     return results;
   }, [layoutMode, parsedFont, defaultText, colors, customZones, fixedBaseScale, fixedOriginX, fixedOriginY]);
+
+  // Auto-computed cut-line preview: mirrors lib/keychain-render-fixed.ts's
+  // Clipper union+dilate/erode over EVERY shape in the master SVG exactly
+  // (same DILATE_PX/ERODE_PX this file's dynamic-mode preview above already
+  // uses, at the same PX_PER_MM scale) — so what the admin sees here is the
+  // same silhouette that will actually get cut, never a "trust the file's
+  // own tagged cut-line" guess a multi-layer designer export routinely got
+  // wrong.
+  const fixedOutlinePath = useMemo(() => {
+    if (layoutMode !== "fixed" || !characterVector) return null;
+    const scale = fixedBaseScale * PX_PER_MM;
+    const tx = CANVAS_MARGIN - fixedOriginX * PX_PER_MM;
+    const ty = CANVAS_MARGIN - fixedOriginY * PX_PER_MM;
+    const scaledShapes = characterVector.allShapePaths.map((d) => scaleAndTranslatePathData(d, scale, tx, ty));
+    return computeLaserOutlineClipper(scaledShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
+  }, [layoutMode, characterVector, fixedBaseScale, fixedOriginX, fixedOriginY]);
   // --- end "fixed" layoutMode preview ---
 
   // Position the text just clear of the character's *actual* cut-line
@@ -486,11 +521,10 @@ export function CharacterTemplateForm({
         y: CANVAS_MARGIN + RING_HOLE_OFFSET + holeOffsetY * PX_PER_MM,
       };
 
-      // "Fixed" templates never run this clipper pipeline in production
-      // (lib/keychain-render-fixed.ts trusts the master SVG's own cut-line
-      // verbatim) — computing one here would just be a misleading preview,
-      // so skip it entirely rather than show a contour production won't
-      // actually produce.
+      // "Fixed" templates never run THIS particular clipper pipeline (it's
+      // the dynamic engine's character+text union) — their own auto-computed
+      // outline is a separate memo, `fixedOutlinePath` below, mirroring
+      // lib/keychain-render-fixed.ts's whole-master-SVG union instead.
       if (layoutMode === "fixed") {
         setOutlinePath(null);
         setHoleCenter(nominalHoleCenter);
@@ -949,6 +983,10 @@ export function CharacterTemplateForm({
                   Unggah file SVG untuk pratinjau
                 </text>
               )}
+
+              {/* Auto-computed cut-line: same Clipper union+dilate/erode algorithm as
+                  lib/keychain-render-fixed.ts, over every shape in the master SVG. */}
+              {fixedOutlinePath && <path d={fixedOutlinePath} stroke="red" strokeWidth={1.5} fill="none" />}
 
               {/* Visual helper: a dashed red box per customZone (calibrated by the same
                   base auto-scale as the master artwork), live-synced to its X/Y/Lebar/Tinggi inputs. */}

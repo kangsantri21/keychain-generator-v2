@@ -33,6 +33,17 @@ export interface CharacterVector {
   artworkDataUri: string;
   /** The source SVG's own canvas size (from viewBox, falling back to the union of its paths' bounds). */
   bounds: PathBounds;
+  /**
+   * EVERY `<path>`/`<polygon>` shape's `d` string in the source SVG, still in
+   * its own coordinate space — collected before the cut-line heuristic above
+   * removes anything, so it's unaffected by (mis-)classification. Used by
+   * the "fixed" layoutMode engine (lib/keychain-render-fixed.ts) to
+   * auto-compute a cut-line via Clipper union+offset over the whole master
+   * artwork, instead of trusting a single tagged "cut-line" layer — a
+   * multi-layer designer export can mis-tag an inner design element as the
+   * cut-line, slicing through the artwork instead of wrapping it.
+   */
+  allShapePaths: string[];
 }
 
 function attr(el: { getAttribute(name: string): string | null }, name: string): string {
@@ -232,5 +243,5 @@ export function parseCharacterSvg(svgSource: string): CharacterVector | null {
   const cleanedSvg = new XMLSerializer().serializeToString(doc);
   const artworkDataUri = `data:image/svg+xml;base64,${toBase64(cleanedSvg)}`;
 
-  return { cutLinePaths, artworkDataUri, bounds };
+  return { cutLinePaths, artworkDataUri, bounds, allShapePaths: allDs };
 }
