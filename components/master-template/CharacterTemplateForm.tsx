@@ -27,6 +27,7 @@ import {
   ERODE_MM,
   DEFAULT_CHAR_TARGET_HEIGHT_MM,
   DEFAULT_TEXT_TARGET_HEIGHT_MM,
+  MAX_ITEM_WIDTH_MM,
 } from "@/lib/keychain-geometry";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
 
@@ -340,6 +341,116 @@ export function CharacterTemplateForm({
     }
     return bounds ? { positionedCutLines, bounds } : null;
   }, [characterVector, charFinishedPx]);
+
+  // --- "fixed" layoutMode preview: customZones live inside the master SVG's
+  // own coordinate space (mm) — see the "Zona Kustomisasi" editor's own
+  // helper text below — so the preview canvas here is anchored to that same
+  // space (mirroring lib/keychain-render-fixed.ts) instead of the
+  // character-box-plus-gap layout the "dynamic" preview above uses. Kept
+  // entirely separate so neither mode's math can leak into the other.
+  const masterSvgBounds = characterVector?.bounds ?? null;
+
+  // Base auto-scale: mirrors lib/keychain-render-fixed.ts exactly — some
+  // designer master SVGs are exported at an oversized native viewBox
+  // (hundreds of mm), which would otherwise nest as a giant item and
+  // corrupt the cut-line in production. Scale the whole master (artwork,
+  // cut-line, and every customZone's admin-entered coordinates alike) down
+  // uniformly so its width never exceeds MAX_ITEM_WIDTH_MM, BEFORE any
+  // preview geometry below is computed — so what the admin sees here always
+  // matches the actual calibrated production output 1:1. A no-op
+  // (fixedBaseScale = 1) for any master already within spec.
+  const fixedBaseScale =
+    masterSvgBounds && masterSvgBounds.width > MAX_ITEM_WIDTH_MM ? MAX_ITEM_WIDTH_MM / masterSvgBounds.width : 1;
+  const scaledMasterSvgBounds = useMemo(
+    () =>
+      masterSvgBounds
+        ? {
+            x: masterSvgBounds.x * fixedBaseScale,
+            y: masterSvgBounds.y * fixedBaseScale,
+            width: masterSvgBounds.width * fixedBaseScale,
+            height: masterSvgBounds.height * fixedBaseScale,
+          }
+        : null,
+    [masterSvgBounds, fixedBaseScale]
+  );
+
+  const fixedCanvasBounds = useMemo(() => {
+    if (layoutMode !== "fixed") return null;
+    let bounds: PathBounds | null = scaledMasterSvgBounds;
+    for (const zone of customZones) {
+      const zoneBounds: PathBounds = {
+        x: zone.x * fixedBaseScale,
+        y: zone.y * fixedBaseScale,
+        width: Math.max(zone.width, 0) * fixedBaseScale,
+        height: Math.max(zone.height, 0) * fixedBaseScale,
+      };
+      bounds = bounds ? unionBounds(bounds, zoneBounds) : zoneBounds;
+    }
+    return bounds;
+  }, [layoutMode, scaledMasterSvgBounds, customZones, fixedBaseScale]);
+
+  // Where the master SVG's own (mm, base-auto-scaled) origin lands in
+  // preview px — every zone and the master artwork itself are positioned
+  // relative to this so they always stay visually in sync with each other,
+  // even if a zone's coordinates fall outside the artwork's own bounds.
+  const fixedOriginX = fixedCanvasBounds?.x ?? 0;
+  const fixedOriginY = fixedCanvasBounds?.y ?? 0;
+  const fixedCanvasWidth = fixedCanvasBounds ? fixedCanvasBounds.width * PX_PER_MM + CANVAS_MARGIN * 2 : 240;
+  const fixedCanvasHeight = fixedCanvasBounds ? fixedCanvasBounds.height * PX_PER_MM + CANVAS_MARGIN * 2 : 160;
+
+  // Live-fits the sample name into each "text" customZone exactly like
+  // production (lib/keychain-render-fixed.ts): the zone's admin-entered
+  // coordinates are calibrated by fixedBaseScale first, then the text is
+  // rendered calibrated to the (scaled) zone's own height, shrunk (never
+  // upscaled) only as needed to fit its width too, and centered inside it —
+  // so dragging the X/Y/Lebar/Tinggi inputs moves and resizes this preview's
+  // text live, the same way it will move in the actual laser-cut output.
+  const zoneTextPreviews = useMemo(() => {
+    if (layoutMode !== "fixed" || !parsedFont) return [];
+    const sampleText = defaultText.trim() || "Nama";
+    const results: { zone: CustomZone; segments: { d: string; color: string }[] }[] = [];
+
+    for (const zone of customZones) {
+      if (zone.type !== "text" || zone.width <= 0 || zone.height <= 0) continue;
+
+      const zoneXScaled = zone.x * fixedBaseScale;
+      const zoneYScaled = zone.y * fixedBaseScale;
+      const zoneWidthScaled = zone.width * fixedBaseScale;
+      const zoneHeightScaled = zone.height * fixedBaseScale;
+      const zoneHeightPx = zoneHeightScaled * PX_PER_MM;
+
+      let rendered: ColoredTextRender;
+      try {
+        rendered = renderColoredGlyphsAtHeight(parsedFont, sampleText, zoneHeightPx, colors);
+      } catch {
+        continue;
+      }
+      const { segments, bbox } = rendered;
+      const rawWidthPx = Math.max(bbox.x2 - bbox.x1, 1e-6);
+      const rawHeightPx = Math.max(bbox.y2 - bbox.y1, 1e-6);
+      const zoneWidthPx = zoneWidthScaled * PX_PER_MM;
+
+      // Shrink-to-fit only (never upscale past the zone-calibrated default),
+      // matching production's `Math.min(..., 1)` cap.
+      const scale = Math.min(zoneWidthPx / rawWidthPx, zoneHeightPx / rawHeightPx, 1);
+
+      const zoneCenterX = CANVAS_MARGIN + (zoneXScaled + zoneWidthScaled / 2 - fixedOriginX) * PX_PER_MM;
+      const zoneCenterY = CANVAS_MARGIN + (zoneYScaled + zoneHeightScaled / 2 - fixedOriginY) * PX_PER_MM;
+      const translateX = zoneCenterX - (scale * (bbox.x1 + bbox.x2)) / 2;
+      const translateY = zoneCenterY - (scale * (bbox.y1 + bbox.y2)) / 2;
+
+      results.push({
+        zone,
+        segments: segments.map((segment) => ({
+          d: scaleAndTranslatePathData(segment.d, scale, translateX, translateY),
+          color: segment.color,
+        })),
+      });
+    }
+
+    return results;
+  }, [layoutMode, parsedFont, defaultText, colors, customZones, fixedBaseScale, fixedOriginX, fixedOriginY]);
+  // --- end "fixed" layoutMode preview ---
 
   // Position the text just clear of the character's *actual* cut-line
   // silhouette (not a nominal box edge, which real artwork rarely fills) —
@@ -773,8 +884,9 @@ export function CharacterTemplateForm({
                 </div>
               )}
               <p className="text-xs text-slate-400">
-                Koordinat X/Y/Lebar/Tinggi mengikuti ukuran asli file SVG (mm). Pratinjau kontur di bawah
-                dinonaktifkan untuk mode Fixed karena garis potong diambil langsung dari file SVG.
+                Koordinat X/Y/Lebar/Tinggi mengikuti ukuran asli file SVG (mm). Kotak merah putus-putus dan
+                teks di Live Preview di bawah bergerak mengikuti zona ini secara langsung — garis potong
+                merah tetap diambil langsung dari file SVG (tidak dihitung ulang) untuk mode Fixed.
               </p>
             </div>
           )}
@@ -814,62 +926,119 @@ export function CharacterTemplateForm({
               Kontur SVG terdeteksi
             </span>
           )}
+          {layoutMode === "fixed" && fixedBaseScale < 1 && masterSvgBounds && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+              Auto-scale: {masterSvgBounds.width.toFixed(0)}mm → {MAX_ITEM_WIDTH_MM}mm
+            </span>
+          )}
         </div>
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-2">
-          <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="h-40 w-full max-w-full">
-            {characterPreviewUrl ? (
-              <image
-                href={characterPreviewUrl}
-                x={CANVAS_MARGIN}
-                y={CANVAS_MARGIN}
-                width={characterFit ? characterFit.bounds.width : charBoxRawPx}
-                height={characterFit ? characterFit.bounds.height : charBoxRawPx}
-                preserveAspectRatio="xMidYMid meet"
+          {layoutMode === "fixed" ? (
+            <svg viewBox={`0 0 ${fixedCanvasWidth} ${fixedCanvasHeight}`} className="h-40 w-full max-w-full">
+              {characterPreviewUrl && scaledMasterSvgBounds ? (
+                <image
+                  href={characterPreviewUrl}
+                  x={CANVAS_MARGIN + (scaledMasterSvgBounds.x - fixedOriginX) * PX_PER_MM}
+                  y={CANVAS_MARGIN + (scaledMasterSvgBounds.y - fixedOriginY) * PX_PER_MM}
+                  width={scaledMasterSvgBounds.width * PX_PER_MM}
+                  height={scaledMasterSvgBounds.height * PX_PER_MM}
+                  preserveAspectRatio="xMidYMid meet"
+                />
+              ) : (
+                <text x={CANVAS_MARGIN} y={CANVAS_MARGIN + 20} fontSize={14} fill="#94a3b8">
+                  Unggah file SVG untuk pratinjau
+                </text>
+              )}
+
+              {/* Visual helper: a dashed red box per customZone (calibrated by the same
+                  base auto-scale as the master artwork), live-synced to its X/Y/Lebar/Tinggi inputs. */}
+              {customZones.map((zone) => (
+                <rect
+                  key={zone.id}
+                  x={CANVAS_MARGIN + (zone.x * fixedBaseScale - fixedOriginX) * PX_PER_MM}
+                  y={CANVAS_MARGIN + (zone.y * fixedBaseScale - fixedOriginY) * PX_PER_MM}
+                  width={Math.max(zone.width, 0) * fixedBaseScale * PX_PER_MM}
+                  height={Math.max(zone.height, 0) * fixedBaseScale * PX_PER_MM}
+                  fill="none"
+                  stroke="red"
+                  strokeDasharray="4 4"
+                  strokeWidth={1.5}
+                />
+              ))}
+
+              {zoneTextPreviews.map(({ zone, segments }) =>
+                segments.map((segment, index) => (
+                  <path key={`${zone.id}-${index}`} d={segment.d} fill={segment.color} />
+                ))
+              )}
+
+              {!parsedFont && customZones.some((zone) => zone.type === "text") && (
+                <text
+                  x={CANVAS_MARGIN}
+                  y={fixedCanvasHeight - CANVAS_MARGIN / 2}
+                  fontSize={12}
+                  fill="#94a3b8"
+                >
+                  Unggah font untuk pratinjau teks di dalam zona
+                </text>
+              )}
+            </svg>
+          ) : (
+            <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} className="h-40 w-full max-w-full">
+              {characterPreviewUrl ? (
+                <image
+                  href={characterPreviewUrl}
+                  x={CANVAS_MARGIN}
+                  y={CANVAS_MARGIN}
+                  width={characterFit ? characterFit.bounds.width : charBoxRawPx}
+                  height={characterFit ? characterFit.bounds.height : charBoxRawPx}
+                  preserveAspectRatio="xMidYMid meet"
+                />
+              ) : (
+                <rect
+                  x={CANVAS_MARGIN}
+                  y={CANVAS_MARGIN}
+                  width={charBoxRawPx}
+                  height={charBoxRawPx}
+                  rx={12}
+                  fill="#f8fafc"
+                  stroke="#cbd5e1"
+                  strokeDasharray="4 4"
+                />
+              )}
+
+              <circle
+                cx={holeCenter.x}
+                cy={holeCenter.y}
+                r={RING_HOLE_DIAMETER / 2}
+                stroke="red"
+                strokeWidth={1}
+                fill="none"
               />
-            ) : (
-              <rect
-                x={CANVAS_MARGIN}
-                y={CANVAS_MARGIN}
-                width={charBoxRawPx}
-                height={charBoxRawPx}
-                rx={12}
-                fill="#f8fafc"
-                stroke="#cbd5e1"
-                strokeDasharray="4 4"
-              />
-            )}
 
-            <circle
-              cx={holeCenter.x}
-              cy={holeCenter.y}
-              r={RING_HOLE_DIAMETER / 2}
-              stroke="red"
-              strokeWidth={1}
-              fill="none"
-            />
+              {textPreview && textPreview.segments.length > 0 ? (
+                <g transform={`translate(${textTranslateX}, ${textTranslateY})`}>
+                  {textPreview.segments.map((segment, index) => (
+                    <path key={index} d={segment.d} fill={segment.color} />
+                  ))}
+                </g>
+              ) : (
+                <text
+                  x={textOriginX}
+                  y={CANVAS_MARGIN + charBoxRawPx / 2}
+                  dominantBaseline="middle"
+                  fontSize={14}
+                  fill="#94a3b8"
+                >
+                  Unggah font untuk pratinjau teks
+                </text>
+              )}
 
-            {textPreview && textPreview.segments.length > 0 ? (
-              <g transform={`translate(${textTranslateX}, ${textTranslateY})`}>
-                {textPreview.segments.map((segment, index) => (
-                  <path key={index} d={segment.d} fill={segment.color} />
-                ))}
-              </g>
-            ) : (
-              <text
-                x={textOriginX}
-                y={CANVAS_MARGIN + charBoxRawPx / 2}
-                dominantBaseline="middle"
-                fontSize={14}
-                fill="#94a3b8"
-              >
-                Unggah font untuk pratinjau teks
-              </text>
-            )}
-
-            {outlinePath && (
-              <path d={outlinePath} stroke="red" strokeWidth={1.5} fill="none" />
-            )}
-          </svg>
+              {outlinePath && (
+                <path d={outlinePath} stroke="red" strokeWidth={1.5} fill="none" />
+              )}
+            </svg>
+          )}
         </div>
       </div>
     </div>
