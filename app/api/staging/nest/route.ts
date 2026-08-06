@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { orders, orderItems, templates, stagingItems, type NewStagingItem } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
-import { packShelves, type NestableRect } from "@/lib/nesting";
+import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM } from "@/lib/keychain-geometry";
 
 interface PackData {
@@ -44,7 +44,7 @@ export async function POST() {
   // tracked positively since items (not orders) are the iteration unit.
   const successfulOrderIds = new Set<number>();
 
-  // Collect every rect first and pack them all in one packShelves() call —
+  // Collect every rect first and pack them all in one packMaxRects() call —
   // it sorts the whole batch by size (largest first) before placing any of
   // them, which is what actually keeps the packing dense: inserting large
   // items first (when the most contiguous room is still available) and
@@ -77,13 +77,15 @@ export async function POST() {
     }
   }
 
-  // Top-left shelf packing (lib/nesting.ts): items fill left-to-right, row
-  // by row, top to bottom, overflowing onto additional sheets only once a
-  // sheet is genuinely out of vertical room — so leftover space always ends
-  // up at the end of the layout, never as a gap in the middle of a sparse
-  // sheet (see lib/nesting.ts's own docs for why the previous MaxRects/BSSF
-  // packer could do exactly that).
-  const packedRects = packShelves(pendingRects, SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM, true);
+  // MaxRects packing with Bottom-Left (top-left gravity) scoring (lib/
+  // nesting.ts): real free-rectangle tracking, not fixed-height shelf rows —
+  // items settle as close to the sheet's top-left as possible, filling the
+  // leftover space under shorter neighbors even when a rotated item makes
+  // one placement unusually tall, and never scattering toward the edges the
+  // way a plain best-fit heuristic could on a sparse sheet. See
+  // lib/nesting.ts's own docs for the two real failure modes (a center hole,
+  // then dead space under a rotated item) this algorithm was iterated past.
+  const packedRects = packMaxRects(pendingRects, SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM, true);
 
   if (packedRects.length === 0) {
     return NextResponse.json(

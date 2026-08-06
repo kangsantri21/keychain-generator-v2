@@ -1,33 +1,50 @@
 /**
- * Top-left "shelf" (row-based) bin packer for arranging cut items onto a
- * fixed-size print sheet.
+ * MaxRects free-rectangle bin packer, scored by the Bottom-Left rule, for
+ * arranging cut items onto a fixed-size print sheet.
  *
- * This replaces an earlier MaxRects/Best-Short-Side-Fit packer
- * (`maxrects-packer`). BSSF is a genuinely strong *density* heuristic — for
- * each item it scans every current free rectangle and places the item in
- * whichever one is the *tightest* fit (`Math.min(freeRect.width - item.width,
- * freeRect.height - item.height)`), not necessarily the one closest to the
- * sheet's top-left corner. That is correct and effective once a sheet is
- * fairly full, but for a *sparse* sheet (a handful of items on a large
- * sheet — the normal case for a small batch of orders) it can legitimately
- * choose a free rectangle far from the already-used area simply because its
- * dimensions happen to match the new item more tightly, scattering items
- * toward the sheet's edges/corners and leaving a large contiguous gap in the
- * *middle* — exactly the "bolong tengah" (hole in the middle) behavior
- * reported from a physical print test. Verified by reading
- * node_modules/maxrects-packer/lib/maxrects-bin.js's `findNode()` directly
- * before writing this replacement, not just assumed from the symptom.
+ * History of this module, both real failures found from real output (a
+ * physical print test, then a nesting screenshot), not assumed from theory:
  *
- * Shelf packing sacrifices a little of BSSF's raw density in exchange for a
- * placement order that is simple, predictable, and always leaves waste in
- * one place: items fill left-to-right along a "shelf" (row) at the current
- * cursor height; once a row can't fit the next item, a new row starts right
- * below the tallest item placed in the row above; once a sheet runs out of
- * vertical room, a new sheet starts. Every item before the last is packed
- * edge-to-edge against its neighbors, so the only unused space is the
- * horizontal sliver at the end of a row (bounded by that row's own height)
- * and the sheet's final, incomplete row — both structurally pinned to the
- * *end* of the layout, never the middle.
+ * 1. Originally a MaxRects/Best-Short-Side-Fit packer (`maxrects-packer`
+ *    npm package). BSSF scores every free rectangle by how tightly it
+ *    matches the new item's *dimensions* (`Math.min(freeRect.width -
+ *    item.width, freeRect.height - item.height)`), not by how close that
+ *    free rectangle is to the sheet's top-left corner. On a *sparse* sheet
+ *    (a handful of items on a large sheet) that legitimately picked free
+ *    rectangles far from the already-used area simply because their size
+ *    happened to match more tightly, scattering items toward the edges and
+ *    leaving a large gap in the *middle* of the sheet.
+ * 2. Replaced with a shelf/row packer: items filled left-to-right along a
+ *    row at a fixed cursor height, wrapping to a new row below the tallest
+ *    item placed so far. That fixed the center-hole problem but introduced
+ *    a different one: with `allowRotation` on, a single item rotated 90°
+ *    into a tall, narrow orientation forces the ENTIRE row's height up to
+ *    match it — every other (shorter, unrotated) item sharing that row
+ *    leaves the empty space below itself and above the next row completely
+ *    dead, unusable by anything else. A row is a rigid horizontal band; it
+ *    has no concept of "the space under this shorter item is still free".
+ *
+ * This version fixes both at once by going back to true MaxRects (which
+ * tracks actual free *rectangles*, not fixed-height rows — placing a tall
+ * item creates a free rectangle to its side, but ALSO free rectangles below
+ * every shorter neighbor, so a later small item can still slot into that
+ * leftover space instead of the row being sealed off at the tallest item's
+ * height) while replacing BSSF's fit-quality scoring with the Bottom-Left
+ * rule: among every free rectangle an item could occupy, prefer the one
+ * whose placement's bottom edge (`y + height`) is smallest, tie-broken by
+ * the smallest `x`. In a top-left-origin, Y-down coordinate system (an SVG
+ * sheet, same as this codebase's), that is exactly "settle as close to the
+ * top-left as possible" — true top-left gravity, not just a fit heuristic —
+ * which is what continues to prevent the original center-hole problem,
+ * while MaxRects' real free-rectangle tracking (not shelf rows) is what
+ * fixes the new dead-space-under-a-rotated-item problem.
+ *
+ * (The installed `maxrects-packer` npm package was checked directly
+ * (node_modules/maxrects-packer/lib/maxrects-packer.js's `PACKING_LOGIC`
+ * enum) and only exposes MAX_AREA/MAX_EDGE — no Bottom-Left rule — so this
+ * is a from-scratch implementation of the same well-established MaxRects
+ * algorithm (free-rectangle list + guillotine splitting) that library also
+ * uses, just with a different scoring function.)
  */
 
 export interface NestableRect<T> {
@@ -49,10 +66,129 @@ export interface PackedRect<T> {
   data: T;
 }
 
-interface Candidate {
-  w: number;
-  h: number;
+interface FreeRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface PlacementCandidate extends FreeRect {
   rotated: boolean;
+}
+
+/** Bottom-Left rule: smallest bottom edge (y + height) first, then smallest x — true top-left gravity in a Y-down space. */
+function isBetterPlacement(a: PlacementCandidate, b: PlacementCandidate): boolean {
+  const aBottom = a.y + a.height;
+  const bBottom = b.y + b.height;
+  if (aBottom !== bBottom) return aBottom < bBottom;
+  return a.x < b.x;
+}
+
+/** Best free rectangle (and orientation) for an item of size (width, height), or null if none fits. */
+function findBestNode(
+  freeRects: FreeRect[],
+  width: number,
+  height: number,
+  allowRotation: boolean
+): PlacementCandidate | null {
+  let best: PlacementCandidate | null = null;
+
+  for (const r of freeRects) {
+    if (r.width >= width && r.height >= height) {
+      const candidate: PlacementCandidate = { x: r.x, y: r.y, width, height, rotated: false };
+      if (!best || isBetterPlacement(candidate, best)) best = candidate;
+    }
+    if (allowRotation && r.width >= height && r.height >= width) {
+      const candidate: PlacementCandidate = { x: r.x, y: r.y, width: height, height: width, rotated: true };
+      if (!best || isBetterPlacement(candidate, best)) best = candidate;
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Guillotine split: if `used` overlaps `free`, replace `free` with up to 4
+ * new free rectangles covering whatever part of it `used` didn't consume
+ * (above, below, left, right). Returns the replacement list (empty if no
+ * overlap, in which case the caller should keep `free` as-is).
+ */
+function splitFreeRect(free: FreeRect, used: FreeRect): FreeRect[] {
+  const overlaps =
+    used.x < free.x + free.width && used.x + used.width > free.x && used.y < free.y + free.height && used.y + used.height > free.y;
+  if (!overlaps) return [];
+
+  const pieces: FreeRect[] = [];
+
+  if (used.x < free.x + free.width && used.x + used.width > free.x) {
+    if (used.y > free.y && used.y < free.y + free.height) {
+      pieces.push({ x: free.x, y: free.y, width: free.width, height: used.y - free.y });
+    }
+    if (used.y + used.height < free.y + free.height) {
+      pieces.push({
+        x: free.x,
+        y: used.y + used.height,
+        width: free.width,
+        height: free.y + free.height - (used.y + used.height),
+      });
+    }
+  }
+
+  if (used.y < free.y + free.height && used.y + used.height > free.y) {
+    if (used.x > free.x && used.x < free.x + free.width) {
+      pieces.push({ x: free.x, y: free.y, width: used.x - free.x, height: free.height });
+    }
+    if (used.x + used.width < free.x + free.width) {
+      pieces.push({
+        x: used.x + used.width,
+        y: free.y,
+        width: free.x + free.width - (used.x + used.width),
+        height: free.height,
+      });
+    }
+  }
+
+  return pieces;
+}
+
+/** Drops any free rectangle fully contained within another (redundant free space). */
+function pruneFreeRects(freeRects: FreeRect[]): FreeRect[] {
+  const contains = (a: FreeRect, b: FreeRect) =>
+    b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
+
+  return freeRects.filter((rect, i) => !freeRects.some((other, j) => i !== j && contains(other, rect)));
+}
+
+class Sheet {
+  freeRects: FreeRect[];
+
+  constructor(usableWidth: number, usableHeight: number, border: number) {
+    this.freeRects = [{ x: border, y: border, width: usableWidth, height: usableHeight }];
+  }
+
+  /** Places width x height (plus padding reserved around it) if it fits anywhere; returns the placed (unpadded) rect, or null. */
+  place(width: number, height: number, padding: number, allowRotation: boolean): PlacementCandidate | null {
+    const node = findBestNode(this.freeRects, width + padding, height + padding, allowRotation);
+    if (!node) return null;
+
+    // The free-rect search above reserved `padding` extra room so
+    // neighboring items always end up with that real physical gap between
+    // them; the rect actually handed back to the caller (and used to split
+    // the free list) is the item's own true, unpadded footprint.
+    const placed: PlacementCandidate = { x: node.x, y: node.y, width: node.width - padding, height: node.height - padding, rotated: node.rotated };
+    const usedForSplit: FreeRect = { x: node.x, y: node.y, width: node.width, height: node.height };
+
+    const next: FreeRect[] = [];
+    for (const free of this.freeRects) {
+      const pieces = splitFreeRect(free, usedForSplit);
+      if (pieces.length === 0) next.push(free);
+      else next.push(...pieces);
+    }
+    this.freeRects = pruneFreeRects(next);
+
+    return placed;
+  }
 }
 
 /**
@@ -60,17 +196,15 @@ interface Candidate {
  * keeping `padding` clearance between every item and around the sheet's own
  * edges (matching the physical gap a laser needs between neighboring cuts).
  *
- * Items are sorted largest-dimension-first before placing — the same
- * ordering `maxrects-packer`'s own `PACKING_LOGIC.MAX_EDGE` sort used
- * (`Math.max(width, height)` descending) — so big items claim space while
- * the most contiguous room is still available and small items fill in
- * around them, rather than the reverse.
+ * Items are sorted largest-dimension-first before placing — big items claim
+ * space while the most contiguous room is still available, small items fill
+ * in around and underneath them afterward.
  *
  * An item that cannot fit `sheetWidth` x `sheetHeight` in any allowed
- * orientation (larger than the sheet itself) is silently dropped — it could
- * never have been placed by any packer at this sheet size either.
+ * orientation (larger than the sheet itself) is silently dropped — no
+ * packer could ever place it at this sheet size either.
  */
-export function packShelves<T>(
+export function packMaxRects<T>(
   items: NestableRect<T>[],
   sheetWidth: number,
   sheetHeight: number,
@@ -83,65 +217,29 @@ export function packShelves<T>(
   const sorted = items.slice().sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height));
 
   const results: PackedRect<T>[] = [];
-
-  let sheetIndex = 0;
-  let cursorX = padding;
-  let cursorY = padding;
-  let rowHeight = 0;
-
-  function startNewRow(): void {
-    cursorX = padding;
-    cursorY += rowHeight + padding;
-    rowHeight = 0;
-  }
-
-  function startNewSheet(): void {
-    sheetIndex += 1;
-    cursorX = padding;
-    cursorY = padding;
-    rowHeight = 0;
-  }
-
-  function tryPlaceInCurrentRow(candidates: Candidate[], data: T): boolean {
-    let best: Candidate | null = null;
-    for (const candidate of candidates) {
-      const fitsHorizontally = cursorX + candidate.w <= sheetWidth - padding;
-      const fitsVertically = cursorY + candidate.h <= sheetHeight - padding;
-      if (!fitsHorizontally || !fitsVertically) continue;
-      // Prefer whichever fitting orientation keeps this row shortest — a
-      // tighter row leaves more usable height for the rows still to come.
-      if (!best || candidate.h < best.h) best = candidate;
-    }
-    if (!best) return false;
-
-    results.push({ x: cursorX, y: cursorY, width: best.w, height: best.h, rotated: best.rotated, sheetIndex, data });
-    cursorX += best.w + padding;
-    rowHeight = Math.max(rowHeight, best.h);
-    return true;
-  }
+  const sheets: Sheet[] = [new Sheet(usableWidth, usableHeight, padding)];
 
   for (const item of sorted) {
-    const candidates: Candidate[] = [];
-    if (item.width <= usableWidth && item.height <= usableHeight) {
-      candidates.push({ w: item.width, h: item.height, rotated: false });
+    const fitsAtAll =
+      (item.width <= usableWidth && item.height <= usableHeight) ||
+      (allowRotation && item.height <= usableWidth && item.width <= usableHeight);
+    if (!fitsAtAll) continue;
+
+    let sheetIndex = sheets.length - 1;
+    let placement = sheets[sheetIndex].place(item.width, item.height, padding, allowRotation);
+
+    if (!placement) {
+      sheets.push(new Sheet(usableWidth, usableHeight, padding));
+      sheetIndex = sheets.length - 1;
+      placement = sheets[sheetIndex].place(item.width, item.height, padding, allowRotation);
     }
-    if (allowRotation && item.width !== item.height && item.height <= usableWidth && item.width <= usableHeight) {
-      candidates.push({ w: item.height, h: item.width, rotated: true });
+
+    // Guaranteed non-null: `fitsAtAll` already confirmed this item fits the
+    // sheet's full usable area in some orientation, and a fresh sheet's
+    // free-rect list starts as exactly that full usable area.
+    if (placement) {
+      results.push({ ...placement, sheetIndex, data: item.data });
     }
-    // Too big for this sheet size in every allowed orientation — no packer
-    // could ever place it; drop rather than loop forever.
-    if (candidates.length === 0) continue;
-
-    if (tryPlaceInCurrentRow(candidates, item.data)) continue;
-
-    startNewRow();
-    if (tryPlaceInCurrentRow(candidates, item.data)) continue;
-
-    startNewSheet();
-    // Guaranteed to succeed: candidates were pre-filtered to fit the sheet's
-    // full usable area, and a fresh sheet's cursor starts at that area's own
-    // top-left corner with nothing yet placed.
-    tryPlaceInCurrentRow(candidates, item.data);
   }
 
   return results;
