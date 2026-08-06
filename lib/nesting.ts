@@ -1,19 +1,22 @@
 /**
- * MaxRects free-rectangle bin packer, scored by the Bottom-Left rule, for
- * arranging cut items onto a fixed-size print sheet.
+ * MaxRects free-rectangle bin packer, scored by Best-Short-Side-Fit (with a
+ * Bottom-Left tie-break), for arranging cut items onto a fixed-size print
+ * sheet.
  *
  * History of this module, each step driven by a real observed failure (a
  * physical print test, then three nesting screenshots), not assumed from
  * theory:
  *
- * 1. Originally a MaxRects/Best-Short-Side-Fit packer (`maxrects-packer`
- *    npm package). BSSF scores every free rectangle by how tightly it
- *    matches the new item's *dimensions*, not by how close that free
- *    rectangle is to the sheet's top-left corner. On a *sparse* sheet (a
- *    handful of items on a large sheet) that legitimately picked free
- *    rectangles far from the already-used area simply because their size
- *    happened to match more tightly, scattering items toward the edges and
- *    leaving a large gap in the *middle* of the sheet.
+ * 1. Originally BSSF via the `maxrects-packer` npm package, WITHOUT
+ *    disciplined largest-area-first pre-sorting. BSSF scores every free
+ *    rectangle by how tightly it matches the new item's *dimensions*
+ *    (`Math.min(freeRect.width - item.width, freeRect.height -
+ *    item.height)`), not by how close that free rectangle is to the sheet's
+ *    top-left corner. On a *sparse* sheet (a handful of items on a large
+ *    sheet, processed in whatever order they happened to be enqueued) that
+ *    picked free rectangles far from the already-used area simply because
+ *    their size happened to match more tightly, scattering items toward the
+ *    edges and leaving a large gap in the *middle* of the sheet.
  * 2. Replaced with a shelf/row packer: items filled left-to-right along a
  *    row at a fixed cursor height, wrapping to a new row below the tallest
  *    item placed so far. That fixed the center-hole problem but introduced
@@ -23,31 +26,39 @@
  *    fixed-height row has no way to reclaim.
  * 3. Replaced with true MaxRects (real free *rectangles*, not fixed-height
  *    rows) scored by the Bottom-Left rule (smallest resulting bottom edge,
- *    then smallest x). That fixed the dead-row-space problem.
- * 4. Tried scoring by the Contact Point Rule instead (prefer whichever
- *    candidate's edges touch the most total length of already-placed items
- *    + the sheet's own border) to nest corners more snugly than Bottom-
- *    Left's pure y/x position rule sometimes managed. This backfired badly
- *    on a real print job: because touching the sheet border scores its
- *    *full raw edge length* same as touching a neighbor, an item placed
- *    directly beneath the previous one in the same left-hand column earns
- *    contact from BOTH the left border AND the item above it, while
- *    branching out to start a new row only earns credit from one neighbor
- *    (nothing touches the border way out there yet). That compounding
- *    edge-hugging incentive kept out-scoring "move right and start filling
- *    a row," collapsing the whole layout into a single tall column hugging
- *    the left edge with most of the sheet's width sitting empty. Reverted
- *    back to Bottom-Left, which has no such border-length bonus to chase —
- *    it only ever compares y (then x) position, so it has no incentive to
- *    prefer one edge of the sheet over filling out a row.
+ *    then smallest x), plus largest-area-first pre-sorting introduced at
+ *    the same time. That fixed the dead-row-space problem, and Bottom-Left
+ *    never reintroduced problem 1 — but its pure y/x-position scoring
+ *    doesn't account for fit tightness at all, so it would sometimes leave
+ *    a small, snugly-matching gap in a corner unfilled in favor of a
+ *    position with a marginally smaller y.
+ * 4. Tried the Contact Point Rule (prefer whichever candidate's edges touch
+ *    the most total length of already-placed items + the sheet's own
+ *    border). Backfired badly: touching the sheet border scored its full
+ *    raw edge length same as touching a neighbor, so stacking straight down
+ *    the left column (border contact + neighbor-above contact, compounding
+ *    every time) kept out-scoring branching into a new row (neighbor
+ *    contact only) — collapsed the whole layout into a single tall column.
+ *    Reverted to Bottom-Left.
+ * 5. Switched to Best-Short-Side-Fit. Unlike attempt 1, this now runs
+ *    *after* largest-area-first pre-sorting was already in place (added in
+ *    step 3) — the biggest items claim contiguous space up front, so by the
+ *    time a small item's turn comes, the free-rectangle list is mostly
+ *    small leftover gaps near the already-built structure rather than one
+ *    giant untouched remainder far away, which is what let BSSF scatter
+ *    items in attempt 1. BSSF's whole purpose — snugness, picking whichever
+ *    free rectangle wastes the least leftover space — is exactly what fills
+ *    those small corner/edge gaps Bottom-Left could walk past. Bottom-Left
+ *    remains as a tie-break only, for the rare case two candidates score
+ *    identically (most commonly the very first item on an empty sheet).
  *
  * (The installed `maxrects-packer` npm package was checked directly
  * (node_modules/maxrects-packer/lib/maxrects-packer.js's `PACKING_LOGIC`
  * enum) and exposes neither Bottom-Left nor Contact Point — only
- * MAX_AREA/MAX_EDGE — so this is a from-scratch implementation of the same
- * well-established MaxRects algorithm (free-rectangle list + guillotine
- * splitting) that library also uses, just with a different scoring
- * function.)
+ * MAX_AREA/MAX_EDGE (MAX_EDGE *is* BSSF) — so this is a from-scratch
+ * implementation of the same well-established MaxRects algorithm
+ * (free-rectangle list + guillotine splitting) that library also uses, just
+ * with pre-sorting and a tie-break rule it doesn't have.)
  */
 
 export interface NestableRect<T> {
@@ -88,18 +99,37 @@ function isBetterByBottomLeft(a: Rect, b: Rect): boolean {
   return a.x < b.x;
 }
 
-/** Best free rectangle (and orientation) for an item of size (width, height), or null if none fits. */
+/**
+ * Best-Short-Side-Fit score for placing a (width x height) item into free
+ * rectangle `r`: the smaller of the two leftover dimensions once the item
+ * is carved out. Smaller is snugger (less wasted margin on the tighter
+ * side); ties are broken by Bottom-Left position, not by this score.
+ */
+function bssfScore(r: Rect, width: number, height: number): number {
+  return Math.min(r.width - width, r.height - height);
+}
+
+/** Best free rectangle (and orientation) for an item of size (width, height) — smallest BSSF score, ties broken by Bottom-Left — or null if none fits. */
 function findBestNode(freeRects: Rect[], width: number, height: number, allowRotation: boolean): PlacementCandidate | null {
   let best: PlacementCandidate | null = null;
+  let bestScore = Infinity;
 
   for (const r of freeRects) {
     if (r.width >= width && r.height >= height) {
+      const score = bssfScore(r, width, height);
       const candidate: PlacementCandidate = { x: r.x, y: r.y, width, height, rotated: false };
-      if (!best || isBetterByBottomLeft(candidate, best)) best = candidate;
+      if (!best || score < bestScore || (score === bestScore && isBetterByBottomLeft(candidate, best))) {
+        best = candidate;
+        bestScore = score;
+      }
     }
     if (allowRotation && r.width >= height && r.height >= width) {
+      const score = bssfScore(r, height, width);
       const candidate: PlacementCandidate = { x: r.x, y: r.y, width: height, height: width, rotated: true };
-      if (!best || isBetterByBottomLeft(candidate, best)) best = candidate;
+      if (!best || score < bestScore || (score === bestScore && isBetterByBottomLeft(candidate, best))) {
+        best = candidate;
+        bestScore = score;
+      }
     }
   }
 
