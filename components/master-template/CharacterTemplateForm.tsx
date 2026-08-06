@@ -76,6 +76,7 @@ function OffsetSlider({
   hint,
   min = -MAX_LAYOUT_OFFSET_MM,
   max = MAX_LAYOUT_OFFSET_MM,
+  disabled = false,
 }: {
   label: string;
   value: number;
@@ -83,12 +84,15 @@ function OffsetSlider({
   hint: string;
   min?: number;
   max?: number;
+  disabled?: boolean;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+    <label
+      className={`flex flex-col gap-1 text-xs font-medium ${disabled ? "text-slate-300" : "text-slate-600"}`}
+    >
       <div className="flex items-center justify-between">
         <span>{label}</span>
-        <span className="font-mono text-slate-500">{value.toFixed(1)} mm</span>
+        <span className={`font-mono ${disabled ? "text-slate-300" : "text-slate-500"}`}>{value.toFixed(1)} mm</span>
       </div>
       <input
         type="range"
@@ -97,7 +101,8 @@ function OffsetSlider({
         step={OFFSET_SLIDER_STEP}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="accent-blue-600"
+        disabled={disabled}
+        className="accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
       />
       <span className="text-[11px] font-normal text-slate-400">{hint}</span>
     </label>
@@ -175,6 +180,10 @@ export function CharacterTemplateForm({
   const [characterVector, setCharacterVector] = useState<CharacterVector | null>(null);
   const [parsedFont, setParsedFont] = useState<opentype.Font | null>(null);
   const [outlinePath, setOutlinePath] = useState<string | null>(null);
+  // Whether this template gets a keyring ring hole at all — off for products
+  // that don't hang from a ring (e.g. flat stick-on acrylic pins). Defaults
+  // to true so every pre-existing template keeps its hole unchanged.
+  const [hasHole, setHasHole] = useState(editingTemplate?.hasHole ?? true);
   // Manual layout tweak (mm), persisted on the template so production
   // rendering matches whatever the user dialed in here. Text position is
   // always auto-computed (see textOriginX/textTranslateY below) — letting
@@ -721,6 +730,7 @@ export function CharacterTemplateForm({
     setFontFile(null);
     setParsedFont(null);
     setOutlinePath(null);
+    setHasHole(true);
     setHoleOffsetX(0);
     setHoleOffsetY(0);
     setHoleCenter({ x: CANVAS_MARGIN + RING_HOLE_OFFSET, y: CANVAS_MARGIN + RING_HOLE_OFFSET });
@@ -770,6 +780,7 @@ export function CharacterTemplateForm({
     if (coverThumbnailFile) formData.set("coverThumbnail", coverThumbnailFile);
     formData.set("colors", JSON.stringify(colors));
     formData.set("defaultText", defaultText.trim() || "Nama");
+    formData.set("hasHole", String(hasHole));
     formData.set("holeOffsetX", String(holeOffsetX));
     formData.set("holeOffsetY", String(holeOffsetY));
     formData.set("layoutMode", layoutMode);
@@ -894,8 +905,18 @@ export function CharacterTemplateForm({
         </div>
 
         <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
-          <span className="text-sm font-medium text-slate-700">
-            Penyesuaian Lubang Ganci <span className="font-normal text-slate-400">(opsional, mm)</span>
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={hasHole}
+              onChange={(event) => setHasHole(event.target.checked)}
+              className="h-4 w-4 accent-blue-600"
+            />
+            Aktifkan Lubang Gantungan Kunci
+          </label>
+          <span className="text-xs font-normal text-slate-400">
+            Matikan untuk produk yang tidak digantung dari ring (mis. pin/akrilik tempel) — garis potong
+            lubang tidak akan dibuat sama sekali.
           </span>
           <div className="grid gap-3 sm:grid-cols-2">
             <OffsetSlider
@@ -903,12 +924,14 @@ export function CharacterTemplateForm({
               value={holeOffsetX}
               onChange={setHoleOffsetX}
               hint="Kiri / kanan"
+              disabled={!hasHole}
             />
             <OffsetSlider
               label="Lubang Ganci — Geser Y"
               value={holeOffsetY}
               onChange={setHoleOffsetY}
               hint="Atas / bawah"
+              disabled={!hasHole}
             />
           </div>
         </div>
@@ -1159,14 +1182,16 @@ export function CharacterTemplateForm({
                   lib/keychain-render-fixed.ts, over every shape in the master SVG. */}
               {fixedOutlinePath && <path d={fixedOutlinePath} stroke="red" strokeWidth={1.5} fill="none" />}
 
-              <circle
-                cx={holeCenter.x}
-                cy={holeCenter.y}
-                r={RING_HOLE_DIAMETER / 2}
-                stroke="red"
-                strokeWidth={1}
-                fill="none"
-              />
+              {hasHole && (
+                <circle
+                  cx={holeCenter.x}
+                  cy={holeCenter.y}
+                  r={RING_HOLE_DIAMETER / 2}
+                  stroke="red"
+                  strokeWidth={1}
+                  fill="none"
+                />
+              )}
 
               {/* Visual helper: a dashed red box per customZone (calibrated by the same
                   base auto-scale as the master artwork), live-synced to its X/Y/Lebar/Tinggi inputs. */}
@@ -1225,14 +1250,16 @@ export function CharacterTemplateForm({
                 />
               )}
 
-              <circle
-                cx={holeCenter.x}
-                cy={holeCenter.y}
-                r={RING_HOLE_DIAMETER / 2}
-                stroke="red"
-                strokeWidth={1}
-                fill="none"
-              />
+              {hasHole && (
+                <circle
+                  cx={holeCenter.x}
+                  cy={holeCenter.y}
+                  r={RING_HOLE_DIAMETER / 2}
+                  stroke="red"
+                  strokeWidth={1}
+                  fill="none"
+                />
+              )}
 
               {textPreview && textPreview.segments.length > 0 ? (
                 <g transform={`translate(${textTranslateX}, ${textTranslateY})`}>

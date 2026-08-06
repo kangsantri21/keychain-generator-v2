@@ -303,29 +303,34 @@ function renderKeychainTextScaled(
   // isn't actually part of the cut shape). A manual per-template nudge (mm)
   // shifts the preferred spot first - e.g. pulling it inward from an edge
   // that's prone to snapping off - then the search below still guarantees
-  // whatever we land on is genuinely inside the welded outline.
-  const nominalHoleCenter = {
-    x: marginMm + ringHoleOffsetMm + holeOffsetX,
-    y: marginMm + ringHoleOffsetMm + holeOffsetY,
-  };
-  let holeCenter = nominalHoleCenter;
-  if (template.isCharacter && outlinePath) {
-    const baseBounds = characterBounds ?? { x: marginMm, y: marginMm, width: charBoxMm, height: charBoxMm };
-    const searchBounds = unionBounds(baseBounds, {
-      x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
-      y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
-      width: RING_HOLE_DIAMETER_MM * 2,
-      height: RING_HOLE_DIAMETER_MM * 2,
-    });
-    const found = findHoleCenterInside(
-      outlinePath,
-      holeCandidates(nominalHoleCenter, searchBounds, RING_HOLE_DIAMETER_MM / 2, 0.75),
-      RING_HOLE_DIAMETER_MM / 2
-    );
-    if (found) holeCenter = found;
+  // whatever we land on is genuinely inside the welded outline. Products
+  // that don't hang from a ring at all (e.g. flat stick-on acrylic pins) opt
+  // out via template.hasHole - skip the search entirely and return no hole
+  // path, rather than computing one nobody asked for.
+  let holePath: string | null = null;
+  if (template.hasHole) {
+    const nominalHoleCenter = {
+      x: marginMm + ringHoleOffsetMm + holeOffsetX,
+      y: marginMm + ringHoleOffsetMm + holeOffsetY,
+    };
+    let holeCenter = nominalHoleCenter;
+    if (template.isCharacter && outlinePath) {
+      const baseBounds = characterBounds ?? { x: marginMm, y: marginMm, width: charBoxMm, height: charBoxMm };
+      const searchBounds = unionBounds(baseBounds, {
+        x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
+        y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
+        width: RING_HOLE_DIAMETER_MM * 2,
+        height: RING_HOLE_DIAMETER_MM * 2,
+      });
+      const found = findHoleCenterInside(
+        outlinePath,
+        holeCandidates(nominalHoleCenter, searchBounds, RING_HOLE_DIAMETER_MM / 2, 0.75),
+        RING_HOLE_DIAMETER_MM / 2
+      );
+      if (found) holeCenter = found;
+    }
+    holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
   }
-
-  const holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
 
   const fallbackWidth = template.isCharacter
     ? marginMm + template.charTargetHeight + template.dynamicGapX + Math.max(bbox.x2 - bbox.x1, 1) + marginMm
@@ -354,7 +359,7 @@ function renderKeychainTextScaled(
       width: bounds.width,
       height: bounds.height,
       outlinePath: outlinePath ? normalizePath(outlinePath, bounds) : null,
-      holePath: normalizePath(holePath, bounds),
+      holePath: holePath ? normalizePath(holePath, bounds) : null,
       textSegments: textSegments.map((segment) => ({
         ...segment,
         d: normalizePath(segment.d, bounds),

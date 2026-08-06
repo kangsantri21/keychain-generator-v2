@@ -1,0 +1,1 @@
+ALTER TABLE `templates` ADD `has_hole` integer DEFAULT true NOT NULL;

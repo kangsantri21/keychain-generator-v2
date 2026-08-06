@@ -48,6 +48,12 @@ export const templates = sqliteTable("templates", {
   // irregular silhouette makes the static auto-layout imperfect — nudges the
   // ring hole and name text away from the auto-computed position. Zero means
   // "use the auto layout as-is".
+  // Whether this template gets a keyring ring hole at all — off for
+  // products that don't hang from a ring (e.g. flat stick-on acrylic
+  // pins). Defaults to true so every pre-existing template (all of which
+  // implicitly had a hole) keeps rendering exactly as before with no
+  // migration backfill needed.
+  hasHole: integer("has_hole", { mode: "boolean" }).notNull().default(true),
   holeOffsetX: real("hole_offset_x").notNull().default(0),
   holeOffsetY: real("hole_offset_y").notNull().default(0),
   textOffsetX: real("text_offset_x").notNull().default(0),

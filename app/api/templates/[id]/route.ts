@@ -23,6 +23,7 @@ import {
   parseTargetHeight,
   parseDynamicGapX,
   parseDynamicOffsetY,
+  parseHasHole,
   saveUploadedFile,
   readPublicFile,
   removePublicFile,
@@ -116,6 +117,7 @@ export async function PUT(
   const coverThumbnailFile = formData.get("coverThumbnail") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
+  const hasHole = parseHasHole(formData.get("hasHole") as string | null, existing.hasHole);
   const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, existing.holeOffsetX);
   const holeOffsetY = parseOffset(formData.get("holeOffsetY") as string | null, existing.holeOffsetY);
   const charTargetHeight = parseTargetHeight(
@@ -277,6 +279,7 @@ export async function PUT(
         thumbnailUrl,
         colors,
         defaultText,
+        hasHole,
         holeOffsetX,
         holeOffsetY,
         textOffsetX,

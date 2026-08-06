@@ -90,6 +90,13 @@ export function parseLayoutMode(
   return raw === "dynamic" || raw === "fixed" ? raw : fallback;
 }
 
+/** Parses the hasHole checkbox field ("true"/"false") from form data; falls back on missing/invalid input. */
+export function parseHasHole(raw: string | null, fallback: boolean): boolean {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return fallback;
+}
+
 /** Parses a JSON-encoded customZones field from form data; returns null on missing/invalid JSON. */
 export function parseCustomZones(raw: string | null): unknown {
   if (!raw) return null;

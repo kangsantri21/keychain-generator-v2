@@ -14,6 +14,7 @@ import {
   parseTargetHeight,
   parseDynamicGapX,
   parseDynamicOffsetY,
+  parseHasHole,
 } from "@/lib/template-files";
 import {
   DEFAULT_CHAR_TARGET_HEIGHT_MM,
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
   const coverThumbnailFile = formData.get("coverThumbnail") as File | null;
   const colorsRaw = formData.get("colors") as string | null;
   const defaultTextRaw = (formData.get("defaultText") as string | null)?.trim();
+  const hasHole = parseHasHole(formData.get("hasHole") as string | null, true);
   const holeOffsetX = parseOffset(formData.get("holeOffsetX") as string | null, 0);
   const holeOffsetY = parseOffset(formData.get("holeOffsetY") as string | null, 0);
   const charTargetHeight = parseTargetHeight(
@@ -230,6 +232,7 @@ export async function POST(request: NextRequest) {
         colors,
         defaultText,
         isCharacter: category === "character",
+        hasHole,
         holeOffsetX,
         holeOffsetY,
         textOffsetX,

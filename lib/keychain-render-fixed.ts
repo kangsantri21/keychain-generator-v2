@@ -130,34 +130,37 @@ export function renderFixedShapeTemplate(
   // MARGIN_MM concept), nudged by the admin's manual template.holeOffsetX/Y,
   // then verified (and relocated if needed) to actually land inside the
   // solid auto-computed outline rather than trusting a fixed corner point
-  // that could fall outside a non-square/non-convex silhouette. This was
-  // simply never implemented for "fixed" templates before - not a
-  // regression from the zero-offset Clipper union above, which only ever
-  // touched the outer silhouette, never the hole.
-  const nominalHoleCenter = {
-    x: scaledNativeBounds.x + RING_HOLE_OFFSET_MM + template.holeOffsetX,
-    y: scaledNativeBounds.y + RING_HOLE_OFFSET_MM + template.holeOffsetY,
-  };
-  let holeCenter = nominalHoleCenter;
-  if (outlinePathScaled) {
-    const searchBounds = unionBounds(scaledNativeBounds, {
-      x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
-      y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
-      width: RING_HOLE_DIAMETER_MM * 2,
-      height: RING_HOLE_DIAMETER_MM * 2,
-    });
-    const found = findHoleCenterInside(
-      outlinePathScaled,
-      holeCandidates(nominalHoleCenter, searchBounds, RING_HOLE_DIAMETER_MM / 2, 0.75),
-      RING_HOLE_DIAMETER_MM / 2
+  // that could fall outside a non-square/non-convex silhouette. Products
+  // that don't hang from a ring at all (e.g. flat stick-on acrylic pins) opt
+  // out via template.hasHole - skip the search entirely and return no hole
+  // path, rather than computing one nobody asked for.
+  let holePath: string | null = null;
+  if (template.hasHole) {
+    const nominalHoleCenter = {
+      x: scaledNativeBounds.x + RING_HOLE_OFFSET_MM + template.holeOffsetX,
+      y: scaledNativeBounds.y + RING_HOLE_OFFSET_MM + template.holeOffsetY,
+    };
+    let holeCenter = nominalHoleCenter;
+    if (outlinePathScaled) {
+      const searchBounds = unionBounds(scaledNativeBounds, {
+        x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
+        y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
+        width: RING_HOLE_DIAMETER_MM * 2,
+        height: RING_HOLE_DIAMETER_MM * 2,
+      });
+      const found = findHoleCenterInside(
+        outlinePathScaled,
+        holeCandidates(nominalHoleCenter, searchBounds, RING_HOLE_DIAMETER_MM / 2, 0.75),
+        RING_HOLE_DIAMETER_MM / 2
+      );
+      if (found) holeCenter = found;
+    }
+    holePath = translatePathData(
+      circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2),
+      -normalizeBounds.x,
+      -normalizeBounds.y
     );
-    if (found) holeCenter = found;
   }
-  const holePath = translatePathData(
-    circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2),
-    -normalizeBounds.x,
-    -normalizeBounds.y
-  );
 
   const textSegmentsNative: GlyphSegment[] = [];
   for (const zone of template.customZones ?? []) {
