@@ -3,7 +3,7 @@ import {
   SHEET_HEIGHT_MM,
   FIDUCIAL_RADIUS_MM,
 } from "@/lib/keychain-geometry";
-import { getItemTransform, getContentSize } from "@/lib/staging-transform";
+import { getItemTransform, getReceiptLabelY } from "@/lib/staging-transform";
 import type { StagingSheet } from "@/lib/staging-types";
 import { sanitizeFileName } from "@/lib/utils";
 
@@ -33,7 +33,7 @@ export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): 
         .map((segment) => `<path d="${segment.d}" fill="${segment.color}" />`)
         .join("");
       const label = item.order
-        ? `<text x="0.5" y="${getContentSize(item).height - 0.5}" font-size="2.5" fill="#334155">${escapeXml(item.order.receiptCode)}</text>`
+        ? `<text x="0.5" y="${getReceiptLabelY(item)}" font-size="2.5" fill="#334155">${escapeXml(item.order.receiptCode)}</text>`
         : "";
       return `  <g transform="${getItemTransform(item)}">${image}${text}${label}</g>`;
     })

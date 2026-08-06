@@ -1,3 +1,4 @@
+import { ITEM_PADDING_MM } from "@/lib/keychain-geometry";
 import type { StagingItemPayload } from "@/lib/staging-types";
 
 /**
@@ -34,4 +35,20 @@ export function getContentSize(
   return item.rotated
     ? { width: item.height, height: item.width }
     : { width: item.width, height: item.height };
+}
+
+/**
+ * Y coordinate (in the item's own local space) for the receipt-code label
+ * drawn beneath each item on the print sheet — placed just past the
+ * content's own bottom edge, never inside it. The item's stored width/height
+ * IS the outline's own tight bounding box (lib/keychain-render.ts normalizes
+ * every outline so it touches all four edges of that box), so a label
+ * positioned *inside* near the bottom-left corner (the old behavior) could
+ * collide with the red cut-line for any item whose silhouette runs close to
+ * that corner. ITEM_PADDING_MM is the same real gap the packer already
+ * keeps between neighboring items (lib/nesting.ts), so the label sits in
+ * that existing clearance instead of claiming any new space.
+ */
+export function getReceiptLabelY(item: Pick<StagingItemPayload, "width" | "height" | "rotated">): number {
+  return getContentSize(item).height + ITEM_PADDING_MM;
 }
