@@ -8,6 +8,9 @@ import {
   squeezeHorizontalPathData,
   getPathBounds,
   findHoleCenterInside,
+  holeCandidates,
+  unionBounds,
+  circlePathData,
   type PathBounds,
 } from "@/lib/laser-outline";
 import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
@@ -53,48 +56,8 @@ function rectPathData(x: number, y: number, width: number, height: number): stri
   return `M ${x},${y} H ${x + width} V ${y + height} H ${x} Z`;
 }
 
-function circlePathData(cx: number, cy: number, r: number): string {
-  return `M ${cx - r},${cy} A ${r},${r} 0 1,0 ${cx + r},${cy} A ${r},${r} 0 1,0 ${cx - r},${cy} Z`;
-}
-
 function normalizePath(d: string, bounds: PathBounds): string {
   return translatePathData(d, -bounds.x, -bounds.y);
-}
-
-/**
- * Candidate ring-hole centers within `bounds`, closest to the preferred
- * (nominal top-left) position first - used to find a spot that actually
- * lands on solid material for non-square/non-convex character silhouettes.
- */
-function holeCandidates(
-  preferred: { x: number; y: number },
-  bounds: PathBounds,
-  radius: number,
-  step: number
-): { x: number; y: number }[] {
-  const points: { x: number; y: number }[] = [];
-  for (let y = bounds.y + radius; y <= bounds.y + bounds.height - radius; y += step) {
-    for (let x = bounds.x + radius; x <= bounds.x + bounds.width - radius; x += step) {
-      points.push({ x, y });
-    }
-  }
-  points.sort((a, b) => {
-    const da = (a.x - preferred.x) ** 2 + (a.y - preferred.y) ** 2;
-    const db = (b.x - preferred.x) ** 2 + (b.y - preferred.y) ** 2;
-    return da - db;
-  });
-  return points;
-}
-
-function unionBounds(a: PathBounds, b: PathBounds): PathBounds {
-  const x = Math.min(a.x, b.x);
-  const y = Math.min(a.y, b.y);
-  return {
-    x,
-    y,
-    width: Math.max(a.x + a.width, b.x + b.width) - x,
-    height: Math.max(a.y + a.height, b.y + b.height) - y,
-  };
 }
 
 async function readPublicFile(publicPath: string): Promise<Buffer> {

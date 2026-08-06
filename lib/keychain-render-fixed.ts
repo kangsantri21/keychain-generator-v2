@@ -2,9 +2,18 @@ import type { Template } from "@/lib/db/schema";
 import type { TemplateAssets } from "@/lib/keychain-render";
 import type { KeychainRender } from "@/lib/render-types";
 import { renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
-import { translatePathData, scaleAndTranslatePathData, getPathBounds, type PathBounds } from "@/lib/laser-outline";
+import {
+  translatePathData,
+  scaleAndTranslatePathData,
+  getPathBounds,
+  findHoleCenterInside,
+  holeCandidates,
+  unionBounds,
+  circlePathData,
+  type PathBounds,
+} from "@/lib/laser-outline";
 import { unionOutlines } from "@/lib/clipper-outline";
-import { MAX_ITEM_WIDTH_MM } from "@/lib/keychain-geometry";
+import { MAX_ITEM_WIDTH_MM, RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@/lib/keychain-geometry";
 
 /**
  * Renders one nested unit for a "fixed" layoutMode template - the
@@ -49,8 +58,13 @@ import { MAX_ITEM_WIDTH_MM } from "@/lib/keychain-geometry";
  * colorable via template.colors, which a spliced flat SVG string would
  * lose).
  *
- * `type: "image"` zones and hole placement are intentionally not handled
- * yet - see the inline notes below.
+ * The ring hole is placed the same way the dynamic engine places it: a
+ * nominal offset from the item's top-left corner, nudged by the admin's
+ * manual template.holeOffsetX/Y, then relocated if needed to a nearby spot
+ * verified to actually land inside the solid outline above (see the inline
+ * notes below).
+ *
+ * `type: "image"` zones are intentionally not handled yet.
  */
 export function renderFixedShapeTemplate(
   assets: TemplateAssets,
@@ -110,6 +124,41 @@ export function renderFixedShapeTemplate(
     ? translatePathData(outlinePathScaled, -normalizeBounds.x, -normalizeBounds.y)
     : null;
 
+  // Ring hole - mirrors the dynamic engine's own placement exactly
+  // (lib/keychain-render.ts): nominally offset from the item's top-left
+  // corner (here, the master SVG's own scaled top-left, since "fixed" has no
+  // MARGIN_MM concept), nudged by the admin's manual template.holeOffsetX/Y,
+  // then verified (and relocated if needed) to actually land inside the
+  // solid auto-computed outline rather than trusting a fixed corner point
+  // that could fall outside a non-square/non-convex silhouette. This was
+  // simply never implemented for "fixed" templates before - not a
+  // regression from the zero-offset Clipper union above, which only ever
+  // touched the outer silhouette, never the hole.
+  const nominalHoleCenter = {
+    x: scaledNativeBounds.x + RING_HOLE_OFFSET_MM + template.holeOffsetX,
+    y: scaledNativeBounds.y + RING_HOLE_OFFSET_MM + template.holeOffsetY,
+  };
+  let holeCenter = nominalHoleCenter;
+  if (outlinePathScaled) {
+    const searchBounds = unionBounds(scaledNativeBounds, {
+      x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
+      y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
+      width: RING_HOLE_DIAMETER_MM * 2,
+      height: RING_HOLE_DIAMETER_MM * 2,
+    });
+    const found = findHoleCenterInside(
+      outlinePathScaled,
+      holeCandidates(nominalHoleCenter, searchBounds, RING_HOLE_DIAMETER_MM / 2, 0.75),
+      RING_HOLE_DIAMETER_MM / 2
+    );
+    if (found) holeCenter = found;
+  }
+  const holePath = translatePathData(
+    circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2),
+    -normalizeBounds.x,
+    -normalizeBounds.y
+  );
+
   const textSegmentsNative: GlyphSegment[] = [];
   for (const zone of template.customZones ?? []) {
     if (zone.type !== "text") continue;
@@ -164,13 +213,7 @@ export function renderFixedShapeTemplate(
     width: normalizeBounds.width,
     height: normalizeBounds.height,
     outlinePath,
-    // Not yet computed for fixed-shape templates: a pre-made master SVG's
-    // own cut-line may already bake its physical keyring hole into its
-    // silhouette (unlike a dynamic character template, whose hole position
-    // must be searched for per-upload since every silhouette is unique) -
-    // revisit once a real fixed-shape master file confirms whether that's
-    // actually the case, or whether customZones needs its own hole marker.
-    holePath: null,
+    holePath,
     textSegments,
     characterImage: assets.characterImageDataUri
       ? {

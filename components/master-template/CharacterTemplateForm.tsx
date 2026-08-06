@@ -593,10 +593,48 @@ export function CharacterTemplateForm({
       // "Fixed" templates never run THIS particular clipper pipeline (it's
       // the dynamic engine's character+text union) — their own auto-computed
       // outline is a separate memo, `fixedOutlinePath` below, mirroring
-      // lib/keychain-render-fixed.ts's whole-master-SVG union instead.
+      // lib/keychain-render-fixed.ts's whole-master-SVG union instead. The
+      // ring hole still needs its own placement here, though — mirroring
+      // that same file's hole search (nominal offset from the master's own
+      // top-left corner, nudged by the admin, then relocated if needed to
+      // land inside the auto-computed outline) instead of the dynamic-mode
+      // formula above, which is anchored to a completely different
+      // coordinate origin and would place the hole nonsensically here.
       if (layoutMode === "fixed") {
         setOutlinePath(null);
-        setHoleCenter(nominalHoleCenter);
+
+        if (!scaledMasterSvgBounds) {
+          setHoleCenter(nominalHoleCenter);
+          return;
+        }
+
+        const masterCanvasBounds = {
+          x: CANVAS_MARGIN + (scaledMasterSvgBounds.x - fixedOriginX) * PX_PER_MM,
+          y: CANVAS_MARGIN + (scaledMasterSvgBounds.y - fixedOriginY) * PX_PER_MM,
+          width: scaledMasterSvgBounds.width * PX_PER_MM,
+          height: scaledMasterSvgBounds.height * PX_PER_MM,
+        };
+        const fixedNominalHoleCenter = {
+          x: masterCanvasBounds.x + RING_HOLE_OFFSET + debouncedHoleOffsetX * PX_PER_MM,
+          y: masterCanvasBounds.y + RING_HOLE_OFFSET + debouncedHoleOffsetY * PX_PER_MM,
+        };
+
+        let fixedHoleCenter = fixedNominalHoleCenter;
+        if (fixedOutlinePath) {
+          const searchBounds = unionBounds(masterCanvasBounds, {
+            x: fixedNominalHoleCenter.x - RING_HOLE_DIAMETER,
+            y: fixedNominalHoleCenter.y - RING_HOLE_DIAMETER,
+            width: RING_HOLE_DIAMETER * 2,
+            height: RING_HOLE_DIAMETER * 2,
+          });
+          const found = findHoleCenterInside(
+            fixedOutlinePath,
+            holeCandidates(fixedNominalHoleCenter, searchBounds, RING_HOLE_DIAMETER / 2, 3),
+            RING_HOLE_DIAMETER / 2
+          );
+          if (found) fixedHoleCenter = found;
+        }
+        setHoleCenter(fixedHoleCenter);
         return;
       }
 
@@ -668,6 +706,10 @@ export function CharacterTemplateForm({
     debouncedHoleOffsetY,
     layoutMode,
     charBoxRawPx,
+    scaledMasterSvgBounds,
+    fixedOriginX,
+    fixedOriginY,
+    fixedOutlinePath,
   ]);
 
   function resetForm() {
@@ -1116,6 +1158,15 @@ export function CharacterTemplateForm({
               {/* Auto-computed cut-line: same Clipper union+dilate/erode algorithm as
                   lib/keychain-render-fixed.ts, over every shape in the master SVG. */}
               {fixedOutlinePath && <path d={fixedOutlinePath} stroke="red" strokeWidth={1.5} fill="none" />}
+
+              <circle
+                cx={holeCenter.x}
+                cy={holeCenter.y}
+                r={RING_HOLE_DIAMETER / 2}
+                stroke="red"
+                strokeWidth={1}
+                fill="none"
+              />
 
               {/* Visual helper: a dashed red box per customZone (calibrated by the same
                   base auto-scale as the master artwork), live-synced to its X/Y/Lebar/Tinggi inputs. */}

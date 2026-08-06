@@ -104,6 +104,50 @@ export function getPathBounds(d: string): PathBounds | null {
   }
 }
 
+/** Bounding box that contains both `a` and `b`. */
+export function unionBounds(a: PathBounds, b: PathBounds): PathBounds {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return {
+    x,
+    y,
+    width: Math.max(a.x + a.width, b.x + b.width) - x,
+    height: Math.max(a.y + a.height, b.y + b.height) - y,
+  };
+}
+
+/** SVG path `d` for a circle of radius `r` centered at (cx, cy), as two arcs. */
+export function circlePathData(cx: number, cy: number, r: number): string {
+  return `M ${cx - r},${cy} A ${r},${r} 0 1,0 ${cx + r},${cy} A ${r},${r} 0 1,0 ${cx - r},${cy} Z`;
+}
+
+/**
+ * Candidate ring-hole centers within `bounds`, closest to the preferred
+ * (nominal top-left) position first — used with `findHoleCenterInside` below
+ * to find a spot that actually lands on solid material for a non-square/
+ * non-convex silhouette, shared by both the "dynamic" (lib/keychain-
+ * render.ts) and "fixed" (lib/keychain-render-fixed.ts) render engines.
+ */
+export function holeCandidates(
+  preferred: { x: number; y: number },
+  bounds: PathBounds,
+  radius: number,
+  step: number
+): FlatPoint[] {
+  const points: FlatPoint[] = [];
+  for (let y = bounds.y + radius; y <= bounds.y + bounds.height - radius; y += step) {
+    for (let x = bounds.x + radius; x <= bounds.x + bounds.width - radius; x += step) {
+      points.push({ x, y });
+    }
+  }
+  points.sort((a, b) => {
+    const da = (a.x - preferred.x) ** 2 + (a.y - preferred.y) ** 2;
+    const db = (b.x - preferred.x) ** 2 + (b.y - preferred.y) ** 2;
+    return da - db;
+  });
+  return points;
+}
+
 /**
  * Scans candidate centers (in preference order) for one where a circle of
  * the given radius lies entirely within the outline, and returns the first
