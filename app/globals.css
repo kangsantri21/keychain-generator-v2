@@ -11,8 +11,11 @@
  * controls from independently causing the same problem.
  */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Kedai Creative identity: Light Cream page background, near-black warm
+     foreground for maximum readability on top of it (contrast ratio ~15.9:1,
+     well past the 7:1 AAA bar for body text). */
+  --background: #f8f3f0;
+  --foreground: #1c1917;
   color-scheme: light;
 }
 
@@ -21,6 +24,31 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/*
+ * Brand identity: overrides Tailwind's built-in `blue` palette tokens with a
+ * Royal Blue ramp anchored on #014BAA (blue-600 — the primary brand color
+ * used for buttons, active sidebar state, and focus rings). Every existing
+ * `bg-blue-600`, `text-blue-700`, `ring-blue-500`, etc. across the whole app
+ * picks this up automatically — no per-component className changes needed.
+ * `blue-950` doubles as the Sidebar/Header's dark chrome so the nav shell
+ * reads as part of the same brand family instead of neutral gray. The
+ * previous plum/violet ramp has been fully replaced — no purple remains
+ * anywhere in the brand palette.
+ */
+@theme {
+  --color-blue-50: #f5f9ff;
+  --color-blue-100: #e6f1fe;
+  --color-blue-200: #c2dcff;
+  --color-blue-300: #8abdfe;
+  --color-blue-400: #4e9afe;
+  --color-blue-500: #016bf3;
+  --color-blue-600: #014baa;
+  --color-blue-700: #013c89;
+  --color-blue-800: #012f6a;
+  --color-blue-900: #002451;
+  --color-blue-950: #001530;
 }
 
 body {
