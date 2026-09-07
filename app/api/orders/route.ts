@@ -14,6 +14,7 @@ interface OrderItemPayload {
   templateCode: string | null;
   quantity: number;
   names: string[];
+  variant: "keychain" | "pin";
   thumbnailPath: string | null;
 }
 
@@ -38,6 +39,7 @@ export async function GET() {
       templateId: orderItems.templateId,
       quantity: orderItems.quantity,
       customerNames: orderItems.customerNames,
+      variant: orderItems.variant,
       templateCode: templates.code,
       thumbnailPath: templates.thumbnailPath,
     })
@@ -72,6 +74,7 @@ export async function GET() {
         templateCode: row.templateCode,
         quantity: row.quantity!,
         names: row.customerNames ?? [],
+        variant: row.variant ?? "keychain",
         thumbnailPath: row.thumbnailPath,
       });
     }
@@ -80,10 +83,14 @@ export async function GET() {
   return NextResponse.json({ orders: [...orderMap.values()] });
 }
 
+const VALID_VARIANTS = ["keychain", "pin"] as const;
+type Variant = (typeof VALID_VARIANTS)[number];
+
 interface IncomingItem {
   templateId: number;
   quantity: number;
   customerNames: string[];
+  variant: Variant;
 }
 
 export async function POST(request: NextRequest) {
@@ -113,6 +120,7 @@ export async function POST(request: NextRequest) {
           .map((name: unknown) => (typeof name === "string" ? name.trim() : ""))
           .filter((name: string) => name.length > 0)
       : [];
+    const rawVariant = typeof raw?.variant === "string" ? raw.variant : "keychain";
 
     if (!Number.isInteger(templateId) || templateId <= 0) {
       return badRequest("Pilih template terlebih dahulu untuk setiap item");
@@ -123,8 +131,11 @@ export async function POST(request: NextRequest) {
     if (customerNames.length === 0) {
       return badRequest("Daftar nama tidak boleh kosong untuk setiap item");
     }
+    if (!VALID_VARIANTS.includes(rawVariant as Variant)) {
+      return badRequest("Varian harus 'keychain' atau 'pin'");
+    }
 
-    items.push({ templateId, quantity, customerNames });
+    items.push({ templateId, quantity, customerNames, variant: rawVariant as Variant });
   }
 
   const templateIds = [...new Set(items.map((item) => item.templateId))];
@@ -154,6 +165,7 @@ export async function POST(request: NextRequest) {
         templateId: item.templateId,
         quantity: item.quantity,
         customerNames: item.customerNames,
+        variant: item.variant,
       }));
 
       const insertedOrderItems = tx.insert(orderItems).values(newItemRows).returning().all();

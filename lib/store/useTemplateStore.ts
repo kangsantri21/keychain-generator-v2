@@ -7,6 +7,7 @@ export type PageKey =
   | "dashboard"
   | "master-template"
   | "input-pesanan"
+  | "order-queue"
   | "staging-area"
   | "file-siap-cetak";
 
@@ -14,6 +15,7 @@ export const PAGE_LABELS: Record<PageKey, string> = {
   dashboard: "Dashboard",
   "master-template": "Master Template",
   "input-pesanan": "Input Pesanan",
+  "order-queue": "Antrean Pesanan",
   "staging-area": "Staging Area",
   "file-siap-cetak": "File Siap Cetak",
 };
@@ -22,17 +24,21 @@ export const PAGE_ROUTES: Record<PageKey, string> = {
   dashboard: "/",
   "master-template": "/master-template",
   "input-pesanan": "/input-pesanan",
+  "order-queue": "/order-queue",
   "staging-area": "/staging-area",
   "file-siap-cetak": "/file-siap-cetak",
 };
 
 /** One template+names line within a receipt (mirrors an order_items row). */
+export type OrderItemVariant = "keychain" | "pin";
+
 export interface OrderQueueLineItem {
   id: number;
   templateId: number;
   templateCode: string | null;
   quantity: number;
   names: string[];
+  variant: OrderItemVariant;
   thumbnailPath: string | null;
 }
 

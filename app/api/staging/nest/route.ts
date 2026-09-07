@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { eq, inArray, sql } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
+import { inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, orderItems, templates, stagingItems, type NewStagingItem } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
@@ -13,35 +13,64 @@ interface PackData {
   customerName: string;
 }
 
-export async function POST() {
-  const pendingOrders = await db.select().from(orders).where(eq(orders.status, "pending"));
+/**
+ * A "selection" identifies one customer name within one order item, as
+ * `"<orderItemId>:<nameIndex>"` — the same rowId the Order Queue dashboard
+ * (app/order-queue/page.tsx) uses for its per-name checkboxes, so the client
+ * can send it straight through with no extra mapping.
+ */
+function parseSelections(raw: unknown): Map<number, Set<number>> {
+  const byItem = new Map<number, Set<number>>();
+  if (!Array.isArray(raw)) return byItem;
 
-  if (pendingOrders.length === 0) {
-    return NextResponse.json({ error: "Tidak ada pesanan pending untuk disusun" }, { status: 400 });
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const [itemIdRaw, indexRaw] = entry.split(":");
+    const itemId = Number(itemIdRaw);
+    const nameIndex = Number(indexRaw);
+    if (!Number.isInteger(itemId) || !Number.isInteger(nameIndex) || nameIndex < 0) continue;
+
+    const indexes = byItem.get(itemId) ?? new Set<number>();
+    indexes.add(nameIndex);
+    byItem.set(itemId, indexes);
   }
 
-  const pendingOrderIds = pendingOrders.map((order) => order.id);
-  const pendingItems = await db
-    .select()
-    .from(orderItems)
-    .where(inArray(orderItems.orderId, pendingOrderIds));
+  return byItem;
+}
 
-  if (pendingItems.length === 0) {
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => null);
+  const selectionsByItem = parseSelections(body?.selections);
+
+  if (selectionsByItem.size === 0) {
     return NextResponse.json(
-      { error: "Pesanan pending tidak memiliki item untuk disusun" },
+      { error: "Pilih minimal satu pesanan untuk disusun" },
       { status: 400 }
     );
   }
 
-  const templateIds = [...new Set(pendingItems.map((item) => item.templateId))];
+  const itemIds = [...selectionsByItem.keys()];
+  const selectedItems = await db.select().from(orderItems).where(inArray(orderItems.id, itemIds));
+
+  if (selectedItems.length === 0) {
+    return NextResponse.json(
+      { error: "Item pesanan yang dipilih tidak ditemukan" },
+      { status: 404 }
+    );
+  }
+
+  const orderIds = [...new Set(selectedItems.map((item) => item.orderId))];
+  const parentOrders = await db.select().from(orders).where(inArray(orders.id, orderIds));
+  const orderStatusMap = new Map(parentOrders.map((order) => [order.id, order.status]));
+
+  const templateIds = [...new Set(selectedItems.map((item) => item.templateId))];
   const templateRows = await db.select().from(templates).where(inArray(templates.id, templateIds));
   const templateMap = new Map(templateRows.map((template) => [template.id, template]));
 
   const assetsCache = new Map<number, TemplateAssets>();
 
-  // An order flips to "processing" once at least one name from any of its
-  // items is successfully staged — mirrors the old per-order tolerance, now
-  // tracked positively since items (not orders) are the iteration unit.
+  // An order flips to "processing" once at least one selected name from any
+  // of its items is successfully staged.
   const successfulOrderIds = new Set<number>();
 
   // Collect every rect first and pack them all in one packMaxRects() call —
@@ -51,7 +80,11 @@ export async function POST() {
   // small items last (when only fragments remain).
   const pendingRects: NestableRect<PackData>[] = [];
 
-  for (const item of pendingItems) {
+  for (const item of selectedItems) {
+    // A completed order is done for good — never re-nest its items even if
+    // a stale client selection still references them.
+    if (orderStatusMap.get(item.orderId) === "completed") continue;
+
     const template = templateMap.get(item.templateId);
     if (!template) continue;
 
@@ -65,7 +98,11 @@ export async function POST() {
       }
     }
 
-    for (const name of item.customerNames) {
+    const requestedIndexes = selectionsByItem.get(item.id) ?? new Set<number>();
+    for (const nameIndex of requestedIndexes) {
+      const name = item.customerNames[nameIndex];
+      if (!name) continue;
+
       try {
         const rendered = renderTemplateItem(assets, template, name);
         const data: PackData = { orderId: item.orderId, templateId: template.id, customerName: name };

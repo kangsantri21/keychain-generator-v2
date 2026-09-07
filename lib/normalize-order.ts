@@ -12,6 +12,7 @@ interface RawOrderItem {
   quantity: number;
   customerNames?: string[];
   names?: string[];
+  variant?: "keychain" | "pin";
   templateCode?: string | null;
   thumbnailPath?: string | null;
   template?: { code: string; thumbnailPath: string } | null;
@@ -39,6 +40,7 @@ export function toOrderQueueEntry(raw: RawOrder): OrderQueueEntry {
       templateCode: item.templateCode ?? item.template?.code ?? null,
       quantity: item.quantity,
       names: item.names ?? item.customerNames ?? [],
+      variant: item.variant ?? "keychain",
       thumbnailPath: item.thumbnailPath ?? item.template?.thumbnailPath ?? null,
     })),
   };
