@@ -1,23 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { ControlPanel } from "@/components/staging-area/ControlPanel";
 import { StagingCanvas } from "@/components/staging-area/StagingCanvas";
-import { downloadSheetDxf } from "@/lib/export-dxf";
-import { downloadPrintSheetJpg } from "@/lib/export-print-svg";
+import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/keychain-geometry";
 import type { StagingSheet } from "@/lib/staging-types";
 
 type ViewMode = "active" | "history";
 
 export default function StagingAreaPage() {
+  const router = useRouter();
   const [sheets, setSheets] = useState<StagingSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isRunningNesting, setIsRunningNesting] = useState(false);
-  const [isExportingPrint, setIsExportingPrint] = useState(false);
-  const [labelText, setLabelText] = useState("");
+  const [isLocking, setIsLocking] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("active");
   const [pendingSheetActionId, setPendingSheetActionId] = useState<number | null>(null);
 
@@ -76,24 +76,31 @@ export default function StagingAreaPage() {
     }
   }
 
-  function handleExport() {
+  async function handleLockBatch(batchCode: string) {
     const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId);
     if (!activeSheet) return;
-    downloadSheetDxf(activeSheet, labelText);
-    toast.success(`Lembar Kerja #${activeSheet.sheetId} diekspor (DXF)`);
-  }
 
-  async function handleExportPrint() {
-    const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId);
-    if (!activeSheet) return;
-    setIsExportingPrint(true);
+    setIsLocking(true);
     try {
-      await downloadPrintSheetJpg(activeSheet, labelText);
-      toast.success(`File print Lembar Kerja #${activeSheet.sheetId} diekspor (JPG 300 DPI)`);
+      const res = await fetch("/api/print-batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheetId: activeSheet.sheetId,
+          batchCode: batchCode.trim() || undefined,
+          items: activeSheet.items,
+          canvasWidth: SHEET_WIDTH_MM,
+          canvasHeight: SHEET_HEIGHT_MM,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal mengunci batch produksi");
+
+      toast.success(`Batch ${data.batch.batchCode} berhasil disimpan`);
+      router.push("/file-siap-cetak");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Gagal mengekspor file print");
-    } finally {
-      setIsExportingPrint(false);
+      toast.error(error instanceof Error ? error.message : "Gagal mengunci batch produksi");
+      setIsLocking(false);
     }
   }
 
@@ -156,12 +163,9 @@ export default function StagingAreaPage() {
           activeSheetId={activeSheetId}
           onSelectSheet={setActiveSheetId}
           onRunNesting={handleRunNesting}
-          onExport={handleExport}
-          onExportPrint={handleExportPrint}
-          labelText={labelText}
-          onLabelTextChange={setLabelText}
+          onLockBatch={handleLockBatch}
           isRunningNesting={isRunningNesting}
-          isExportingPrint={isExportingPrint}
+          isLocking={isLocking}
           viewMode={viewMode}
           onViewModeChange={handleViewModeChange}
           isLoadingHistory={isLoadingHistory}

@@ -1,6 +1,7 @@
 "use client";
 
-import { Play, Download, Trash2, CheckCircle2, History, Layers } from "lucide-react";
+import { useState } from "react";
+import { Play, Lock, Trash2, CheckCircle2, History, Layers } from "lucide-react";
 import type { StagingSheet } from "@/lib/staging-types";
 import { HppCalculator } from "./HppCalculator";
 
@@ -9,12 +10,9 @@ export function ControlPanel({
   activeSheetId,
   onSelectSheet,
   onRunNesting,
-  onExport,
-  onExportPrint,
-  labelText,
-  onLabelTextChange,
+  onLockBatch,
   isRunningNesting,
-  isExportingPrint,
+  isLocking,
   viewMode,
   onViewModeChange,
   isLoadingHistory,
@@ -26,12 +24,9 @@ export function ControlPanel({
   activeSheetId: number | null;
   onSelectSheet: (sheetId: number) => void;
   onRunNesting: () => void;
-  onExport: () => void;
-  onExportPrint: () => void;
-  labelText: string;
-  onLabelTextChange: (value: string) => void;
+  onLockBatch: (batchCode: string) => void;
   isRunningNesting: boolean;
-  isExportingPrint: boolean;
+  isLocking: boolean;
   viewMode: "active" | "history";
   onViewModeChange: (mode: "active" | "history") => void;
   isLoadingHistory: boolean;
@@ -39,6 +34,7 @@ export function ControlPanel({
   onCompleteSheet: (sheetId: number) => void;
   pendingSheetActionId: number | null;
 }) {
+  const [batchCode, setBatchCode] = useState("");
   const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId) ?? null;
   const isHistory = viewMode === "history";
 
@@ -139,49 +135,34 @@ export function ControlPanel({
         )}
       </div>
 
-      <div className="flex flex-col gap-2 border-t border-slate-200 pt-4">
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={!activeSheet}
-          className="flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Download size={16} />
-          Ekspor File Potong Laser (DXF)
-        </button>
-        <p className="text-xs text-slate-400">
-          Mengunduh DXF (mm) vektor siap potong laser/CNC untuk lembar kerja yang aktif.
-        </p>
-      </div>
-
       <div className="border-t border-slate-200 pt-4">
         <HppCalculator itemCount={activeSheet?.items.length ?? 0} />
       </div>
 
       <div className="flex flex-col gap-2 border-t border-slate-200 pt-4">
-        <h2 className="text-sm font-semibold text-slate-800">Ekspor Print (Xerox C70)</h2>
+        <h2 className="text-sm font-semibold text-slate-800">Kunci Produksi</h2>
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-          Kode Lembar / Urgent
+          Kode Batch (opsional)
           <input
             type="text"
-            value={labelText}
-            onChange={(event) => onLabelTextChange(event.target.value)}
-            placeholder="Contoh: D 14 JULI"
+            value={batchCode}
+            onChange={(event) => setBatchCode(event.target.value)}
+            placeholder="Kosongkan untuk generate otomatis"
             className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
           />
         </label>
         <button
           type="button"
-          onClick={onExportPrint}
-          disabled={!activeSheet || isExportingPrint}
-          className="flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => onLockBatch(batchCode)}
+          disabled={!activeSheet || isLocking}
+          className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Download size={16} />
-          {isExportingPrint ? "Memproses JPG 300 DPI..." : "Ekspor File Print (Xerox C70)"}
+          <Lock size={16} />
+          {isLocking ? "Mengunci Batch..." : "Kunci & Simpan Batch Produksi"}
         </button>
         <p className="text-xs text-slate-400">
-          Mengunduh JPG raster 300 DPI khusus mesin cetak grafis: seluruh isi kanvas di-mirror
-          horizontal untuk back-print, ditambah garis tepi hairline dan 4 titik registrasi di sudut.
+          Mengarsipkan lembar kerja yang aktif sebagai batch produksi permanen di File Siap
+          Cetak (untuk download DXF/print), lalu mengosongkan lembar kerja ini dari Staging Area.
         </p>
       </div>
     </div>
