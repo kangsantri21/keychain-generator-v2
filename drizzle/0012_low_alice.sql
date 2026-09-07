@@ -1,0 +1,1 @@
+ALTER TABLE `order_items` ADD `variant` text DEFAULT 'keychain' NOT NULL;

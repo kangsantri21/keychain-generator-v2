@@ -5,6 +5,7 @@ import {
   DEFAULT_TEXT_TARGET_HEIGHT_MM,
   WELD_CLEARANCE_MM,
 } from "@/lib/keychain-geometry";
+import type { StagingItemPayload } from "@/lib/staging-types";
 
 /**
  * A named placement zone inside a "fixed" layoutMode template's own master
@@ -105,6 +106,28 @@ export const orders = sqliteTable("orders", {
 export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
 
+// A locked, permanent production record — the "Jalur Pabrik" archive a
+// Staging Area sheet becomes once "Kunci & Simpan Batch Produksi" is
+// submitted. `layoutData` is a frozen array of StagingItemPayload
+// (lib/staging-types.ts) — already fully rendered (outline paths, text
+// glyph segments, embedded character image data URIs) at lock time, so
+// File Siap Cetak can regenerate DXF/print JPGs from it forever without
+// re-querying live orders/templates that may since have changed or been
+// deleted.
+export const printBatches = sqliteTable("print_batches", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  batchCode: text("batch_code").notNull().unique(),
+  layoutData: text("layout_data", { mode: "json" }).$type<StagingItemPayload[]>().notNull(),
+  canvasWidth: integer("canvas_width").notNull(),
+  canvasHeight: integer("canvas_height").notNull(),
+  status: text("status").$type<"pending" | "printed" | "archived">().notNull().default("pending"),
+  createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
+  updatedAt: text("updated_at").notNull().default(sql`(current_timestamp)`),
+});
+
+export type PrintBatch = typeof printBatches.$inferSelect;
+export type NewPrintBatch = typeof printBatches.$inferInsert;
+
 // Detail: a receipt can bundle several templates, each with its own names.
 export const orderItems = sqliteTable("order_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -116,6 +139,18 @@ export const orderItems = sqliteTable("order_items", {
     .references(() => templates.id),
   quantity: integer("quantity").notNull().default(1),
   customerNames: text("customer_names", { mode: "json" }).$type<string[]>().notNull(),
+  // Product form for this line item — drives which physical output the
+  // nesting/print pipeline produces. Defaults to "keychain" so every
+  // pre-existing row (all of which were keychains before pins existed)
+  // keeps working unchanged with no migration backfill needed.
+  variant: text("variant").$type<"keychain" | "pin">().notNull().default("keychain"),
+  // Best-effort back-reference to the batch this item's names were archived
+  // into (set when a staged unit matching this item's orderId+templateId is
+  // locked — see app/api/print-batches/route.ts). Since one order item can
+  // in principle have its names split across separate nesting runs/batches,
+  // this points at whichever batch locked it MOST RECENTLY — layoutData on
+  // printBatches remains the actual source of truth for what's in a batch.
+  batchId: integer("batch_id").references(() => printBatches.id),
 });
 
 export type OrderItem = typeof orderItems.$inferSelect;
