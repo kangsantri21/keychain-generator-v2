@@ -5,7 +5,7 @@ import { orders, orderItems, templates, stagingItems, type NewStagingItem, type 
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import { packIntoExistingSheet, type NestableRect, type ExistingPlacement } from "@/lib/nesting";
-import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM } from "@/lib/keychain-geometry";
+import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
 interface PackData {
@@ -127,7 +127,8 @@ export async function POST(
     pendingRects,
     SHEET_WIDTH_MM,
     SHEET_HEIGHT_MM,
-    ITEM_PADDING_MM,
+    ITEM_PADDING_RIGHT_MM,
+    ITEM_PADDING_BOTTOM_MM,
     true
   );
 

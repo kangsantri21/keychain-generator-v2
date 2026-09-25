@@ -1,7 +1,7 @@
 "use client";
 
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, RECEIPT_LABEL_FONT_SIZE_MM } from "@/lib/keychain-geometry";
-import { getItemTransform, getContentSize, getReceiptLabelY } from "@/lib/staging-transform";
+import { getItemTransform, getContentSize, getReceiptLabelPosition } from "@/lib/staging-transform";
 import type { StagingSheet } from "@/lib/staging-types";
 
 export function StagingCanvas({ sheet }: { sheet: StagingSheet | null }) {
@@ -61,11 +61,15 @@ export function StagingCanvas({ sheet }: { sheet: StagingSheet | null }) {
                 />
               )}
 
-              {item.order && (
-                <text x={0.5} y={getReceiptLabelY(item)} fontSize={RECEIPT_LABEL_FONT_SIZE_MM} fill="#334155">
-                  {item.order.receiptCode}
-                </text>
-              )}
+              {item.order &&
+                (() => {
+                  const labelPos = getReceiptLabelPosition(item);
+                  return (
+                    <text x={labelPos.x} y={labelPos.y} fontSize={RECEIPT_LABEL_FONT_SIZE_MM} fill="#334155">
+                      {item.order.receiptCode}
+                    </text>
+                  );
+                })()}
             </g>
           );
         })}

@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { Eye, Pencil, Trash2, X } from "lucide-react";
+import { Eye, Pencil, Trash2, X, Palette, Type, LayoutGrid } from "lucide-react";
 import { useTemplateStore, type OrderStatus, type OrderQueueEntry } from "@/lib/store/useTemplateStore";
+import { KeychainRenderSvg } from "@/components/shared/KeychainRenderSvg";
+import type { OrderItemPreviewPayload } from "@/lib/order-preview-types";
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -150,6 +152,11 @@ export function RecentOrdersList() {
   );
 }
 
+const CATEGORY_LABELS = {
+  character: "Template Karakter",
+  font: "Template Font & Warna",
+} as const;
+
 function OrderPreviewModal({
   order,
   onClose,
@@ -157,13 +164,47 @@ function OrderPreviewModal({
   order: OrderQueueEntry;
   onClose: () => void;
 }) {
+  const [previews, setPreviews] = useState<Map<number, OrderItemPreviewPayload>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      try {
+        const results = await Promise.all(
+          order.items.map(async (item) => {
+            const res = await fetch(`/api/order-items/${item.id}/preview`);
+            if (!res.ok) return null;
+            return (await res.json()) as OrderItemPreviewPayload;
+          })
+        );
+        if (cancelled) return;
+        const next = new Map<number, OrderItemPreviewPayload>();
+        for (const result of results) {
+          if (result) next.set(result.itemId, result);
+        }
+        setPreviews(next);
+      } catch {
+        if (!cancelled) toast.error("Gagal memuat pratinjau render item pesanan");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [order]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-lg"
+        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-lg"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
@@ -190,28 +231,96 @@ function OrderPreviewModal({
             </span>
           </div>
 
-          <ul className="flex flex-col gap-2">
-            {order.items.map((item) => (
-              <li key={item.id} className="flex gap-3 rounded-lg bg-slate-50 p-3">
-                {item.thumbnailPath ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={item.thumbnailPath}
-                    alt={item.templateCode ?? ""}
-                    className="h-12 w-12 flex-shrink-0 rounded border border-slate-200 bg-white object-contain"
-                  />
-                ) : (
-                  <span className="h-12 w-12 flex-shrink-0 rounded border border-dashed border-slate-200 bg-white" />
-                )}
-                <div className="flex min-w-0 flex-col">
-                  <span className="font-medium text-slate-700">
-                    {item.templateCode ?? "Template tidak ditemukan"} x{item.quantity}
-                  </span>
-                  <span className="text-sm text-slate-500">{item.names.join(", ")}</span>
+          <div className="flex flex-col gap-3">
+            {order.items.map((item) => {
+              const preview = previews.get(item.id);
+              const isLoadingThis = loading && !preview;
+
+              return (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row"
+                >
+                  {/* Left: actual production render — the same pipeline GET
+                      /api/staging uses for the Staging Area canvas, not a
+                      static admin thumbnail. */}
+                  <div className="flex h-[150px] w-full flex-shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 sm:w-[150px]">
+                    {isLoadingThis ? (
+                      <span className="text-xs text-slate-400">Memuat render...</span>
+                    ) : preview?.render ? (
+                      <KeychainRenderSvg render={preview.render} className="h-full w-full p-3" />
+                    ) : item.thumbnailPath ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={item.thumbnailPath}
+                        alt={item.templateCode ?? ""}
+                        className="h-full w-full object-contain p-3"
+                      />
+                    ) : (
+                      <span className="px-3 text-center text-xs text-slate-400">Render tidak tersedia</span>
+                    )}
+                  </div>
+
+                  {/* Right: full variation data pulled from the template row. */}
+                  <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <LayoutGrid size={15} className="flex-shrink-0 text-slate-400" />
+                      <span className="font-semibold text-slate-800">
+                        {item.templateCode ?? "Template tidak ditemukan"}
+                      </span>
+                      {preview?.template && (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                          {CATEGORY_LABELS[preview.template.isCharacter ? "character" : "font"]}
+                        </span>
+                      )}
+                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
+                        {item.variant === "pin" ? "Pin" : "Ganci"} x{item.quantity}
+                      </span>
+                    </div>
+
+                    {preview?.template && preview.template.colors.length > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <Palette size={14} className="flex-shrink-0 text-slate-400" />
+                        <div className="flex items-center gap-1">
+                          {preview.template.colors.map((color, index) => (
+                            <span
+                              key={`${color}-${index}`}
+                              title={color}
+                              className="h-4 w-4 rounded-full border border-slate-300"
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {preview?.template && (
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <Type size={14} className="flex-shrink-0 text-slate-400" />
+                        Font: {preview.template.fontFileName}
+                      </div>
+                    )}
+
+                    <div>
+                      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                        Daftar Nama ({item.names.length})
+                      </span>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {item.names.map((name, index) => (
+                          <span
+                            key={`${name}-${index}`}
+                            className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600"
+                          >
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </li>
-            ))}
-          </ul>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

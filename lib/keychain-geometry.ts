@@ -4,14 +4,44 @@ export const SHEET_WIDTH_MM = 310;
 export const SHEET_HEIGHT_MM = 470;
 
 /**
- * Gap the packer keeps between neighboring items (and around the sheet's own
- * edges), for safe laser cutting AND as the reserved band the receipt-code
- * label (below) prints into. Raised from the original 2mm — with a 2.5mm
- * label font-size, that old value was physically smaller than the label
- * itself, guaranteeing the text bled across the gap into whichever
- * neighboring item's cut-line sat below it (see RECEIPT_LABEL_FONT_SIZE_MM).
+ * Asymmetric packer clearance (lib/nesting.ts's `packMaxRects`/
+ * `packIntoExistingSheet`), applied in ON-SHEET space, always, regardless
+ * of which way a given item gets rotated:
+ *
+ * - ITEM_PADDING_RIGHT_MM: tight gap trailing each item's on-sheet RIGHT
+ *   edge, and the sheet's own outer border on every side. A uniform 5mm
+ *   here (the original fix for the receipt-label bleed bug below) turned
+ *   out to waste real acrylic on every horizontal gap and every sheet
+ *   edge, not just the ones that actually needed room for a label — QA
+ *   flagged it (2026-09-26) as material waste, not a safety concern.
+ * - ITEM_PADDING_BOTTOM_MM: generous gap trailing each item's on-sheet
+ *   BOTTOM edge only — this is the receipt-code label's own waste band.
+ *   With a 1.8mm label font-size (RECEIPT_LABEL_FONT_SIZE_MM) a value
+ *   below ~2mm would put the label's baseline back on the boundary itself,
+ *   reintroducing the original bleed-into-the-neighbor's-cut-line bug this
+ *   constant exists to prevent.
+ *
+ * Both apply post-rotation-decision, never pre-: naively inflating an
+ * item's HEIGHT before handing it to the packer (so the packer's own
+ * always-symmetric per-orientation padding "just works") reserves the
+ * extra room on the WRONG physical side once an item is rotated — lib/
+ * staging-transform.ts's `rotate(90)` transform maps an item's own local
+ * "bottom" edge to the on-sheet LEFT edge, not the on-sheet bottom, so a
+ * height-inflated-then-rotated item would have its real label-bearing
+ * edge sitting at only the tight ITEM_PADDING_RIGHT_MM, while the
+ * generous margin ends up wasted on the item's on-sheet right side
+ * instead (verified with a direct point-transform simulation before
+ * choosing this design). `lib/nesting.ts`'s `findBestNode` instead
+ * computes each orientation's on-sheet width/height FIRST, then adds
+ * paddingRight/paddingBottom to whichever role that on-sheet dimension
+ * plays — so the generous clearance always lands trailing the on-sheet
+ * bottom, and `lib/staging-transform.ts`'s label position is itself
+ * rotation-conditional (drawn at local-x instead of local-y, for a
+ * rotated item) so the label always physically renders into that same
+ * on-sheet-bottom band no matter which way the item was rotated.
  */
-export const ITEM_PADDING_MM = 5;
+export const ITEM_PADDING_RIGHT_MM = 2;
+export const ITEM_PADDING_BOTTOM_MM = 5;
 
 /**
  * Legacy nominal character footprint — no longer drives production sizing
@@ -119,14 +149,14 @@ export const FIDUCIAL_RADIUS_MM = FIDUCIAL_DIAMETER_MM / 2;
 
 /**
  * Receipt-code label printed beneath each item (lib/staging-transform.ts's
- * getReceiptLabelY), sized and positioned to stay entirely inside the
- * ITEM_PADDING_MM waste band between two neighboring items — never inside
- * either item's own cut-line, never crossing into the next one's. Sized
- * against a worst-case font (tall ascender/descender, since the label font
- * is whatever arbitrary TTF/OTF an admin uploaded for that template, not a
- * fixed system font): RECEIPT_LABEL_BOTTOM_CLEARANCE_MM reserves room below
- * the text baseline for descenders plus a safety margin before the next
- * item's edge.
+ * getReceiptLabelPosition), sized and positioned to stay entirely inside
+ * the ITEM_PADDING_BOTTOM_MM waste band trailing each item's on-sheet
+ * bottom edge — never inside either item's own cut-line, never crossing
+ * into the next one's. Sized against a worst-case font (tall ascender/
+ * descender, since the label font is whatever arbitrary TTF/OTF an admin
+ * uploaded for that template, not a fixed system font):
+ * RECEIPT_LABEL_BOTTOM_CLEARANCE_MM reserves room below the text baseline
+ * for descenders plus a safety margin before the next item's edge.
  */
 export const RECEIPT_LABEL_FONT_SIZE_MM = 1.8;
 export const RECEIPT_LABEL_BOTTOM_CLEARANCE_MM = 1.5;

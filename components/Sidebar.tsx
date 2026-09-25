@@ -10,6 +10,8 @@ import {
   ListChecks,
   Layers,
   Printer,
+  Gem,
+  LayoutGrid,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -26,9 +28,11 @@ const NAV_ICONS: Record<PageKey, LucideIcon> = {
   "order-queue": ListChecks,
   "staging-area": Layers,
   "file-siap-cetak": Printer,
+  "mahar-generator": Gem,
+  "mahar-nesting": LayoutGrid,
 };
 
-const NAV_ORDER: PageKey[] = [
+const KEYCHAIN_NAV: PageKey[] = [
   "dashboard",
   "master-template",
   "input-pesanan",
@@ -36,6 +40,13 @@ const NAV_ORDER: PageKey[] = [
   "staging-area",
   "file-siap-cetak",
 ];
+
+// Bahan Mahar is a fully separate module (own tables/API/pages — see
+// lib/db/mahar-schema.ts) — grouped under its own labeled section so it
+// never reads as part of the Gantungan Kunci workflow above it.
+const MAHAR_NAV: PageKey[] = ["mahar-generator", "mahar-nesting"];
+
+const NAV_ORDER: PageKey[] = [...KEYCHAIN_NAV, ...MAHAR_NAV];
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -66,25 +77,31 @@ export function Sidebar() {
         </span>
       </div>
       <nav className="flex flex-1 flex-col gap-1 px-3 py-3">
-        {NAV_ORDER.map((page) => {
+        {NAV_ORDER.map((page, index) => {
           const href = PAGE_ROUTES[page];
           const Icon = NAV_ICONS[page];
           const isActive =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
 
           return (
-            <Link
-              key={page}
-              href={href}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                isActive
-                  ? "bg-blue-600 text-white"
-                  : "text-slate-300 hover:bg-blue-900 hover:text-white"
-              }`}
-            >
-              <Icon size={18} />
-              {PAGE_LABELS[page]}
-            </Link>
+            <div key={page}>
+              {index === KEYCHAIN_NAV.length && (
+                <div className="mb-1 mt-3 px-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Bahan Mahar
+                </div>
+              )}
+              <Link
+                href={href}
+                className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-300 hover:bg-blue-900 hover:text-white"
+                }`}
+              >
+                <Icon size={18} />
+                {PAGE_LABELS[page]}
+              </Link>
+            </div>
           );
         })}
       </nav>

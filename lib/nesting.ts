@@ -109,10 +109,41 @@ function bssfScore(r: Rect, width: number, height: number): number {
   return Math.min(r.width - width, r.height - height);
 }
 
-/** Best free rectangle (and orientation) for an item of size (width, height) — smallest BSSF score, ties broken by Bottom-Left — or null if none fits. */
-function findBestNode(freeRects: Rect[], width: number, height: number, allowRotation: boolean): PlacementCandidate | null {
+/**
+ * Best free rectangle (and orientation) for an item whose TRUE (pre-
+ * rotation) size is (trueWidth, trueHeight) — smallest BSSF score, ties
+ * broken by Bottom-Left — or null if none fits.
+ *
+ * `padRight`/`padBottom` are trailing clearances applied in ON-SHEET space,
+ * always: whichever true dimension ends up as the on-sheet width for a
+ * given candidate gets `padRight` added, and whichever ends up as the
+ * on-sheet height gets `padBottom` added — for the unrotated candidate
+ * that's (trueWidth+padRight, trueHeight+padBottom); for the rotated one,
+ * true width/height swap roles, so it's (trueHeight+padRight,
+ * trueWidth+padBottom). This is what makes asymmetric padding (e.g. a
+ * generous trailing bottom margin for a receipt-code label, tight
+ * everywhere else) behave identically regardless of which way the packer
+ * happens to rotate an item — see keychain-geometry.ts's ITEM_PADDING_
+ * RIGHT_MM/BOTTOM_MM doc comment for why a naive "inflate height before
+ * packing" approach gets this wrong (the padding ends up on physically the
+ * wrong side of a rotated item once lib/staging-transform.ts's rotate(90)
+ * transform is applied).
+ */
+function findBestNode(
+  freeRects: Rect[],
+  trueWidth: number,
+  trueHeight: number,
+  padRight: number,
+  padBottom: number,
+  allowRotation: boolean
+): PlacementCandidate | null {
   let best: PlacementCandidate | null = null;
   let bestScore = Infinity;
+
+  const width = trueWidth + padRight;
+  const height = trueHeight + padBottom;
+  const rotatedWidth = trueHeight + padRight;
+  const rotatedHeight = trueWidth + padBottom;
 
   for (const r of freeRects) {
     if (r.width >= width && r.height >= height) {
@@ -123,9 +154,9 @@ function findBestNode(freeRects: Rect[], width: number, height: number, allowRot
         bestScore = score;
       }
     }
-    if (allowRotation && r.width >= height && r.height >= width) {
-      const score = bssfScore(r, height, width);
-      const candidate: PlacementCandidate = { x: r.x, y: r.y, width: height, height: width, rotated: true };
+    if (allowRotation && r.width >= rotatedWidth && r.height >= rotatedHeight) {
+      const score = bssfScore(r, rotatedWidth, rotatedHeight);
+      const candidate: PlacementCandidate = { x: r.x, y: r.y, width: rotatedWidth, height: rotatedHeight, rotated: true };
       if (!best || score < bestScore || (score === bestScore && isBetterByBottomLeft(candidate, best))) {
         best = candidate;
         bestScore = score;
@@ -206,20 +237,26 @@ class Sheet {
     this.freeRects = pruneFreeRects(next);
   }
 
-  /** Places width x height (plus padding reserved around it) if it fits anywhere; returns the placed (unpadded) rect, or null. */
-  place(width: number, height: number, padding: number, allowRotation: boolean): PlacementCandidate | null {
-    const node = findBestNode(this.freeRects, width + padding, height + padding, allowRotation);
+  /**
+   * Places a TRUE (pre-rotation) `width x height` item, reserving
+   * `padRight`/`padBottom` trailing clearance in ON-SHEET space (see
+   * `findBestNode`'s own doc comment for why those apply post-rotation,
+   * not pre-rotation) if it fits anywhere; returns the placed (unpadded,
+   * on-sheet) rect, or null.
+   */
+  place(width: number, height: number, padRight: number, padBottom: number, allowRotation: boolean): PlacementCandidate | null {
+    const node = findBestNode(this.freeRects, width, height, padRight, padBottom, allowRotation);
     if (!node) return null;
 
-    // The free-rect search above reserved `padding` extra room so
-    // neighboring items always end up with that real physical gap between
-    // them; the rect actually handed back to the caller (and used to split
-    // the free list) is the item's own true, unpadded footprint.
+    // findBestNode already computed node.width/height as the on-sheet
+    // footprint (post-rotation-swap, if any) plus padRight/padBottom — so
+    // subtracting those back out here is unconditional, no rotated branch
+    // needed, unlike the old single-scalar-padding version.
     const placed: PlacementCandidate = {
       x: node.x,
       y: node.y,
-      width: node.width - padding,
-      height: node.height - padding,
+      width: node.width - padRight,
+      height: node.height - padBottom,
       rotated: node.rotated,
     };
     this.carve({ x: node.x, y: node.y, width: node.width, height: node.height });
@@ -229,22 +266,33 @@ class Sheet {
 
   /**
    * Removes the space occupied by an already-placed item — plus the same
-   * trailing padding buffer `place()` would have reserved for it — from this
-   * (otherwise fresh) sheet's free-rect list, without emitting a new
-   * placement. Used to "replay" a sheet's existing occupied footprint before
-   * appending more items into whatever room is left (see
-   * `packIntoExistingSheet` below), so an appended item can never land on
-   * top of, or closer than `padding` to, something already there.
+   * trailing padRight/padBottom buffer `place()` would have reserved for
+   * it — from this (otherwise fresh) sheet's free-rect list, without
+   * emitting a new placement. `rect` is already the ON-SHEET footprint (see
+   * `ExistingPlacement`), so no rotation swap is needed here — unlike
+   * `place()`, that decision was already made when it was first placed.
+   * Used to "replay" a sheet's existing occupied footprint before appending
+   * more items into whatever room is left (see `packIntoExistingSheet`
+   * below), so an appended item can never land on top of, or closer than
+   * padRight/padBottom to, something already there.
    */
-  reserve(rect: Rect, padding: number): void {
-    this.carve({ x: rect.x, y: rect.y, width: rect.width + padding, height: rect.height + padding });
+  reserve(rect: Rect, padRight: number, padBottom: number): void {
+    this.carve({ x: rect.x, y: rect.y, width: rect.width + padRight, height: rect.height + padBottom });
   }
 }
 
 /**
  * Packs `items` onto as many `sheetWidth` x `sheetHeight` sheets as needed,
- * keeping `padding` clearance between every item and around the sheet's own
- * edges (matching the physical gap a laser needs between neighboring cuts).
+ * keeping `paddingRight`/`paddingBottom` clearance — in ON-SHEET space,
+ * always, regardless of whether a given item ends up rotated — trailing
+ * each item and around the sheet's own edges (matching the physical gap a
+ * laser needs between neighboring cuts). Passing the same value for both
+ * reproduces the old uniform-padding behavior exactly (e.g. the mahar
+ * module's own nesting, which has no asymmetric-clearance need); the
+ * keychain module passes a tight `paddingRight` and a larger `paddingBottom`
+ * to leave room for its receipt-code label without widening every
+ * horizontal gap on the sheet to match — see keychain-geometry.ts's
+ * ITEM_PADDING_RIGHT_MM/BOTTOM_MM.
  *
  * Items are sorted largest-area-first before placing — big items claim
  * space while the most contiguous room is still available, small items fill
@@ -258,16 +306,24 @@ export function packMaxRects<T>(
   items: NestableRect<T>[],
   sheetWidth: number,
   sheetHeight: number,
-  padding: number,
+  paddingRight: number,
+  paddingBottom: number,
   allowRotation: boolean
 ): PackedRect<T>[] {
-  const usableWidth = sheetWidth - 2 * padding;
-  const usableHeight = sheetHeight - 2 * padding;
+  // The sheet's own outer border uses paddingRight on every side (not a
+  // mix of paddingRight/paddingBottom) — it's the tight, "don't waste
+  // sheet-edge margin" value; the generous paddingBottom clearance instead
+  // comes from each individual item's own trailing reservation below it
+  // (including the last row, whose trailing reservation is bounded by this
+  // same tight border, not doubled up with it).
+  const border = paddingRight;
+  const usableWidth = sheetWidth - 2 * border;
+  const usableHeight = sheetHeight - 2 * border;
 
   const sorted = items.slice().sort((a, b) => b.width * b.height - a.width * a.height);
 
   const results: PackedRect<T>[] = [];
-  const sheets: Sheet[] = [new Sheet(usableWidth, usableHeight, padding)];
+  const sheets: Sheet[] = [new Sheet(usableWidth, usableHeight, border)];
 
   for (const item of sorted) {
     const fitsAtAll =
@@ -276,12 +332,12 @@ export function packMaxRects<T>(
     if (!fitsAtAll) continue;
 
     let sheetIndex = sheets.length - 1;
-    let placement = sheets[sheetIndex].place(item.width, item.height, padding, allowRotation);
+    let placement = sheets[sheetIndex].place(item.width, item.height, paddingRight, paddingBottom, allowRotation);
 
     if (!placement) {
-      sheets.push(new Sheet(usableWidth, usableHeight, padding));
+      sheets.push(new Sheet(usableWidth, usableHeight, border));
       sheetIndex = sheets.length - 1;
-      placement = sheets[sheetIndex].place(item.width, item.height, padding, allowRotation);
+      placement = sheets[sheetIndex].place(item.width, item.height, paddingRight, paddingBottom, allowRotation);
     }
 
     // Guaranteed non-null: `fitsAtAll` already confirmed this item fits the
@@ -311,8 +367,9 @@ export interface ExistingPlacement {
  * layout reshuffled underneath it.
  *
  * Reconstructs the sheet's free-rectangle state by replaying `existing` as
- * carved-out space (each expanded by `padding`, exactly like a real `place()`
- * call would have left it — see `Sheet.reserve`), then packs `items`
+ * carved-out space (each expanded by paddingRight/paddingBottom, exactly
+ * like a real `place()` call would have left it — see `Sheet.reserve`),
+ * then packs `items`
  * (largest-area-first, same as `packMaxRects`) into what's left of a single
  * sheet only — never spills onto a second one, since there's no second sheet
  * to append into here.
@@ -329,15 +386,17 @@ export function packIntoExistingSheet<T>(
   items: NestableRect<T>[],
   sheetWidth: number,
   sheetHeight: number,
-  padding: number,
+  paddingRight: number,
+  paddingBottom: number,
   allowRotation: boolean
 ): { fit: PackedRect<T>[]; unfit: NestableRect<T>[] } {
-  const usableWidth = sheetWidth - 2 * padding;
-  const usableHeight = sheetHeight - 2 * padding;
+  const border = paddingRight;
+  const usableWidth = sheetWidth - 2 * border;
+  const usableHeight = sheetHeight - 2 * border;
 
-  const sheet = new Sheet(usableWidth, usableHeight, padding);
+  const sheet = new Sheet(usableWidth, usableHeight, border);
   for (const rect of existing) {
-    sheet.reserve(rect, padding);
+    sheet.reserve(rect, paddingRight, paddingBottom);
   }
 
   const sorted = items.slice().sort((a, b) => b.width * b.height - a.width * a.height);
@@ -354,7 +413,7 @@ export function packIntoExistingSheet<T>(
       continue;
     }
 
-    const placement = sheet.place(item.width, item.height, padding, allowRotation);
+    const placement = sheet.place(item.width, item.height, paddingRight, paddingBottom, allowRotation);
     if (!placement) {
       unfit.push(item);
       continue;

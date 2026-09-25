@@ -3,11 +3,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { Search, CircleDot } from "lucide-react";
+import { Search, CircleDot, Trash2 } from "lucide-react";
 import type { OrderItemVariant, OrderQueueEntry, OrderStatus, HoleOverride } from "@/lib/store/useTemplateStore";
 import type { StagingSheet } from "@/lib/staging-types";
 import type { Template } from "@/lib/db/schema";
 import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -133,6 +134,9 @@ export default function OrderQueuePage() {
   const [templates, setTemplates] = useState<Map<number, Template>>(new Map());
   const [editingRow, setEditingRow] = useState<QueueRow | null>(null);
 
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ReceiptGroup | null>(null);
+  const [isDeletingReceipt, setIsDeletingReceipt] = useState(false);
+
   async function loadOrders() {
     const res = await fetch("/api/orders");
     const data = await res.json();
@@ -198,6 +202,39 @@ export default function OrderQueuePage() {
       await loadOrders();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menyimpan override lubang ring");
+    }
+  }
+
+  /**
+   * receiptCode is unique per order (lib/db/schema.ts), so every row in a
+   * ReceiptGroup already shares the same orderId — "Hapus Resi" is really
+   * just deleting that one order, cascading its order_items/staging_items
+   * (see app/api/orders/[id]/route.ts), reusing the exact same endpoint
+   * Input Pesanan's own delete button already calls.
+   */
+  async function handleConfirmDeleteReceipt() {
+    if (!confirmDeleteGroup) return;
+    const orderId = confirmDeleteGroup.rows[0].orderId;
+
+    setIsDeletingReceipt(true);
+    try {
+      const res = await fetch(`/api/orders/${orderId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal menghapus resi");
+
+      toast.success(`Resi ${confirmDeleteGroup.receiptCode} berhasil dihapus`);
+      const deletedRowIds = new Set(confirmDeleteGroup.rows.map((row) => row.rowId));
+      setRows((prev) => prev.filter((row) => !deletedRowIds.has(row.rowId)));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const rowId of deletedRowIds) next.delete(rowId);
+        return next;
+      });
+      setConfirmDeleteGroup(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal menghapus resi");
+    } finally {
+      setIsDeletingReceipt(false);
     }
   }
 
@@ -411,9 +448,20 @@ export default function OrderQueuePage() {
                             label={`Pilih semua item resi ${group.receiptCode}`}
                           />
                         </td>
-                        <td colSpan={7} className="px-3 py-2 align-top text-xs font-semibold text-slate-600">
+                        <td colSpan={6} className="px-3 py-2 align-top text-xs font-semibold text-slate-600">
                           Resi: {group.receiptCode}{" "}
                           <span className="font-normal text-slate-400">({group.rows.length} item)</span>
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteGroup(group)}
+                            title={`Hapus seluruh pesanan pada Resi ${group.receiptCode}`}
+                            className="flex items-center gap-1 whitespace-nowrap rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
+                          >
+                            <Trash2 size={12} />
+                            Hapus
+                          </button>
                         </td>
                       </tr>
                       {group.rows.map((row) => (
@@ -493,6 +541,16 @@ export default function OrderQueuePage() {
             />
           );
         })()}
+
+      {confirmDeleteGroup && (
+        <ConfirmDialog
+          title="Hapus Resi?"
+          description={`Apakah Anda yakin ingin menghapus seluruh pesanan pada Resi ${confirmDeleteGroup.receiptCode}? (Terdapat ${confirmDeleteGroup.rows.length} item yang akan dihapus permanen).`}
+          isConfirming={isDeletingReceipt}
+          onConfirm={handleConfirmDeleteReceipt}
+          onCancel={() => setConfirmDeleteGroup(null)}
+        />
+      )}
     </div>
   );
 }

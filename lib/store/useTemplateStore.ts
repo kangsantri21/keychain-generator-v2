@@ -9,7 +9,9 @@ export type PageKey =
   | "input-pesanan"
   | "order-queue"
   | "staging-area"
-  | "file-siap-cetak";
+  | "file-siap-cetak"
+  | "mahar-generator"
+  | "mahar-nesting";
 
 export const PAGE_LABELS: Record<PageKey, string> = {
   dashboard: "Dashboard",
@@ -18,6 +20,8 @@ export const PAGE_LABELS: Record<PageKey, string> = {
   "order-queue": "Antrean Pesanan",
   "staging-area": "Staging Area",
   "file-siap-cetak": "File Siap Cetak",
+  "mahar-generator": "Mahar Generator",
+  "mahar-nesting": "Mahar Nesting",
 };
 
 export const PAGE_ROUTES: Record<PageKey, string> = {
@@ -27,6 +31,8 @@ export const PAGE_ROUTES: Record<PageKey, string> = {
   "order-queue": "/order-queue",
   "staging-area": "/staging-area",
   "file-siap-cetak": "/file-siap-cetak",
+  "mahar-generator": "/mahar-generator",
+  "mahar-nesting": "/mahar-nesting",
 };
 
 /** One template+names line within a receipt (mirrors an order_items row). */

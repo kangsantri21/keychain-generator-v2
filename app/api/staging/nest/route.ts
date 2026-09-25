@@ -5,7 +5,7 @@ import { orders, orderItems, templates, stagingItems, type NewStagingItem, type 
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
-import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM } from "@/lib/keychain-geometry";
+import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
 interface PackData {
@@ -100,7 +100,14 @@ export async function POST(request: NextRequest) {
   // way a plain best-fit heuristic could on a sparse sheet. See
   // lib/nesting.ts's own docs for the two real failure modes (a center hole,
   // then dead space under a rotated item) this algorithm was iterated past.
-  const packedRects = packMaxRects(pendingRects, SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM, true);
+  const packedRects = packMaxRects(
+    pendingRects,
+    SHEET_WIDTH_MM,
+    SHEET_HEIGHT_MM,
+    ITEM_PADDING_RIGHT_MM,
+    ITEM_PADDING_BOTTOM_MM,
+    true
+  );
 
   if (packedRects.length === 0) {
     return NextResponse.json(

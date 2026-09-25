@@ -1,4 +1,4 @@
-import { ITEM_PADDING_MM, RECEIPT_LABEL_BOTTOM_CLEARANCE_MM } from "@/lib/keychain-geometry";
+import { ITEM_PADDING_BOTTOM_MM, RECEIPT_LABEL_BOTTOM_CLEARANCE_MM } from "@/lib/keychain-geometry";
 import type { StagingItemPayload } from "@/lib/staging-types";
 
 /**
@@ -38,24 +38,40 @@ export function getContentSize(
 }
 
 /**
- * Y coordinate (baseline, in the item's own local space) for the
- * receipt-code label drawn beneath each item on the print sheet — placed
- * inside the ITEM_PADDING_MM waste/gap band below the item's own bottom
- * edge, never inside the item itself. The item's stored width/height IS the
- * outline's own tight bounding box (lib/keychain-render.ts normalizes every
- * outline so it touches all four edges of that box), so a label positioned
- * *inside* near the bottom-left corner (the old behavior) could collide with
- * the red cut-line for any item whose silhouette runs close to that corner.
+ * Local-space (x, y) for the receipt-code label drawn beneath each item on
+ * the print sheet — placed inside the ITEM_PADDING_BOTTOM_MM waste/gap band
+ * trailing the item's own ON-SHEET bottom edge, never inside the item
+ * itself. The item's stored width/height IS the outline's own tight
+ * bounding box (lib/keychain-render.ts normalizes every outline so it
+ * touches all four edges of that box), so a label positioned *inside* near
+ * a corner (the old behavior) could collide with the red cut-line for any
+ * item whose silhouette runs close to that corner.
  *
- * Pulling the baseline up from the bottom of that band by
- * RECEIPT_LABEL_BOTTOM_CLEARANCE_MM (rather than sitting it right on the
- * band's own lower edge) reserves room for the label font's descenders —
- * without it, the *previous* 2mm-padding version of this function put the
- * baseline exactly on the boundary, so a 2.5mm font's glyphs unavoidably
- * bled past that boundary into the next item's cut-line (font height alone
- * exceeded the entire gap). See ITEM_PADDING_MM/RECEIPT_LABEL_FONT_SIZE_MM's
- * own doc comments (lib/keychain-geometry.ts) for the full reasoning.
+ * Deliberately conditional on `item.rotated`, unlike a plain "Y below
+ * content.height" formula: this item's own local coordinate space gets
+ * rotated 90deg by `getItemTransform` before it lands on the sheet, and
+ * local "bottom" (the un-rotated content's own y-axis max) maps to the
+ * on-sheet LEFT edge once rotated, not the on-sheet bottom — verified with
+ * a direct point-transform simulation, see ITEM_PADDING_RIGHT_MM/BOTTOM_MM's
+ * own doc comment (lib/keychain-geometry.ts) for the full reasoning. Since
+ * ITEM_PADDING_BOTTOM_MM's generous clearance is reserved trailing the
+ * on-sheet bottom specifically (regardless of rotation — see lib/
+ * nesting.ts's `findBestNode`), the label's own LOCAL axis that maps to
+ * on-sheet Y must swap too: local y (unrotated) vs. local x (rotated), so
+ * the label always physically ends up in that same reserved band.
+ *
+ * Pulling the coordinate back from the band's own far edge by
+ * RECEIPT_LABEL_BOTTOM_CLEARANCE_MM (rather than sitting right on it)
+ * reserves room for the label font's descenders — without it, a 2.5mm
+ * font's glyphs would unavoidably bleed past the boundary into the next
+ * item's cut-line (font height alone would exceed the remaining gap). See
+ * RECEIPT_LABEL_FONT_SIZE_MM's own doc comment for the font-size side of
+ * that math.
  */
-export function getReceiptLabelY(item: Pick<StagingItemPayload, "width" | "height" | "rotated">): number {
-  return getContentSize(item).height + ITEM_PADDING_MM - RECEIPT_LABEL_BOTTOM_CLEARANCE_MM;
+export function getReceiptLabelPosition(
+  item: Pick<StagingItemPayload, "width" | "height" | "rotated">
+): { x: number; y: number } {
+  const content = getContentSize(item);
+  const trailing = ITEM_PADDING_BOTTOM_MM - RECEIPT_LABEL_BOTTOM_CLEARANCE_MM;
+  return item.rotated ? { x: content.width + trailing, y: 0.5 } : { x: 0.5, y: content.height + trailing };
 }
