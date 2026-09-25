@@ -21,7 +21,6 @@ import { useTemplateStore } from "@/lib/store/useTemplateStore";
 import type { Template, CustomZone } from "@/lib/db/schema";
 import {
   CHAR_BOX_MM,
-  MAX_LAYOUT_OFFSET_MM,
   WELD_CLEARANCE_MM,
   SEAM_CLOSE_MM,
   DILATE_MM,
@@ -31,6 +30,7 @@ import {
   MAX_ITEM_WIDTH_MM,
 } from "@/lib/keychain-geometry";
 import { ColorPaletteEditor, DEFAULT_COLOR, MAX_COLORS, MIN_COLORS } from "./ColorPaletteEditor";
+import { OffsetSlider } from "./OffsetSlider";
 
 // Live-preview canvas geometry (px), approximating the laser-cut scale.
 const CANVAS_MARGIN = 24;
@@ -65,48 +65,6 @@ function isSvgFile(file: File): boolean {
 
 function isRasterImageFile(file: File): boolean {
   return /\.(png|jpe?g)$/i.test(file.name) || file.type === "image/png" || file.type === "image/jpeg";
-}
-
-const OFFSET_SLIDER_STEP = 0.5;
-
-function OffsetSlider({
-  label,
-  value,
-  onChange,
-  hint,
-  min = -MAX_LAYOUT_OFFSET_MM,
-  max = MAX_LAYOUT_OFFSET_MM,
-  disabled = false,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  hint: string;
-  min?: number;
-  max?: number;
-  disabled?: boolean;
-}) {
-  return (
-    <label
-      className={`flex flex-col gap-1 text-xs font-medium ${disabled ? "text-slate-300" : "text-slate-600"}`}
-    >
-      <div className="flex items-center justify-between">
-        <span>{label}</span>
-        <span className={`font-mono ${disabled ? "text-slate-300" : "text-slate-500"}`}>{value.toFixed(1)} mm</span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={OFFSET_SLIDER_STEP}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        disabled={disabled}
-        className="accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
-      />
-      <span className="text-[11px] font-normal text-slate-400">{hint}</span>
-    </label>
-  );
 }
 
 function unionBounds(a: PathBounds, b: PathBounds): PathBounds {

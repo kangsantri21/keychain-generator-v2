@@ -1,6 +1,6 @@
 "use client";
 
-import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/keychain-geometry";
+import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, RECEIPT_LABEL_FONT_SIZE_MM } from "@/lib/keychain-geometry";
 import { getItemTransform, getContentSize, getReceiptLabelY } from "@/lib/staging-transform";
 import type { StagingSheet } from "@/lib/staging-types";
 
@@ -62,7 +62,7 @@ export function StagingCanvas({ sheet }: { sheet: StagingSheet | null }) {
               )}
 
               {item.order && (
-                <text x={0.5} y={getReceiptLabelY(item)} fontSize={2.5} fill="#334155">
+                <text x={0.5} y={getReceiptLabelY(item)} fontSize={RECEIPT_LABEL_FONT_SIZE_MM} fill="#334155">
                   {item.order.receiptCode}
                 </text>
               )}

@@ -1,4 +1,4 @@
-import type { OrderQueueEntry, OrderStatus } from "@/lib/store/useTemplateStore";
+import type { OrderQueueEntry, OrderStatus, HoleOverride } from "@/lib/store/useTemplateStore";
 
 /**
  * POST /api/orders embeds the full `template` object per item (and names
@@ -16,6 +16,7 @@ interface RawOrderItem {
   templateCode?: string | null;
   thumbnailPath?: string | null;
   template?: { code: string; thumbnailPath: string } | null;
+  holeOverrides?: Record<number, HoleOverride> | null;
 }
 
 interface RawOrder {
@@ -42,6 +43,7 @@ export function toOrderQueueEntry(raw: RawOrder): OrderQueueEntry {
       names: item.names ?? item.customerNames ?? [],
       variant: item.variant ?? "keychain",
       thumbnailPath: item.thumbnailPath ?? item.template?.thumbnailPath ?? null,
+      holeOverrides: item.holeOverrides ?? null,
     })),
   };
 }

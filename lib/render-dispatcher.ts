@@ -1,4 +1,4 @@
-import type { Template } from "@/lib/db/schema";
+import type { Template, HoleOverride } from "@/lib/db/schema";
 import { renderKeychainText, type TemplateAssets } from "@/lib/keychain-render";
 import { renderFixedShapeTemplate } from "@/lib/keychain-render-fixed";
 import type { KeychainRender } from "@/lib/render-types";
@@ -25,13 +25,14 @@ import type { KeychainRender } from "@/lib/render-types";
 export function renderTemplateItem(
   assets: TemplateAssets,
   template: Template,
-  text: string
+  text: string,
+  holeOverride: HoleOverride | null = null
 ): KeychainRender {
   switch (template.layoutMode) {
     case "fixed":
-      return renderFixedShapeTemplate(assets, template, text);
+      return renderFixedShapeTemplate(assets, template, text, holeOverride);
     case "dynamic":
     default:
-      return renderKeychainText(assets, template, text);
+      return renderKeychainText(assets, template, text, holeOverride);
   }
 }

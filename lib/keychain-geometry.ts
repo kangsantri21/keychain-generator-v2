@@ -3,8 +3,15 @@
 export const SHEET_WIDTH_MM = 310;
 export const SHEET_HEIGHT_MM = 470;
 
-/** Gap the packer keeps between neighboring items, for safe laser cutting. */
-export const ITEM_PADDING_MM = 2;
+/**
+ * Gap the packer keeps between neighboring items (and around the sheet's own
+ * edges), for safe laser cutting AND as the reserved band the receipt-code
+ * label (below) prints into. Raised from the original 2mm — with a 2.5mm
+ * label font-size, that old value was physically smaller than the label
+ * itself, guaranteeing the text bled across the gap into whichever
+ * neighboring item's cut-line sat below it (see RECEIPT_LABEL_FONT_SIZE_MM).
+ */
+export const ITEM_PADDING_MM = 5;
 
 /**
  * Legacy nominal character footprint — no longer drives production sizing
@@ -22,6 +29,21 @@ export const MARGIN_MM = 3;
 /** Ring/keychain hole, offset from the item's top-left corner. */
 export const RING_HOLE_OFFSET_MM = 4;
 export const RING_HOLE_DIAMETER_MM = 1.9;
+
+/**
+ * Text-only ("Custom Nama") ring-hole pipeline only (lib/keychain-render.ts):
+ * the outer diameter of the solid "washer" circle unioned onto the text's
+ * own contour at the hole's position, strictly larger than
+ * RING_HOLE_DIAMETER_MM (the actual functional hole cut out of its center).
+ * Without this margin, unioning then drilling the SAME size circle would
+ * leave the ring of material around the hole at zero thickness everywhere
+ * the hole sits outside the letter's own ink — snapping the instant it's
+ * laser-cut. 5mm outer / 1.9mm hole leaves a ~1.55mm wall on every side,
+ * confirmed with the owner as a safe minimum for the acrylic in use (matches
+ * FIDUCIAL_DIAMETER_MM's own 5mm, already a proven safe circular-feature
+ * size elsewhere in this same pipeline).
+ */
+export const RING_HOLE_WASHER_DIAMETER_MM = 5;
 
 /** Manual per-template hole offset nudge (Template.holeOffset* columns) is clamped to this range, in mm. */
 export const MAX_LAYOUT_OFFSET_MM = 15;
@@ -94,3 +116,17 @@ export const SEAM_CLOSE_MM = 3.0;
  */
 export const FIDUCIAL_DIAMETER_MM = 5;
 export const FIDUCIAL_RADIUS_MM = FIDUCIAL_DIAMETER_MM / 2;
+
+/**
+ * Receipt-code label printed beneath each item (lib/staging-transform.ts's
+ * getReceiptLabelY), sized and positioned to stay entirely inside the
+ * ITEM_PADDING_MM waste band between two neighboring items — never inside
+ * either item's own cut-line, never crossing into the next one's. Sized
+ * against a worst-case font (tall ascender/descender, since the label font
+ * is whatever arbitrary TTF/OTF an admin uploaded for that template, not a
+ * fixed system font): RECEIPT_LABEL_BOTTOM_CLEARANCE_MM reserves room below
+ * the text baseline for descenders plus a safety margin before the next
+ * item's edge.
+ */
+export const RECEIPT_LABEL_FONT_SIZE_MM = 1.8;
+export const RECEIPT_LABEL_BOTTOM_CLEARANCE_MM = 1.5;

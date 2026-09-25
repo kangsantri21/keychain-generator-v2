@@ -15,12 +15,13 @@ import {
 } from "@/lib/laser-outline";
 import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg-server";
-import type { Template } from "@/lib/db/schema";
+import type { Template, HoleOverride } from "@/lib/db/schema";
 import type { KeychainRender } from "@/lib/render-types";
 import {
   MARGIN_MM,
   RING_HOLE_OFFSET_MM,
   RING_HOLE_DIAMETER_MM,
+  RING_HOLE_WASHER_DIAMETER_MM,
   DILATE_MM,
   ERODE_MM,
   SEAM_CLOSE_MM,
@@ -141,7 +142,8 @@ function renderKeychainTextScaled(
   assets: TemplateAssets,
   template: Template,
   text: string,
-  textSqueezeX: number
+  textSqueezeX: number,
+  holeOverride: HoleOverride | null
 ): ScaledRenderResult {
   const sampleText = text.trim() || template.defaultText || "Nama";
 
@@ -296,26 +298,26 @@ function renderKeychainTextScaled(
     outlinePath = computeLaserOutlineClipper(shapesForOutline, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
   }
 
-  // The ring hole normally sits at a fixed offset from the item's top-left
-  // corner, which is safe for the plain-square character box but can miss a
-  // designer's non-square/non-convex silhouette entirely (a fixed corner
-  // point may fall in a concavity - an armpit, a gap between limbs - that
-  // isn't actually part of the cut shape). A manual per-template nudge (mm)
-  // shifts the preferred spot first - e.g. pulling it inward from an edge
-  // that's prone to snapping off - then the search below still guarantees
-  // whatever we land on is genuinely inside the welded outline. Products
-  // that don't hang from a ring at all (e.g. flat stick-on acrylic pins) opt
-  // out via template.hasHole - skip the search entirely and return no hole
-  // path, rather than computing one nobody asked for.
+  // Character templates: the ring hole sits at a fixed offset from the
+  // item's top-left corner, which is safe for the plain-square character box
+  // but can miss a designer's non-square/non-convex silhouette entirely (a
+  // fixed corner point may fall in a concavity - an armpit, a gap between
+  // limbs - that isn't actually part of the cut shape). A manual per-template
+  // nudge (mm) shifts the preferred spot first - e.g. pulling it inward from
+  // an edge that's prone to snapping off - then the search below still
+  // guarantees whatever we land on is genuinely inside the welded outline.
+  // Products that don't hang from a ring at all (e.g. flat stick-on acrylic
+  // pins) opt out via template.hasHole - skip entirely rather than computing
+  // a hole nobody asked for.
   let holePath: string | null = null;
-  if (template.hasHole) {
+  if (template.hasHole && template.isCharacter) {
+    const baseBounds = characterBounds ?? { x: marginMm, y: marginMm, width: charBoxMm, height: charBoxMm };
     const nominalHoleCenter = {
-      x: marginMm + ringHoleOffsetMm + holeOffsetX,
-      y: marginMm + ringHoleOffsetMm + holeOffsetY,
+      x: baseBounds.x + ringHoleOffsetMm + holeOffsetX + (holeOverride?.x ?? 0),
+      y: marginMm + ringHoleOffsetMm + holeOffsetY + (holeOverride?.y ?? 0),
     };
     let holeCenter = nominalHoleCenter;
-    if (template.isCharacter && outlinePath) {
-      const baseBounds = characterBounds ?? { x: marginMm, y: marginMm, width: charBoxMm, height: charBoxMm };
+    if (outlinePath) {
       const searchBounds = unionBounds(baseBounds, {
         x: nominalHoleCenter.x - RING_HOLE_DIAMETER_MM,
         y: nominalHoleCenter.y - RING_HOLE_DIAMETER_MM,
@@ -329,6 +331,75 @@ function renderKeychainTextScaled(
       );
       if (found) holeCenter = found;
     }
+    holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
+  } else if (template.hasHole) {
+    // Text-only ("Custom Nama") ring-hole pipeline - deterministic geometry
+    // per owner spec (2026-09-25), replacing a fixed-corner offset +
+    // best-effort relocation search (which never even ran for this branch
+    // before) with a fully computed placement:
+    //   1. Text -> path: `textSegments` above (already squeezed/positioned).
+    //   2. Contour (offset): `outlinePath` above IS this contour - a plain
+    //      dilate/erode over every glyph, already computed a few lines up.
+    //   3. Bounding box FROM THE CONTOUR, not the raw glyph bbox: a letter's
+    //      dilated left edge depends on that letter's own shape (straight
+    //      "B" vs slanted "A" vs curved "J"), so anchoring to the
+    //      pre-dilation glyph bbox (the old approach) drifted off the mark
+    //      name to name - that's the actual QA-reported bug.
+    //   4. X = the contour's own leftmost point minus template.holeOffsetX
+    //      ("Jarak Lubang (mm)" in the Custom Nama template form - now the
+    //      one surviving manual control for this template type, replacing
+    //      the old X/Y sliders). Y follows the vertical midpoint of the
+    //      FIRST LETTER's own contour specifically - not the whole name's,
+    //      which a taller/shorter later letter could skew away from where
+    //      the first letter actually sits.
+    //   5. Union: weld a RING_HOLE_WASHER_DIAMETER_MM washer - strictly
+    //      bigger than the RING_HOLE_DIAMETER_MM hole drilled out of its
+    //      center below - onto the text contour, so the hole area is made
+    //      solid rather than merely hoped to already be solid. Reassigning
+    //      `outlinePath` itself (not just computing holePath) is
+    //      deliberate: everything downstream (the item's reported width/
+    //      height fed to the nesting packer, the normalized bounds every
+    //      other path below gets shifted against) must already account for
+    //      the washer's protrusion, the same way the character branch's own
+    //      weld above does for its text.
+    const firstGlyphContour = textSegments[0]
+      ? computeLaserOutlineClipper([textSegments[0].d], { dilateMm: DILATE_MM, erodeMm: ERODE_MM })
+      : null;
+    const firstGlyphBounds = firstGlyphContour ? getPathBounds(firstGlyphContour) : null;
+    const outlineBounds = outlinePath ? getPathBounds(outlinePath) : null;
+
+    const minX = outlineBounds?.x ?? marginMm;
+    const midY = firstGlyphBounds
+      ? firstGlyphBounds.y + firstGlyphBounds.height / 2
+      : (outlineBounds ? outlineBounds.y + outlineBounds.height / 2 : marginMm + textRawHeightMm / 2);
+
+    // A-Z Letter Mapping (owner spec, 2026-09-25): the geometric midY above
+    // is a plain vertical center of the first letter's own dilated contour,
+    // which on bubble/script fonts doesn't land on that letterform's actual
+    // visual weight - "J"'s descending tail, "A"'s wide diagonal legs, "V"'s
+    // point all pull the true "balanced" hole spot away from a bounding
+    // box's geometric middle. Rather than trying to detect that
+    // automatically per font, the admin corrects it once per letter per
+    // template (Template.letterOffsets, lib/db/schema.ts) and every future
+    // name starting with that letter reuses the same fix.
+    const firstLetterKey = sampleText.trim().charAt(0).toUpperCase();
+    const letterOffset = template.letterOffsets?.[firstLetterKey] ?? null;
+
+    const holeCenter = {
+      x: minX - holeOffsetX + (letterOffset?.x ?? 0) + (holeOverride?.x ?? 0),
+      y: midY + (letterOffset?.y ?? 0) + (holeOverride?.y ?? 0),
+    };
+
+    const washer = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_WASHER_DIAMETER_MM / 2);
+    const welded = outlinePath ? unionOutlines([outlinePath, washer]) : washer;
+    // Same rationale as the character branch's own seam-close pass above: a
+    // plain union of two shapes that only just touch (or barely overlap)
+    // leaves a sharp, narrow concave notch at the seam - a fragile neck once
+    // laser-cut, even though it's already topologically one piece.
+    outlinePath = welded
+      ? (computeLaserOutlineClipper([welded], { dilateMm: SEAM_CLOSE_MM, erodeMm: SEAM_CLOSE_MM }) ?? welded)
+      : outlinePath;
+
     holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
   }
 
@@ -415,10 +486,11 @@ const MIN_TEXT_SQUEEZE_X = 0.05;
 export function renderKeychainText(
   assets: TemplateAssets,
   template: Template,
-  text: string
+  text: string,
+  holeOverride: HoleOverride | null = null
 ): KeychainRender {
   let textSqueezeX = 1;
-  let { render, rawTextWidthMm } = renderKeychainTextScaled(assets, template, text, textSqueezeX);
+  let { render, rawTextWidthMm } = renderKeychainTextScaled(assets, template, text, textSqueezeX, holeOverride);
 
   for (
     let i = 0;
@@ -429,7 +501,7 @@ export function renderKeychainText(
     const fixedPortionMm = render.width - currentTextWidthMm;
     const availableForTextMm = MAX_ITEM_WIDTH_MM - fixedPortionMm;
     textSqueezeX = Math.max(MIN_TEXT_SQUEEZE_X, availableForTextMm / rawTextWidthMm);
-    ({ render, rawTextWidthMm } = renderKeychainTextScaled(assets, template, text, textSqueezeX));
+    ({ render, rawTextWidthMm } = renderKeychainTextScaled(assets, template, text, textSqueezeX, holeOverride));
   }
 
   return render;

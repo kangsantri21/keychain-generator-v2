@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, inArray, ne } from "drizzle-orm";
+import { eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { orders, orderItems, templates, type NewOrderItem, type Template } from "@/lib/db/schema";
+import { orders, orderItems, templates, type NewOrderItem, type Template, type HoleOverride } from "@/lib/db/schema";
 import { isUniqueConstraintError } from "@/lib/template-files";
 
 function badRequest(message: string, status = 400) {
@@ -16,6 +16,7 @@ interface OrderItemPayload {
   names: string[];
   variant: "keychain" | "pin";
   thumbnailPath: string | null;
+  holeOverrides: Record<number, HoleOverride> | null;
 }
 
 interface OrderPayload {
@@ -40,6 +41,7 @@ export async function GET() {
       quantity: orderItems.quantity,
       customerNames: orderItems.customerNames,
       variant: orderItems.variant,
+      holeOverrides: orderItems.holeOverrides,
       templateCode: templates.code,
       thumbnailPath: templates.thumbnailPath,
     })
@@ -48,8 +50,12 @@ export async function GET() {
     .leftJoin(templates, eq(orderItems.templateId, templates.id))
     // Completed orders (a whole staging sheet marked done) are done for
     // good — they no longer belong in the active Input Pesanan queue.
+    // Sorted by receipt code (then item id) so every row from the same
+    // receipt is always contiguous — the Order Queue table's own grouping
+    // and "select all in this resi" bulk-check both rely on that ordering
+    // already holding true straight out of the query.
     .where(ne(orders.status, "completed"))
-    .orderBy(desc(orders.createdAt), orders.id, orderItems.id);
+    .orderBy(orders.receiptCode, orders.id, orderItems.id);
 
   const orderMap = new Map<number, OrderPayload>();
 
@@ -76,6 +82,7 @@ export async function GET() {
         names: row.customerNames ?? [],
         variant: row.variant ?? "keychain",
         thumbnailPath: row.thumbnailPath,
+        holeOverrides: row.holeOverrides ?? null,
       });
     }
   }

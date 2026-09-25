@@ -1,4 +1,4 @@
-import type { Template } from "@/lib/db/schema";
+import type { Template, HoleOverride } from "@/lib/db/schema";
 import type { TemplateAssets } from "@/lib/keychain-render";
 import type { KeychainRender } from "@/lib/render-types";
 import { renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
@@ -69,7 +69,8 @@ import { MAX_ITEM_WIDTH_MM, RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@
 export function renderFixedShapeTemplate(
   assets: TemplateAssets,
   template: Template,
-  text: string
+  text: string,
+  holeOverride: HoleOverride | null = null
 ): KeychainRender {
   const vector = assets.characterVector;
   if (!vector) {
@@ -137,8 +138,8 @@ export function renderFixedShapeTemplate(
   let holePath: string | null = null;
   if (template.hasHole) {
     const nominalHoleCenter = {
-      x: scaledNativeBounds.x + RING_HOLE_OFFSET_MM + template.holeOffsetX,
-      y: scaledNativeBounds.y + RING_HOLE_OFFSET_MM + template.holeOffsetY,
+      x: scaledNativeBounds.x + RING_HOLE_OFFSET_MM + template.holeOffsetX + (holeOverride?.x ?? 0),
+      y: scaledNativeBounds.y + RING_HOLE_OFFSET_MM + template.holeOffsetY + (holeOverride?.y ?? 0),
     };
     let holeCenter = nominalHoleCenter;
     if (outlinePathScaled) {

@@ -32,6 +32,12 @@ export const PAGE_ROUTES: Record<PageKey, string> = {
 /** One template+names line within a receipt (mirrors an order_items row). */
 export type OrderItemVariant = "keychain" | "pin";
 
+/** Manual ring-hole nudge (mm), on top of the automatic placement — see lib/keychain-render.ts. */
+export interface HoleOverride {
+  x: number;
+  y: number;
+}
+
 export interface OrderQueueLineItem {
   id: number;
   templateId: number;
@@ -40,6 +46,8 @@ export interface OrderQueueLineItem {
   names: string[];
   variant: OrderItemVariant;
   thumbnailPath: string | null;
+  /** Keyed by index into `names` — see app/api/order-items/[itemId]/hole-override/route.ts. */
+  holeOverrides: Record<number, HoleOverride> | null;
 }
 
 /** One receipt (order header) with its nested template line items. */

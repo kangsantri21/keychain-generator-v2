@@ -1,4 +1,4 @@
-import { ITEM_PADDING_MM } from "@/lib/keychain-geometry";
+import { ITEM_PADDING_MM, RECEIPT_LABEL_BOTTOM_CLEARANCE_MM } from "@/lib/keychain-geometry";
 import type { StagingItemPayload } from "@/lib/staging-types";
 
 /**
@@ -38,17 +38,24 @@ export function getContentSize(
 }
 
 /**
- * Y coordinate (in the item's own local space) for the receipt-code label
- * drawn beneath each item on the print sheet — placed just past the
- * content's own bottom edge, never inside it. The item's stored width/height
- * IS the outline's own tight bounding box (lib/keychain-render.ts normalizes
- * every outline so it touches all four edges of that box), so a label
- * positioned *inside* near the bottom-left corner (the old behavior) could
- * collide with the red cut-line for any item whose silhouette runs close to
- * that corner. ITEM_PADDING_MM is the same real gap the packer already
- * keeps between neighboring items (lib/nesting.ts), so the label sits in
- * that existing clearance instead of claiming any new space.
+ * Y coordinate (baseline, in the item's own local space) for the
+ * receipt-code label drawn beneath each item on the print sheet — placed
+ * inside the ITEM_PADDING_MM waste/gap band below the item's own bottom
+ * edge, never inside the item itself. The item's stored width/height IS the
+ * outline's own tight bounding box (lib/keychain-render.ts normalizes every
+ * outline so it touches all four edges of that box), so a label positioned
+ * *inside* near the bottom-left corner (the old behavior) could collide with
+ * the red cut-line for any item whose silhouette runs close to that corner.
+ *
+ * Pulling the baseline up from the bottom of that band by
+ * RECEIPT_LABEL_BOTTOM_CLEARANCE_MM (rather than sitting it right on the
+ * band's own lower edge) reserves room for the label font's descenders —
+ * without it, the *previous* 2mm-padding version of this function put the
+ * baseline exactly on the boundary, so a 2.5mm font's glyphs unavoidably
+ * bled past that boundary into the next item's cut-line (font height alone
+ * exceeded the entire gap). See ITEM_PADDING_MM/RECEIPT_LABEL_FONT_SIZE_MM's
+ * own doc comments (lib/keychain-geometry.ts) for the full reasoning.
  */
 export function getReceiptLabelY(item: Pick<StagingItemPayload, "width" | "height" | "rotated">): number {
-  return getContentSize(item).height + ITEM_PADDING_MM;
+  return getContentSize(item).height + ITEM_PADDING_MM - RECEIPT_LABEL_BOTTOM_CLEARANCE_MM;
 }

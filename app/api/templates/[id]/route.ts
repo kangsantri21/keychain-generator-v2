@@ -20,6 +20,8 @@ import {
   parseLayoutMode,
   parseCustomZones,
   isValidCustomZones,
+  parseLetterOffsets,
+  isValidLetterOffsets,
   parseTargetHeight,
   parseDynamicGapX,
   parseDynamicOffsetY,
@@ -151,6 +153,19 @@ export async function PUT(
       return badRequest("Data zona kustomisasi tidak valid");
     }
     customZones = parsed;
+  }
+
+  const letterOffsetsRaw = formData.get("letterOffsets") as string | null;
+  let letterOffsets = existing.letterOffsets;
+  if (letterOffsetsRaw) {
+    const parsed = parseLetterOffsets(letterOffsetsRaw);
+    if (parsed === null) {
+      return badRequest("Data kustomisasi lubang A-Z tidak valid (bukan JSON yang benar)");
+    }
+    if (!isValidLetterOffsets(parsed)) {
+      return badRequest("Data kustomisasi lubang A-Z tidak valid");
+    }
+    letterOffsets = Object.keys(parsed).length > 0 ? parsed : null;
   }
 
   if (!code) {
@@ -286,6 +301,7 @@ export async function PUT(
         textOffsetY,
         layoutMode,
         customZones,
+        letterOffsets,
         charTargetHeight,
         textTargetHeight,
         dynamicGapX,

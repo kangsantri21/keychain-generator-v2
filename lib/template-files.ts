@@ -107,6 +107,31 @@ export function parseCustomZones(raw: string | null): unknown {
   }
 }
 
+/** Parses a JSON-encoded letterOffsets field from form data; returns null on missing/invalid JSON. */
+export function parseLetterOffsets(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+const LETTER_KEY_PATTERN = /^[A-Z]$/;
+
+export function isValidLetterOffsets(value: unknown): value is Record<string, { x?: number; y?: number }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  return Object.entries(value as Record<string, unknown>).every(([letter, offset]) => {
+    if (!LETTER_KEY_PATTERN.test(letter)) return false;
+    if (!offset || typeof offset !== "object") return false;
+    const o = offset as Record<string, unknown>;
+    const validAxis = (n: unknown) =>
+      n === undefined || (typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= MAX_LAYOUT_OFFSET_MM);
+    return validAxis(o.x) && validAxis(o.y);
+  });
+}
+
 export function isValidCustomZones(value: unknown): value is CustomZone[] {
   if (!Array.isArray(value)) return false;
   return value.every((zone) => {

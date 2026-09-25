@@ -24,6 +24,12 @@ export interface CustomZone {
   type: "text" | "image";
 }
 
+/** A single per-letter ring-hole nudge (mm), keyed by uppercase A-Z — see Template.letterOffsets below. */
+export interface LetterOffset {
+  x?: number;
+  y?: number;
+}
+
 export const templates = sqliteTable("templates", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   code: text("code").notNull().unique(),
@@ -59,6 +65,17 @@ export const templates = sqliteTable("templates", {
   holeOffsetY: real("hole_offset_y").notNull().default(0),
   textOffsetX: real("text_offset_x").notNull().default(0),
   textOffsetY: real("text_offset_y").notNull().default(0),
+  // Text-only ("Custom Nama") ring-hole pipeline only (lib/keychain-
+  // render.ts) — a per-letter correction on top of the automatic
+  // contour-anchored placement (minX/midY), keyed by the rendered name's
+  // own first letter, uppercased. Added because the automatic midY (the
+  // first letter's own dilated contour, vertically centered) still landed
+  // visually low on bubble/script fonts, whose glyph bounding boxes for
+  // letters like "J"/"A"/"V" aren't centered around the letterform's own
+  // visual weight (a tail, a diagonal stroke) the way a geometric midpoint
+  // assumes. Null/missing letter key = no correction, use the fully
+  // automatic (minX, midY) placement as-is.
+  letterOffsets: text("letter_offsets", { mode: "json" }).$type<Record<string, LetterOffset> | null>(),
   // "dynamic"-only production spec: the *finished* (post-clipper) cutting
   // height, in mm, each node is independently scaled to hit — see
   // lib/keychain-render.ts. Replaces the old single shared TEXT_CUT_HEIGHT_MM
@@ -128,6 +145,12 @@ export const printBatches = sqliteTable("print_batches", {
 export type PrintBatch = typeof printBatches.$inferSelect;
 export type NewPrintBatch = typeof printBatches.$inferInsert;
 
+/** A single manual ring-hole nudge (mm), on top of whatever the automatic dynamic-anchor placement already computed — see lib/keychain-render.ts. */
+export interface HoleOverride {
+  x: number;
+  y: number;
+}
+
 // Detail: a receipt can bundle several templates, each with its own names.
 export const orderItems = sqliteTable("order_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -151,6 +174,16 @@ export const orderItems = sqliteTable("order_items", {
   // this points at whichever batch locked it MOST RECENTLY — layoutData on
   // printBatches remains the actual source of truth for what's in a batch.
   batchId: integer("batch_id").references(() => printBatches.id),
+  // Per-name manual ring-hole nudge, keyed by index into customerNames — set
+  // via the Order Queue's "Edit Lubang" modal for one troublesome name whose
+  // particular glyph shapes still leave the fully-automatic dynamic-anchor
+  // placement (lib/keychain-render.ts) somewhere visually awkward. Missing
+  // key (or null) = no override, use the automatic placement as-is. Only
+  // editable while the parent order is still "pending" (see
+  // app/api/order-items/[itemId]/hole-override/route.ts) — snapshotted onto
+  // stagingItems.holeOverrideX/Y at nest/append time so a later edit here
+  // can never retroactively perturb a layout already sent to an operator.
+  holeOverrides: text("hole_overrides", { mode: "json" }).$type<Record<number, HoleOverride> | null>(),
 });
 
 export type OrderItem = typeof orderItems.$inferSelect;
@@ -178,6 +211,14 @@ export const stagingItems = sqliteTable("staging_items", {
   rotated: integer("rotated", { mode: "boolean" }).notNull().default(false),
   status: text("status").notNull().default("staged"),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
+  // Frozen snapshot of orderItems.holeOverrides[nameIndex] at the moment
+  // this unit was nested (app/api/staging/nest/route.ts and .../append/
+  // route.ts) — null when no override was set for that name. Read back by
+  // GET /api/staging (and therefore DXF/print export) instead of the live
+  // orderItems row, so a later edit to the order can never silently move a
+  // hole on something already staged.
+  holeOverrideX: real("hole_override_x"),
+  holeOverrideY: real("hole_override_y"),
 });
 
 export type StagingItem = typeof stagingItems.$inferSelect;

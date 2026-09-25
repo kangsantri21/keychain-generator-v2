@@ -195,6 +195,17 @@ class Sheet {
     this.freeRects = [{ x: border, y: border, width: usableWidth, height: usableHeight }];
   }
 
+  /** Removes `used` (already expanded to include any trailing padding) from every free rect, splitting/pruning as needed. */
+  private carve(used: Rect): void {
+    const next: Rect[] = [];
+    for (const free of this.freeRects) {
+      const pieces = splitFreeRect(free, used);
+      if (pieces.length === 0) next.push(free);
+      else next.push(...pieces);
+    }
+    this.freeRects = pruneFreeRects(next);
+  }
+
   /** Places width x height (plus padding reserved around it) if it fits anywhere; returns the placed (unpadded) rect, or null. */
   place(width: number, height: number, padding: number, allowRotation: boolean): PlacementCandidate | null {
     const node = findBestNode(this.freeRects, width + padding, height + padding, allowRotation);
@@ -211,17 +222,22 @@ class Sheet {
       height: node.height - padding,
       rotated: node.rotated,
     };
-    const usedForSplit: Rect = { x: node.x, y: node.y, width: node.width, height: node.height };
-
-    const next: Rect[] = [];
-    for (const free of this.freeRects) {
-      const pieces = splitFreeRect(free, usedForSplit);
-      if (pieces.length === 0) next.push(free);
-      else next.push(...pieces);
-    }
-    this.freeRects = pruneFreeRects(next);
+    this.carve({ x: node.x, y: node.y, width: node.width, height: node.height });
 
     return placed;
+  }
+
+  /**
+   * Removes the space occupied by an already-placed item — plus the same
+   * trailing padding buffer `place()` would have reserved for it — from this
+   * (otherwise fresh) sheet's free-rect list, without emitting a new
+   * placement. Used to "replay" a sheet's existing occupied footprint before
+   * appending more items into whatever room is left (see
+   * `packIntoExistingSheet` below), so an appended item can never land on
+   * top of, or closer than `padding` to, something already there.
+   */
+  reserve(rect: Rect, padding: number): void {
+    this.carve({ x: rect.x, y: rect.y, width: rect.width + padding, height: rect.height + padding });
   }
 }
 
@@ -277,4 +293,75 @@ export function packMaxRects<T>(
   }
 
   return results;
+}
+
+/** An already-placed rect on the sheet being appended to — its on-sheet footprint (post-rotation, matching PackedRect.width/height's convention). */
+export interface ExistingPlacement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Fits `items` into whatever room is left on a single sheet that already
+ * holds `existing` placed rects, WITHOUT moving or re-packing any of them —
+ * the "Tambahkan ke Batch Aktif" (append-to-active-batch) feature's core:
+ * a staging sheet already sent to the operator must never have its existing
+ * layout reshuffled underneath it.
+ *
+ * Reconstructs the sheet's free-rectangle state by replaying `existing` as
+ * carved-out space (each expanded by `padding`, exactly like a real `place()`
+ * call would have left it — see `Sheet.reserve`), then packs `items`
+ * (largest-area-first, same as `packMaxRects`) into what's left of a single
+ * sheet only — never spills onto a second one, since there's no second sheet
+ * to append into here.
+ *
+ * Returns every item that fit (`fit`) and every item that didn't
+ * (`unfit`) — deliberately not a single "some items got placed" call: the
+ * caller (app/api/staging/sheets/[sheetId]/append/route.ts) treats *any*
+ * `unfit` entry as a reason to reject the whole append rather than silently
+ * committing a partial batch, so an operator never gets a batch silently
+ * missing names they explicitly selected.
+ */
+export function packIntoExistingSheet<T>(
+  existing: ExistingPlacement[],
+  items: NestableRect<T>[],
+  sheetWidth: number,
+  sheetHeight: number,
+  padding: number,
+  allowRotation: boolean
+): { fit: PackedRect<T>[]; unfit: NestableRect<T>[] } {
+  const usableWidth = sheetWidth - 2 * padding;
+  const usableHeight = sheetHeight - 2 * padding;
+
+  const sheet = new Sheet(usableWidth, usableHeight, padding);
+  for (const rect of existing) {
+    sheet.reserve(rect, padding);
+  }
+
+  const sorted = items.slice().sort((a, b) => b.width * b.height - a.width * a.height);
+
+  const fit: PackedRect<T>[] = [];
+  const unfit: NestableRect<T>[] = [];
+
+  for (const item of sorted) {
+    const fitsAtAll =
+      (item.width <= usableWidth && item.height <= usableHeight) ||
+      (allowRotation && item.height <= usableWidth && item.width <= usableHeight);
+    if (!fitsAtAll) {
+      unfit.push(item);
+      continue;
+    }
+
+    const placement = sheet.place(item.width, item.height, padding, allowRotation);
+    if (!placement) {
+      unfit.push(item);
+      continue;
+    }
+
+    fit.push({ ...placement, sheetIndex: 0, data: item.data });
+  }
+
+  return { fit, unfit };
 }

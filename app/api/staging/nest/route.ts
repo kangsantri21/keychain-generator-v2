@@ -1,41 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { orders, orderItems, templates, stagingItems, type NewStagingItem } from "@/lib/db/schema";
+import { orders, orderItems, templates, stagingItems, type NewStagingItem, type HoleOverride } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_MM } from "@/lib/keychain-geometry";
+import { parseSelections } from "@/lib/staging-selection";
 
 interface PackData {
   orderId: number;
   templateId: number;
   customerName: string;
-}
-
-/**
- * A "selection" identifies one customer name within one order item, as
- * `"<orderItemId>:<nameIndex>"` — the same rowId the Order Queue dashboard
- * (app/order-queue/page.tsx) uses for its per-name checkboxes, so the client
- * can send it straight through with no extra mapping.
- */
-function parseSelections(raw: unknown): Map<number, Set<number>> {
-  const byItem = new Map<number, Set<number>>();
-  if (!Array.isArray(raw)) return byItem;
-
-  for (const entry of raw) {
-    if (typeof entry !== "string") continue;
-    const [itemIdRaw, indexRaw] = entry.split(":");
-    const itemId = Number(itemIdRaw);
-    const nameIndex = Number(indexRaw);
-    if (!Number.isInteger(itemId) || !Number.isInteger(nameIndex) || nameIndex < 0) continue;
-
-    const indexes = byItem.get(itemId) ?? new Set<number>();
-    indexes.add(nameIndex);
-    byItem.set(itemId, indexes);
-  }
-
-  return byItem;
+  holeOverride: HoleOverride | null;
 }
 
 export async function POST(request: NextRequest) {
@@ -104,8 +81,9 @@ export async function POST(request: NextRequest) {
       if (!name) continue;
 
       try {
-        const rendered = renderTemplateItem(assets, template, name);
-        const data: PackData = { orderId: item.orderId, templateId: template.id, customerName: name };
+        const holeOverride = item.holeOverrides?.[nameIndex] ?? null;
+        const rendered = renderTemplateItem(assets, template, name, holeOverride);
+        const data: PackData = { orderId: item.orderId, templateId: template.id, customerName: name, holeOverride };
         pendingRects.push({ width: rendered.width, height: rendered.height, data });
         successfulOrderIds.add(item.orderId);
       } catch {
@@ -147,6 +125,8 @@ export async function POST(request: NextRequest) {
     height: rect.height,
     rotated: rect.rotated,
     status: "staged",
+    holeOverrideX: rect.data.holeOverride?.x ?? null,
+    holeOverrideY: rect.data.holeOverride?.y ?? null,
   }));
 
   await db.insert(stagingItems).values(rows);

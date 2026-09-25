@@ -46,6 +46,8 @@ export async function GET(request: NextRequest) {
       height: stagingItems.height,
       rotated: stagingItems.rotated,
       status: stagingItems.status,
+      holeOverrideX: stagingItems.holeOverrideX,
+      holeOverrideY: stagingItems.holeOverrideY,
       order: orders,
       template: templates,
     })
@@ -69,7 +71,11 @@ export async function GET(request: NextRequest) {
       }
       if (assets) {
         try {
-          render = renderTemplateItem(assets, row.template, row.customerName);
+          const holeOverride =
+            row.holeOverrideX !== null && row.holeOverrideY !== null
+              ? { x: row.holeOverrideX, y: row.holeOverrideY }
+              : null;
+          render = renderTemplateItem(assets, row.template, row.customerName, holeOverride);
         } catch {
           render = null;
         }
