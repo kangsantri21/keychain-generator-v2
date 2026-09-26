@@ -5,6 +5,7 @@ import { orders, orderItems, templates, stagingItems, type NewStagingItem, type 
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
+import { runGroupedNesting, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
@@ -92,7 +93,58 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // MaxRects packing with Bottom-Left (top-left gravity) scoring (lib/
+  // GROUPED_V2 (Phase 2A, dry-run only): explicit opt-in via body.mode,
+  // defaulting to LEGACY_FLAT below for every existing/unmodified caller
+  // (Order Queue's own fetch never sends `mode`, so its behavior is
+  // unchanged). Deliberately returns the computed layout as JSON WITHOUT
+  // writing to stagingItems or touching order status — Phase 2A's own
+  // scope is proving grouped nesting computes a correct, non-overlapping,
+  // order-adjacent layout, not yet wiring it into the real production
+  // pipeline (see lib/nesting/grouped-nesting.ts's own top doc comment).
+  if (body?.mode === "grouped-v2") {
+    const groupedItems: GroupedNestingItem<PackData>[] = pendingRects.map((rect, index) => ({
+      id: index,
+      orderId: rect.data.orderId,
+      width: rect.width,
+      height: rect.height,
+      originalWidth: rect.width,
+      originalHeight: rect.height,
+      allowRotation: true,
+      data: rect.data,
+    }));
+
+    const result = runGroupedNesting(groupedItems);
+
+    return NextResponse.json({
+      mode: "grouped-v2",
+      dryRun: true,
+      groups: result.groups.map((group) => ({
+        orderId: group.orderId,
+        x: group.x,
+        y: group.y,
+        width: group.width,
+        height: group.height,
+        itemCount: group.items.length,
+      })),
+      items: result.items.map((item) => ({
+        orderId: item.orderId,
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+        rotated: item.rotated,
+        groupX: item.groupX,
+        groupY: item.groupY,
+        customerName: item.data.customerName,
+        templateId: item.data.templateId,
+      })),
+      metrics: result.metrics,
+      warnings: result.warnings,
+      unfitCount: result.unfit.length,
+    });
+  }
+
+  // LEGACY_FLAT (default): MaxRects packing with Bottom-Left (top-left gravity) scoring (lib/
   // nesting.ts): real free-rectangle tracking, not fixed-height shelf rows —
   // items settle as close to the sheet's top-left as possible, filling the
   // leftover space under shorter neighbors even when a rotated item makes

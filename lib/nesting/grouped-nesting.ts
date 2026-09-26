@@ -1,0 +1,355 @@
+/**
+ * Grouped Nesting V2 — Phase 2A core foundation.
+ *
+ * Fixes the audit's central finding (see PHASE 1 report): the legacy engine
+ * (../nesting.ts's `packMaxRects`) receives `orderId` as opaque `data` it
+ * never reads, and sorts every item by area alone — so items from
+ * different resi end up interleaved on the sheet with nothing enforcing
+ * adjacency. This module makes `orderId` a first-class grouping key
+ * instead: every item is grouped by order FIRST (`groupItemsByOrder`),
+ * each order's items are packed into one compact local "candidate"
+ * (`packOrderGroup` — the INNER pack), then every order's candidate is
+ * treated as a single rectangle and packed onto the real sheet
+ * (`packGroupsOntoSheet` — the OUTER pack). Items from the same order can
+ * therefore never end up split across the sheet with another order's items
+ * wedged between them.
+ *
+ * Deliberately reuses the legacy `packMaxRects` as an unmodified black box
+ * for BOTH the inner and outer pack — per the audit, `packMaxRects` is also
+ * called directly by the "Bahan Mahar" module
+ * (app/mahar-nesting/page.tsx), so its signature/behavior must not change;
+ * calling it (not editing it) carries zero risk to that module or to the
+ * legacy keychain flow, which keeps using it exactly as before.
+ *
+ * Phase 2A scope (see the PHASE 2A instructions this module was built
+ * against for the full list): ONE deterministic candidate per order (no
+ * multi-candidate optimization), rectangle-only outer packing (no group
+ * rotation, no true-shape/polygon nesting), no per-item OR per-group
+ * receipt-label rendering, no persistence wiring — this module is a pure,
+ * standalone computation with no I/O and no side effects.
+ */
+import { packMaxRects, type NestableRect } from "@/lib/nesting";
+import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "./grouped-nesting-config";
+import type {
+  GroupedNestingItem,
+  OrderGroup,
+  OrderLayoutCandidate,
+  GroupItemPlacement,
+  GroupPlacement,
+  GroupedPackedRect,
+  GroupedNestingMetrics,
+  GroupedNestingResult,
+} from "./grouped-nesting-types";
+
+export type {
+  GroupedNestingItem,
+  OrderGroup,
+  OrderLayoutCandidate,
+  GroupItemPlacement,
+  GroupPlacement,
+  GroupedPackedRect,
+  GroupedNestingMetrics,
+  GroupedNestingResult,
+} from "./grouped-nesting-types";
+
+export interface GroupedNestingConfig {
+  sheetWidth: number;
+  sheetHeight: number;
+  partGapMm: number;
+  orderGapMm: number;
+  sheetMarginMm: number;
+}
+
+export type GroupedNestingConfigOverrides = Partial<GroupedNestingConfig>;
+
+function resolveConfig(overrides: GroupedNestingConfigOverrides): GroupedNestingConfig {
+  return {
+    sheetWidth: overrides.sheetWidth ?? SHEET_WIDTH_MM,
+    sheetHeight: overrides.sheetHeight ?? SHEET_HEIGHT_MM,
+    partGapMm: overrides.partGapMm ?? PART_GAP_MM,
+    orderGapMm: overrides.orderGapMm ?? ORDER_GAP_MM,
+    sheetMarginMm: overrides.sheetMarginMm ?? SHEET_MARGIN_MM,
+  };
+}
+
+/**
+ * Groups items by `orderId` — pure function, no packing happens here.
+ *
+ * An item with a missing `orderId` (`null`/`undefined`) is NEVER folded
+ * into a shared "unknown order" bucket with other such items: each becomes
+ * its own singleton group, keyed by that item's own `id`, so two orphaned
+ * items are guaranteed to end up in two different groups (and therefore
+ * never treated as if they were adjacency-related to each other). This is
+ * the explicit, non-silent behavior the audit called for — the alternative
+ * (merging every orphan into one big anonymous group) would recreate
+ * exactly the "items from unrelated things end up next to each other"
+ * problem this whole module exists to fix, just for a different case.
+ * Every orphan also produces one aggregated entry in `warnings` (not one
+ * warning per item, to avoid flooding the caller for a large batch).
+ */
+export function groupItemsByOrder<T>(items: GroupedNestingItem<T>[]): { groups: OrderGroup<T>[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const groupsByKey = new Map<string, OrderGroup<T>>();
+  let missingOrderIdCount = 0;
+
+  for (const item of items) {
+    if (item.orderId === null || item.orderId === undefined) {
+      missingOrderIdCount++;
+      const key = `missing-order-id:${String(item.id)}`;
+      groupsByKey.set(key, { orderId: null, items: [item] });
+      continue;
+    }
+
+    const key = `order:${item.orderId}`;
+    const existing = groupsByKey.get(key);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groupsByKey.set(key, { orderId: item.orderId, items: [item] });
+    }
+  }
+
+  if (missingOrderIdCount > 0) {
+    warnings.push(
+      `${missingOrderIdCount} item tanpa orderId ditemukan — masing-masing diperlakukan sebagai grup individual terpisah, TIDAK digabung satu sama lain maupun ke order manapun.`
+    );
+  }
+
+  return { groups: [...groupsByKey.values()], warnings };
+}
+
+/**
+ * Inner pack: one deterministic, compact candidate layout for a single
+ * order's items. Reuses legacy `packMaxRects` against a deliberately
+ * oversized VIRTUAL sheet (`virtualWidth`/`virtualHeight` below) so this
+ * order's items are mathematically guaranteed to fit in a single pass —
+ * even a naive single-row-or-column arrangement would fit inside that
+ * bound, so `packMaxRects` never has to spill onto a second (virtual)
+ * sheet, which would break Phase 2A's "exactly one candidate per group"
+ * contract. The candidate's own reported `width`/`height` is then
+ * normalized to a tight (0,0)-origin bounding box of whatever `packMaxRects`
+ * actually produced — NOT the oversized virtual sheet size.
+ *
+ * Rotation is all-or-nothing per group in Phase 2A: if every item in the
+ * group allows rotation, the whole group's inner pack runs with rotation
+ * enabled; if even one item disallows it, rotation is disabled for the
+ * WHOLE group's inner pack (never rotates just the items that allow it) —
+ * a deliberately conservative simplification for this phase rather than
+ * partitioning a group's own packing by per-item rotation permission.
+ *
+ * Deliberately does NOT reserve any receipt-label clearance — Phase 2A's
+ * `PART_GAP_MM` is a plain production safety gap only (see grouped-
+ * nesting-config.ts's own doc comment for why it's a different constant
+ * from legacy's label-aware `ITEM_PADDING_BOTTOM_MM`), and no label is
+ * rendered or reserved for at all at this layer.
+ */
+export function packOrderGroup<T>(
+  group: OrderGroup<T>,
+  config: GroupedNestingConfig
+): { candidate: OrderLayoutCandidate<T> | null; unfit: GroupedNestingItem<T>[] } {
+  if (group.items.length === 0) {
+    return { candidate: null, unfit: [] };
+  }
+
+  const allowRotation = group.items.every((item) => item.allowRotation);
+
+  const totalWidth = group.items.reduce((sum, item) => sum + item.width, 0);
+  const totalHeight = group.items.reduce((sum, item) => sum + item.height, 0);
+  const n = group.items.length;
+  // +n*gap: every item's own trailing gap in a naive single-row layout.
+  // +2*gap on top of that (not +1): packMaxRects's OWN usable-area
+  // computation is `virtualSize - 2*border` (border == the padding value
+  // passed in) BEFORE any item is even placed, so the virtual sheet must be
+  // oversized by that same 2*gap just to break even at zero items, in
+  // addition to the n trailing gaps the items themselves consume — a
+  // single-item group with the naive "+1" version of this formula came up
+  // exactly `gap` short of the border reservation and failed to place at
+  // all (caught by this module's own TEST C/E, see grouped-nesting.test.ts).
+  const virtualWidth = totalWidth + (n + 2) * config.partGapMm;
+  const virtualHeight = totalHeight + (n + 2) * config.partGapMm;
+
+  const rects: NestableRect<GroupedNestingItem<T>>[] = group.items.map((item) => ({
+    width: item.width,
+    height: item.height,
+    data: item,
+  }));
+
+  const packed = packMaxRects(rects, virtualWidth, virtualHeight, config.partGapMm, config.partGapMm, allowRotation);
+
+  const placedIds = new Set(packed.map((p) => p.data.id));
+  const unfit = group.items.filter((item) => !placedIds.has(item.id));
+
+  if (packed.length === 0) {
+    return { candidate: null, unfit: group.items };
+  }
+
+  // Normalize away the virtual sheet's own border inset (= config.partGapMm)
+  // so the candidate's reported size is tight against whatever was actually
+  // placed, not the artificially oversized virtual bound.
+  const minX = Math.min(...packed.map((p) => p.x));
+  const minY = Math.min(...packed.map((p) => p.y));
+  const maxX = Math.max(...packed.map((p) => p.x + p.width));
+  const maxY = Math.max(...packed.map((p) => p.y + p.height));
+
+  const placements: GroupItemPlacement<T>[] = packed.map((p) => ({
+    item: p.data,
+    x: p.x - minX,
+    y: p.y - minY,
+    width: p.width,
+    height: p.height,
+    rotated: p.rotated,
+  }));
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const itemArea = group.items.reduce((sum, item) => sum + item.originalWidth * item.originalHeight, 0);
+  const area = width * height;
+
+  const candidate: OrderLayoutCandidate<T> = {
+    candidateId: `order-${group.orderId ?? "unknown"}:${group.items.map((item) => String(item.id)).join(",")}`,
+    orderId: group.orderId,
+    width,
+    height,
+    placements,
+    metrics: {
+      area,
+      itemArea,
+      utilizationPercent: area > 0 ? (itemArea / area) * 100 : 0,
+    },
+  };
+
+  return { candidate, unfit };
+}
+
+/**
+ * Outer pack: treats every order's candidate as ONE rectangle and packs
+ * those rectangles onto the real production sheet — reuses legacy
+ * `packMaxRects` again, this time against the sheet shrunk by
+ * `2 * config.sheetMarginMm` (so the sheet's own physical border can be
+ * tuned independently of `config.orderGapMm`, the gap the SAME
+ * `packMaxRects` call reserves between neighboring group rectangles), then
+ * shifts every result back out by `sheetMarginMm` to restore real sheet
+ * coordinates. `packMaxRects`'s own multi-sheet behavior (spilling extra
+ * candidates onto `sheetIndex` 1, 2, ...) comes along for free and is
+ * exposed as-is on `GroupPlacement.sheetIndex`.
+ *
+ * Group rotation is deliberately OFF (whole-group blocks are never rotated
+ * 90° in Phase 2A) — rotating a multi-item group's bounding box would also
+ * require re-deriving every child item's relative placement, which is
+ * explicitly out of this phase's scope (see this module's top doc comment).
+ *
+ * Any candidate `packMaxRects` couldn't fit on any sheet (bigger than the
+ * usable area in either orientation) is silently dropped BY packMaxRects
+ * itself (its own documented behavior) — this function detects that by
+ * diffing input candidates against what came back, and surfaces every
+ * dropped one as `unfitCandidates` instead of letting it vanish untraced.
+ */
+export function packGroupsOntoSheet<T>(
+  candidates: OrderLayoutCandidate<T>[],
+  config: GroupedNestingConfig
+): { groups: GroupPlacement<T>[]; unfitCandidates: OrderLayoutCandidate<T>[] } {
+  if (candidates.length === 0) {
+    return { groups: [], unfitCandidates: [] };
+  }
+
+  const usableWidth = config.sheetWidth - 2 * config.sheetMarginMm;
+  const usableHeight = config.sheetHeight - 2 * config.sheetMarginMm;
+
+  const rects: NestableRect<OrderLayoutCandidate<T>>[] = candidates.map((candidate) => ({
+    width: candidate.width,
+    height: candidate.height,
+    data: candidate,
+  }));
+
+  const packed = packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false);
+
+  const placedCandidateIds = new Set(packed.map((p) => p.data.candidateId));
+  const unfitCandidates = candidates.filter((c) => !placedCandidateIds.has(c.candidateId));
+
+  const groups: GroupPlacement<T>[] = packed.map((p) => {
+    const groupX = p.x + config.sheetMarginMm;
+    const groupY = p.y + config.sheetMarginMm;
+    const candidate = p.data;
+
+    const items: GroupedPackedRect<T>[] = candidate.placements.map((placement) => ({
+      x: groupX + placement.x,
+      y: groupY + placement.y,
+      width: placement.width,
+      height: placement.height,
+      rotated: placement.rotated,
+      sheetIndex: p.sheetIndex,
+      data: placement.item.data,
+      orderId: candidate.orderId,
+      groupX,
+      groupY,
+      groupWidth: candidate.width,
+      groupHeight: candidate.height,
+    }));
+
+    return {
+      orderId: candidate.orderId,
+      x: groupX,
+      y: groupY,
+      width: candidate.width,
+      height: candidate.height,
+      rotated: p.rotated,
+      sheetIndex: p.sheetIndex,
+      candidate,
+      items,
+    };
+  });
+
+  return { groups, unfitCandidates };
+}
+
+/**
+ * Top-level entry point: group -> inner pack -> outer pack -> flatten +
+ * metrics. Pure function, no I/O, no persistence — see this module's own
+ * top doc comment for Phase 2A's deliberately narrow scope.
+ */
+export function runGroupedNesting<T>(
+  items: GroupedNestingItem<T>[],
+  overrides: GroupedNestingConfigOverrides = {}
+): GroupedNestingResult<T> {
+  const config = resolveConfig(overrides);
+
+  const { groups: orderGroups, warnings } = groupItemsByOrder(items);
+
+  const candidates: OrderLayoutCandidate<T>[] = [];
+  const unfit: GroupedNestingItem<T>[] = [];
+
+  for (const group of orderGroups) {
+    const { candidate, unfit: groupUnfit } = packOrderGroup(group, config);
+    if (candidate) candidates.push(candidate);
+    unfit.push(...groupUnfit);
+  }
+
+  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config);
+
+  for (const candidate of unfitCandidates) {
+    unfit.push(...candidate.placements.map((placement) => placement.item));
+    warnings.push(
+      `Grup order ${candidate.orderId ?? "(tanpa orderId)"} berukuran ${candidate.width.toFixed(1)}x${candidate.height.toFixed(1)}mm tidak muat di media manapun (${config.sheetWidth}x${config.sheetHeight}mm) — dilewati, bukan dipaksakan.`
+    );
+  }
+
+  const flatItems = groups.flatMap((g) => g.items);
+
+  const usedWidth = flatItems.length > 0 ? Math.max(...flatItems.map((item) => item.x + item.width)) : 0;
+  const usedHeight = flatItems.length > 0 ? Math.max(...flatItems.map((item) => item.y + item.height)) : 0;
+  const usedArea = usedWidth * usedHeight;
+  const totalItemArea = groups.reduce((sum, g) => sum + g.candidate.metrics.itemArea, 0);
+
+  const metrics: GroupedNestingMetrics = {
+    totalItems: items.length,
+    totalOrders: orderGroups.length,
+    usedWidth,
+    usedHeight,
+    usedArea,
+    totalItemArea,
+    packingUtilizationPercent: usedArea > 0 ? (totalItemArea / usedArea) * 100 : 0,
+    wastePercent: usedArea > 0 ? 100 - (totalItemArea / usedArea) * 100 : 0,
+  };
+
+  return { groups, items: flatItems, metrics, warnings, unfit };
+}
