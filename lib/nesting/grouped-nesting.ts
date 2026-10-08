@@ -351,5 +351,32 @@ export function runGroupedNesting<T>(
     wastePercent: usedArea > 0 ? 100 - (totalItemArea / usedArea) * 100 : 0,
   };
 
+  assertGroupOrderIntegrity(groups);
+
   return { groups, items: flatItems, metrics, warnings, unfit };
+}
+
+/**
+ * PHASE 2B boundary semantics guarantee: "one box = one resi/order" — every
+ * item inside a `GroupPlacement` must report that SAME group's own
+ * `orderId`, never another one's. This is already true by construction
+ * (`packGroupsOntoSheet` only ever builds a group's `items` from that same
+ * group's own `candidate.placements`, which in turn only ever came from
+ * that same order's own `packOrderGroup` call — there is no code path that
+ * could cross-assign), so this is a cheap, always-on regression guard, not
+ * a workaround for a known gap: if this ever throws, something upstream
+ * broke the one invariant this whole module exists to enforce, and that
+ * should fail loudly (a thrown error -> Next.js turns it into a 500) rather
+ * than silently ship a sheet with mixed-order groups.
+ */
+export function assertGroupOrderIntegrity<T>(groups: GroupPlacement<T>[]): void {
+  for (const group of groups) {
+    for (const item of group.items) {
+      if (item.orderId !== group.orderId) {
+        throw new Error(
+          `Grouped Nesting integrity violation: item with orderId ${item.orderId} found inside group for orderId ${group.orderId}. This must never happen — every item in a group must belong to that exact order.`
+        );
+      }
+    }
+  }
 }

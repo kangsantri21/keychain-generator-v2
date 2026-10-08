@@ -4,8 +4,10 @@ import { db } from "@/lib/db";
 import { orders, orderItems, templates, stagingItems, type NewStagingItem, type HoleOverride } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
+import type { KeychainRender } from "@/lib/render-types";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { runGroupedNesting, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
+import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
@@ -14,6 +16,15 @@ interface PackData {
   templateId: number;
   customerName: string;
   holeOverride: HoleOverride | null;
+  /**
+   * Only ever read by the GROUPED_V2 preview branch below (PHASE 2B) — the
+   * LEGACY_FLAT path already had this same value available locally as
+   * `rendered` and simply never carried it into `PackData` because nothing
+   * needed it there. Carrying it through is purely additive: legacy still
+   * only reads `.width`/`.height`/`.orderId`/etc off `rect.data`, never
+   * `.render`, so this cannot change legacy's own output in any way.
+   */
+  render: KeychainRender;
 }
 
 export async function POST(request: NextRequest) {
@@ -84,7 +95,13 @@ export async function POST(request: NextRequest) {
       try {
         const holeOverride = item.holeOverrides?.[nameIndex] ?? null;
         const rendered = renderTemplateItem(assets, template, name, holeOverride);
-        const data: PackData = { orderId: item.orderId, templateId: template.id, customerName: name, holeOverride };
+        const data: PackData = {
+          orderId: item.orderId,
+          templateId: template.id,
+          customerName: name,
+          holeOverride,
+          render: rendered,
+        };
         pendingRects.push({ width: rendered.width, height: rendered.height, data });
         successfulOrderIds.add(item.orderId);
       } catch {
@@ -93,15 +110,19 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // GROUPED_V2 (Phase 2A, dry-run only): explicit opt-in via body.mode,
-  // defaulting to LEGACY_FLAT below for every existing/unmodified caller
-  // (Order Queue's own fetch never sends `mode`, so its behavior is
-  // unchanged). Deliberately returns the computed layout as JSON WITHOUT
-  // writing to stagingItems or touching order status — Phase 2A's own
-  // scope is proving grouped nesting computes a correct, non-overlapping,
-  // order-adjacent layout, not yet wiring it into the real production
-  // pipeline (see lib/nesting/grouped-nesting.ts's own top doc comment).
-  if (body?.mode === "grouped-v2") {
+  // GROUPED_V2 (Phase 2A, dry-run only; PHASE 2B added receiptCode + full
+  // render payload per item so a client-side preview canvas can draw the
+  // real artwork without a second round-trip): explicit opt-in via
+  // body.mode, defaulting to LEGACY_FLAT below for every existing/
+  // unmodified caller (Order Queue's own default fetch never sends `mode`,
+  // so its behavior is unchanged). Deliberately returns the computed layout
+  // as JSON WITHOUT writing to stagingItems or touching order status —
+  // this phase's own scope is a VISUAL preview to compare against legacy,
+  // not yet wiring grouped nesting into the real production pipeline (see
+  // lib/nesting/grouped-nesting.ts's own top doc comment).
+  if (resolveNestingMode(body) === "grouped-v2") {
+    const receiptCodeByOrderId = new Map(parentOrders.map((order) => [order.id, order.receiptCode]));
+
     const groupedItems: GroupedNestingItem<PackData>[] = pendingRects.map((rect, index) => ({
       id: index,
       orderId: rect.data.orderId,
@@ -120,6 +141,7 @@ export async function POST(request: NextRequest) {
       dryRun: true,
       groups: result.groups.map((group) => ({
         orderId: group.orderId,
+        receiptCode: group.orderId !== null ? (receiptCodeByOrderId.get(group.orderId) ?? null) : null,
         x: group.x,
         y: group.y,
         width: group.width,
@@ -135,8 +157,11 @@ export async function POST(request: NextRequest) {
         rotated: item.rotated,
         groupX: item.groupX,
         groupY: item.groupY,
+        groupWidth: item.groupWidth,
+        groupHeight: item.groupHeight,
         customerName: item.data.customerName,
         templateId: item.data.templateId,
+        render: item.data.render,
       })),
       metrics: result.metrics,
       warnings: result.warnings,

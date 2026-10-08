@@ -3,12 +3,17 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { Search, CircleDot, Trash2 } from "lucide-react";
+import { Search, CircleDot, Trash2, X } from "lucide-react";
 import type { OrderItemVariant, OrderQueueEntry, OrderStatus, HoleOverride } from "@/lib/store/useTemplateStore";
 import type { StagingSheet } from "@/lib/staging-types";
 import type { Template } from "@/lib/db/schema";
 import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { GroupedV2PreviewCanvas } from "@/components/order-queue/GroupedV2PreviewCanvas";
+import { buildGroupedV2PreviewSheet, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
+import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "@/lib/nesting/grouped-nesting-config";
+
+type NestingMode = "legacy" | "grouped-v2-preview";
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -136,6 +141,16 @@ export default function OrderQueuePage() {
 
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ReceiptGroup | null>(null);
   const [isDeletingReceipt, setIsDeletingReceipt] = useState(false);
+
+  // PHASE 2B — dev/engineering visual validation only. `nestingMode`
+  // defaults to "legacy" so the normal user workflow (and every existing
+  // caller of handleSendToNesting/the button it drives) is completely
+  // unchanged unless someone explicitly flips this toggle. `v2Preview` is
+  // PURE CLIENT STATE, never written anywhere else — switching back to
+  // "legacy" just stops rendering it; nothing about the order/DB/Staging
+  // Area was ever touched by having it set.
+  const [nestingMode, setNestingMode] = useState<NestingMode>("legacy");
+  const [v2Preview, setV2Preview] = useState<GroupedV2PreviewSheet | null>(null);
 
   async function loadOrders() {
     const res = await fetch("/api/orders");
@@ -294,10 +309,28 @@ export default function OrderQueuePage() {
       const res = await fetch("/api/staging/nest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections: selectedRows.map((row) => row.rowId) }),
+        body: JSON.stringify(
+          nestingMode === "grouped-v2-preview"
+            ? { selections: selectedRows.map((row) => row.rowId), mode: "grouped-v2" }
+            : { selections: selectedRows.map((row) => row.rowId) }
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal mengirim ke mesin nesting");
+
+      if (nestingMode === "grouped-v2-preview") {
+        // Dry-run only (app/api/staging/nest/route.ts's grouped-v2 branch
+        // never writes to stagingItems or order status) — render inline,
+        // no navigation, nothing persisted. `v2Preview` is the only place
+        // this result lives.
+        setV2Preview(buildGroupedV2PreviewSheet(data as GroupedV2ApiResponse));
+        if (data.unfitCount > 0) {
+          toast.error(`${data.unfitCount} item tidak muat dan dilewati — lihat panel info di bawah`);
+        } else {
+          toast.success(`Preview: ${data.metrics.totalItems} item, ${data.metrics.totalOrders} grup resi`);
+        }
+        return;
+      }
 
       toast.success(`${data.items} pesanan berhasil disusun di ${data.sheets} lembar`);
       router.push("/staging-area");
@@ -368,6 +401,31 @@ export default function OrderQueuePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* PHASE 2B dev/engineering toggle — defaults to Legacy Flat; switching here never touches the DB by itself, only what happens when the button below is next clicked. */}
+            <div className="flex items-center overflow-hidden rounded-md border border-slate-300 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => {
+                  setNestingMode("legacy");
+                  setV2Preview(null);
+                }}
+                className={`px-2.5 py-2 transition-colors ${
+                  nestingMode === "legacy" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                Legacy Flat
+              </button>
+              <button
+                type="button"
+                onClick={() => setNestingMode("grouped-v2-preview")}
+                title="Alat validasi engineering — hasil tidak disimpan ke database, hanya preview di halaman ini"
+                className={`px-2.5 py-2 transition-colors ${
+                  nestingMode === "grouped-v2-preview" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                Grouped V2 Preview (Dev)
+              </button>
+            </div>
             <select
               value={targetSheetId}
               onChange={(event) => setTargetSheetId(event.target.value ? Number(event.target.value) : "")}
@@ -399,7 +457,11 @@ export default function OrderQueuePage() {
               disabled={sending}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {sending ? "Memproses..." : "Kirim ke Mesin Nesting"}
+              {sending
+                ? "Memproses..."
+                : nestingMode === "grouped-v2-preview"
+                  ? "Jalankan Preview Grouped V2"
+                  : "Kirim ke Mesin Nesting"}
             </button>
           </div>
         </div>
@@ -526,6 +588,47 @@ export default function OrderQueuePage() {
           </div>
         )}
       </div>
+
+      {v2Preview && (
+        <div className="mt-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-800">Grouped V2 Preview (Dev) — belum disimpan ke database</h2>
+            <button
+              type="button"
+              onClick={() => setV2Preview(null)}
+              className="rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              aria-label="Tutup preview"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Alat validasi engineering — bukan tampilan produksi. */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-4">
+            <span>Mode: GROUPED V2</span>
+            <span>Orders: {v2Preview.metrics.totalOrders}</span>
+            <span>Items: {v2Preview.metrics.totalItems}</span>
+            <span>Unfit: {v2Preview.unfitCount}</span>
+            <span>Used Width: {v2Preview.metrics.usedWidth.toFixed(1)} mm</span>
+            <span>Used Height: {v2Preview.metrics.usedHeight.toFixed(1)} mm</span>
+            <span>Utilization: {v2Preview.metrics.packingUtilizationPercent.toFixed(1)}%</span>
+            <span>Waste: {v2Preview.metrics.wastePercent.toFixed(1)}%</span>
+            <span>PART GAP: {PART_GAP_MM} mm</span>
+            <span>ORDER GAP: {ORDER_GAP_MM} mm</span>
+            <span>SHEET MARGIN: {SHEET_MARGIN_MM} mm</span>
+          </div>
+
+          {v2Preview.warnings.length > 0 && (
+            <ul className="flex flex-col gap-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              {v2Preview.warnings.map((warning, index) => (
+                <li key={index}>⚠ {warning}</li>
+              ))}
+            </ul>
+          )}
+
+          <GroupedV2PreviewCanvas items={v2Preview.items} groups={v2Preview.groups} />
+        </div>
+      )}
 
       {editingRow &&
         (() => {
