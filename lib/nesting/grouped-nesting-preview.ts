@@ -14,6 +14,7 @@
  * per the PHASE 2B instructions, "transform item tidak berubah".
  */
 import type { KeychainRenderPayload } from "@/lib/staging-types";
+import type { GlobalSearchStats } from "./grouped-nesting-global";
 
 export interface GroupedV2PreviewItem {
   orderId: number | null;
@@ -43,6 +44,8 @@ export interface GroupedV2PreviewGroup {
   /** PHASE 2C dev diagnostics (see `GroupedV2ApiResponse.groups`). */
   candidateCount: number;
   selectedStrategy: string;
+  /** Phase 2C's local pick — differs from `selectedStrategy` when Phase 2D chose another shape globally. */
+  localStrategy: string;
   itemArea: number;
   internalUtilizationPercent: number;
 }
@@ -62,6 +65,7 @@ export interface GroupedV2PreviewSheet {
   items: GroupedV2PreviewItem[];
   groups: GroupedV2PreviewGroup[];
   metrics: GroupedV2PreviewMetrics;
+  optimizer: GlobalSearchStats;
   warnings: string[];
   unfitCount: number;
 }
@@ -81,6 +85,8 @@ export interface GroupedV2ApiResponse {
     /** Pareto-surviving inner layouts generated for this order (PHASE 2C). */
     candidateCount: number;
     selectedStrategy: string;
+    /** Phase 2C local pick (PHASE 2D). */
+    localStrategy: string;
     /** Sum of item rectangle areas, mm². */
     itemArea: number;
     /** itemArea / (width * height) * 100. */
@@ -102,6 +108,8 @@ export interface GroupedV2ApiResponse {
     render: KeychainRenderPayload | null;
   }[];
   metrics: GroupedV2PreviewMetrics;
+  /** PHASE 2D global candidate-selection diagnostics. */
+  optimizer: GlobalSearchStats;
   warnings: string[];
   unfitCount: number;
 }
@@ -140,6 +148,7 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
     itemCount: group.itemCount,
     candidateCount: group.candidateCount,
     selectedStrategy: group.selectedStrategy,
+    localStrategy: group.localStrategy,
     itemArea: group.itemArea,
     internalUtilizationPercent: group.internalUtilizationPercent,
   }));
@@ -148,6 +157,7 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
     items,
     groups,
     metrics: response.metrics,
+    optimizer: response.optimizer,
     warnings: response.warnings,
     unfitCount: response.unfitCount,
   };

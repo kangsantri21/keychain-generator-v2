@@ -150,6 +150,7 @@ export async function POST(request: NextRequest) {
         // PHASE 2C dev diagnostics — which inner layout was picked and how much of its own box it fills.
         candidateCount: group.alternatives.length,
         selectedStrategy: group.candidate.strategy,
+        localStrategy: group.localCandidate.strategy,
         itemArea: group.candidate.metrics.itemArea,
         internalUtilizationPercent: group.candidate.metrics.utilizationPercent,
       })),
@@ -169,6 +170,7 @@ export async function POST(request: NextRequest) {
         render: item.data.render,
       })),
       metrics: result.metrics,
+      optimizer: result.optimizer,
       warnings: result.warnings,
       unfitCount: result.unfit.length,
     });

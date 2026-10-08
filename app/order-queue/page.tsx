@@ -626,6 +626,28 @@ export default function OrderQueuePage() {
             </ul>
           )}
 
+          {/* PHASE 2D dev diagnostics — did the global search beat the Phase 2C local picks? */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-4">
+            <span>Global Optimizer: {v2Preview.optimizer.strategy}</span>
+            <span>
+              Beam Width: {v2Preview.optimizer.effectiveBeamWidth}/{v2Preview.optimizer.beamWidth}
+            </span>
+            <span>
+              States Evaluated: {v2Preview.optimizer.statesEvaluated}
+              {v2Preview.optimizer.limitReached ? " (limit)" : ""}
+            </span>
+            <span>Result: {v2Preview.optimizer.usedBaseline ? "baseline 2C dipertahankan" : "optimized 2D"}</span>
+            <span>
+              Baseline Score: {v2Preview.optimizer.baselineScore.sheetCount} lembar ·{" "}
+              {v2Preview.optimizer.baselineScore.boundingArea.toFixed(0)} mm²
+            </span>
+            <span>
+              Optimized Score: {v2Preview.optimizer.optimizedScore.sheetCount} lembar ·{" "}
+              {v2Preview.optimizer.optimizedScore.boundingArea.toFixed(0)} mm²
+            </span>
+            <span>Improvement: {v2Preview.optimizer.improvementPercent.toFixed(1)}%</span>
+          </div>
+
           {/* PHASE 2C dev diagnostics — which group wastes the most of its own box. */}
           <div className="overflow-x-auto">
             <table className="w-full font-mono text-xs text-slate-600">
@@ -633,7 +655,8 @@ export default function OrderQueuePage() {
                 <tr>
                   <th className="py-1 pr-4 font-medium">Order/Resi</th>
                   <th className="py-1 pr-4 font-medium">Candidates</th>
-                  <th className="py-1 pr-4 font-medium">Selected</th>
+                  <th className="py-1 pr-4 font-medium">Local (2C)</th>
+                  <th className="py-1 pr-4 font-medium">Global (2D)</th>
                   <th className="py-1 pr-4 font-medium">Group W×H</th>
                   <th className="py-1 pr-4 font-medium">Item Area</th>
                   <th className="py-1 font-medium">Internal Util</th>
@@ -644,7 +667,11 @@ export default function OrderQueuePage() {
                   <tr key={index} className="border-t border-slate-100">
                     <td className="py-1 pr-4">{group.label}</td>
                     <td className="py-1 pr-4">{group.candidateCount}</td>
-                    <td className="py-1 pr-4">{group.selectedStrategy}</td>
+                    <td className="py-1 pr-4">{group.localStrategy}</td>
+                    <td className="py-1 pr-4">
+                      {group.selectedStrategy}
+                      {group.selectedStrategy !== group.localStrategy ? " *" : ""}
+                    </td>
                     <td className="py-1 pr-4">
                       {group.width.toFixed(1)} × {group.height.toFixed(1)} mm
                     </td>

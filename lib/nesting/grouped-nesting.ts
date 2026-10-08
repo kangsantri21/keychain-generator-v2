@@ -31,6 +31,7 @@
  */
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { generateOrderCandidates } from "./grouped-nesting-candidates";
+import { selectGlobalCandidates, DEFAULT_GLOBAL_SEARCH_LIMITS, type GlobalSearchLimits } from "./grouped-nesting-global";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "./grouped-nesting-config";
 import type {
   GroupedNestingItem,
@@ -187,7 +188,7 @@ export function packOrderGroup<T>(
 export function packGroupsOntoSheet<T>(
   candidates: OrderLayoutCandidate<T>[],
   config: GroupedNestingConfig,
-  alternativesByCandidateId: Map<string, OrderLayoutCandidate<T>[]> = new Map()
+  contextByCandidateId: Map<string, { alternatives: OrderLayoutCandidate<T>[]; local: OrderLayoutCandidate<T> }> = new Map()
 ): { groups: GroupPlacement<T>[]; unfitCandidates: OrderLayoutCandidate<T>[] } {
   if (candidates.length === 0) {
     return { groups: [], unfitCandidates: [] };
@@ -236,7 +237,8 @@ export function packGroupsOntoSheet<T>(
       rotated: p.rotated,
       sheetIndex: p.sheetIndex,
       candidate,
-      alternatives: alternativesByCandidateId.get(candidate.candidateId) ?? [candidate],
+      alternatives: contextByCandidateId.get(candidate.candidateId)?.alternatives ?? [candidate],
+      localCandidate: contextByCandidateId.get(candidate.candidateId)?.local ?? candidate,
       items,
     };
   });
@@ -251,26 +253,35 @@ export function packGroupsOntoSheet<T>(
  */
 export function runGroupedNesting<T>(
   items: GroupedNestingItem<T>[],
-  overrides: GroupedNestingConfigOverrides = {}
+  overrides: GroupedNestingConfigOverrides = {},
+  searchLimits: GlobalSearchLimits = DEFAULT_GLOBAL_SEARCH_LIMITS
 ): GroupedNestingResult<T> {
   const config = resolveConfig(overrides);
 
   const { groups: orderGroups, warnings } = groupItemsByOrder(items);
 
-  const candidates: OrderLayoutCandidate<T>[] = [];
-  const alternativesByCandidateId = new Map<string, OrderLayoutCandidate<T>[]>();
+  const orderInputs: { local: OrderLayoutCandidate<T>; alternatives: OrderLayoutCandidate<T>[] }[] = [];
+  const contextByCandidateId = new Map<string, { alternatives: OrderLayoutCandidate<T>[]; local: OrderLayoutCandidate<T> }>();
   const unfit: GroupedNestingItem<T>[] = [];
 
   for (const group of orderGroups) {
     const { candidate, candidates: alternatives, unfit: groupUnfit } = packOrderGroup(group, config);
     if (candidate) {
-      candidates.push(candidate);
-      alternativesByCandidateId.set(candidate.candidateId, alternatives);
+      const context = { local: candidate, alternatives };
+      orderInputs.push(context);
+      for (const alternative of alternatives) contextByCandidateId.set(alternative.candidateId, context);
+      contextByCandidateId.set(candidate.candidateId, context);
     }
     unfit.push(...groupUnfit);
   }
 
-  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, alternativesByCandidateId);
+  // PHASE 2D: pick one candidate per order by global outer-layout score
+  // (never worse than the Phase 2C local picks — see grouped-nesting-global.ts).
+  // `selected` keeps orderInputs' order, so packGroupsOntoSheet below packs
+  // exactly the layout the search scored.
+  const { selected: candidates, stats: optimizer } = selectGlobalCandidates(orderInputs, config, searchLimits);
+
+  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, contextByCandidateId);
 
   for (const candidate of unfitCandidates) {
     unfit.push(...candidate.placements.map((placement) => placement.item));
@@ -299,7 +310,7 @@ export function runGroupedNesting<T>(
 
   assertGroupOrderIntegrity(groups);
 
-  return { groups, items: flatItems, metrics, warnings, unfit };
+  return { groups, items: flatItems, metrics, warnings, unfit, optimizer };
 }
 
 /**

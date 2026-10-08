@@ -10,6 +10,7 @@
  * never its implementation — so nothing here can affect legacy behavior.
  */
 import type { NestableRect, PackedRect } from "@/lib/nesting";
+import type { GlobalSearchStats } from "./grouped-nesting-global";
 
 /**
  * One nestable unit going into Grouped Nesting — the "Order" (resi) it
@@ -86,6 +87,8 @@ export interface GroupPlacement<T> {
   candidate: OrderLayoutCandidate<T>;
   /** Every Pareto-surviving inner layout for this order (includes `candidate`) — kept so Phase 2D can choose by inter-order fit. */
   alternatives: OrderLayoutCandidate<T>[];
+  /** Phase 2C's independent local pick for this order — `candidate` differs from it when Phase 2D chose another shape for a better global layout. */
+  localCandidate: OrderLayoutCandidate<T>;
   /** Absolute (on-sheet) placements — `candidate.placements` shifted by (x, y) (and re-oriented if the whole group itself was rotated as a block). */
   items: GroupedPackedRect<T>[];
 }
@@ -129,4 +132,6 @@ export interface GroupedNestingResult<T> {
   warnings: string[];
   /** Items that could not be placed at all (e.g. larger than the sheet in every orientation) — never silently dropped without a trace, unlike legacy `packMaxRects`. */
   unfit: GroupedNestingItem<T>[];
+  /** PHASE 2D global candidate-selection diagnostics. */
+  optimizer: GlobalSearchStats;
 }
