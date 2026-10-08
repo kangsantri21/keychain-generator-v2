@@ -204,6 +204,7 @@ describe("PHASE 2F — recommendation rules", () => {
         edgeClearanceMm: SHEET_MARGIN_MM + orderGapMm,
         heightSavedVsDefaultMm: 200 - usedHeight,
         heightSavedVsDefaultPercent: ((200 - usedHeight) / 200) * 100,
+        sideFragmentWidth: 20,
         sheetCount: 1,
         integrity: { ok, violations: [] },
         result: { unfit: [] },

@@ -20,6 +20,8 @@ export interface GroupedV2PreviewItem {
   /** Per-request item id (PHASE 2F) — joins a benchmark scenario's positions to this item's render. */
   itemId: number | null;
   orderId: number | null;
+  /** PHASE 2G — which sheet this item is on; posX/posY are local to that sheet. */
+  sheetIndex: number;
   posX: number;
   posY: number;
   width: number;
@@ -36,6 +38,8 @@ export interface GroupedV2PreviewItem {
 
 export interface GroupedV2PreviewGroup {
   orderId: number | null;
+  /** PHASE 2G — the one sheet this whole group sits on (x/y local to it). */
+  sheetIndex: number;
   /** The ONE label this group's boundary shows — receiptCode if known, else `Order #<id>` as an explicit fallback (never both, never per-item). */
   label: string;
   x: number;
@@ -63,6 +67,47 @@ export interface GroupedV2PreviewMetrics {
   wastePercent: number;
 }
 
+/** PHASE 2G — one sheet's own metrics (coordinates of its groups are local to it). */
+export interface GroupedV2SheetMetrics {
+  sheetIndex: number;
+  width: number;
+  height: number;
+  orderCount: number;
+  itemCount: number;
+  itemArea: number;
+  usedWidth: number;
+  usedHeight: number;
+  remainingFullWidthHeight: number;
+  sideFragmentWidth: number;
+  utilizationPercent: number;
+  wastePercent: number;
+}
+
+/** PHASE 2G — totals across all sheets. */
+export interface GroupedV2Summary {
+  sheetCount: number;
+  totalOrders: number;
+  totalItems: number;
+  totalUnfitItems: number;
+  sumUsedHeight: number;
+  totalRemainingFullWidthHeight: number;
+  totalSideFragmentWidth: number;
+  totalSheetArea: number;
+  totalItemArea: number;
+  overallMaterialUtilizationPercent: number;
+  averageUsedHeight: number;
+  maxUsedHeight: number;
+  minUsedHeight: number;
+}
+
+export interface GroupedV2UnfitGroup {
+  orderId: number | null;
+  reason: "ORDER_GROUP_TOO_LARGE_FOR_SHEET";
+  width: number;
+  height: number;
+  itemCount: number;
+}
+
 /** What the preview canvas needs per group — the main sheet's groups and a benchmark scenario's groups both fit. */
 export type GroupedV2CanvasGroup = Pick<GroupedV2PreviewGroup, "label" | "x" | "y" | "width" | "height">;
 
@@ -76,9 +121,16 @@ export interface GroupedV2BenchmarkScenario {
   totalItems: number;
   unfitCount: number;
   sheetCount: number;
+  /** totalItemArea / (sheetCount * sheet area) * 100. */
+  overallMaterialUtilizationPercent: number;
+  sheets: GroupedV2SheetMetrics[];
+  /** Widest sheet. */
   usedWidth: number;
+  /** SUM of per-sheet used heights. */
   usedHeight: number;
+  /** Sum over sheets. */
   remainingFullWidthHeight: number;
+  /** Sum over sheets. */
   sideFragmentWidth: number;
   packingUtilizationPercent: number;
   wastePercent: number;
@@ -91,10 +143,11 @@ export interface GroupedV2BenchmarkScenario {
   integrity: { ok: boolean; violations: string[] };
   warnings: string[];
   elapsedMs: number | null;
-  groups: { orderId: number | null; receiptCode: string | null; x: number; y: number; width: number; height: number; itemCount: number }[];
+  groups: { orderId: number | null; sheetIndex: number; receiptCode: string | null; x: number; y: number; width: number; height: number; itemCount: number }[];
   items: {
     itemId: number | null;
     orderId: number | null;
+    sheetIndex: number;
     x: number;
     y: number;
     width: number;
@@ -124,6 +177,10 @@ export interface GroupedV2PreviewSheet {
   unfitCount: number;
   /** PHASE 2F DEV spacing benchmark — null unless the request asked for it. */
   benchmark: GroupedV2Benchmark | null;
+  /** PHASE 2G — per-sheet metrics, totals and explicit unfit reasons. */
+  sheets: GroupedV2SheetMetrics[];
+  summary: GroupedV2Summary | null;
+  unfitGroups: GroupedV2UnfitGroup[];
 }
 
 /** The exact shape `POST /api/staging/nest` returns when `mode: "grouped-v2"` (see app/api/staging/nest/route.ts). */
@@ -132,6 +189,8 @@ export interface GroupedV2ApiResponse {
   dryRun: true;
   groups: {
     orderId: number | null;
+    /** PHASE 2G; optional so older payloads still parse (treated as sheet 0). */
+    sheetIndex?: number;
     receiptCode: string | null;
     x: number;
     y: number;
@@ -152,6 +211,7 @@ export interface GroupedV2ApiResponse {
     /** PHASE 2F; optional so older payloads still parse. */
     itemId?: number | null;
     orderId: number | null;
+    sheetIndex?: number;
     x: number;
     y: number;
     width: number;
@@ -171,6 +231,9 @@ export interface GroupedV2ApiResponse {
   warnings: string[];
   unfitCount: number;
   benchmark?: GroupedV2Benchmark | null;
+  sheets?: GroupedV2SheetMetrics[];
+  summary?: GroupedV2Summary;
+  unfitGroups?: GroupedV2UnfitGroup[];
 }
 
 /**
@@ -200,6 +263,7 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
   const items: GroupedV2PreviewItem[] = response.items.map((item) => ({
     itemId: item.itemId ?? null,
     orderId: item.orderId,
+    sheetIndex: item.sheetIndex ?? 0,
     posX: item.x,
     posY: item.y,
     width: item.width,
@@ -216,6 +280,7 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
 
   const groups: GroupedV2PreviewGroup[] = response.groups.map((group) => ({
     orderId: group.orderId,
+    sheetIndex: group.sheetIndex ?? 0,
     label: resolveGroupLabel(group.orderId, group.receiptCode),
     x: group.x,
     y: group.y,
@@ -237,6 +302,87 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
     warnings: response.warnings,
     unfitCount: response.unfitCount,
     benchmark: response.benchmark ?? null,
+    sheets: response.sheets ?? [],
+    summary: response.summary ?? null,
+    unfitGroups: response.unfitGroups ?? [],
+  };
+}
+
+/**
+ * PHASE 2G — the preview's top header lines. One sheet: exactly the pre-2G
+ * header (its bounding utilization IS that sheet's figure). Several sheets:
+ * material figures over the whole fixed media — Sum Used Height and
+ * totalItemArea / (sheetCount x sheet area) — and the bounding-box ratio
+ * only under an explicit "(Diagnostic)" label, never as plain
+ * "Utilization"/"Waste".
+ */
+export function buildHeaderMetrics(sheet: GroupedV2PreviewSheet): { label: string; value: string }[] {
+  const mm = (value: number) => `${value.toFixed(1)} mm`;
+  const pct = (value: number) => `${value.toFixed(1)}%`;
+  const summary = sheet.summary;
+
+  if (!summary || summary.sheetCount <= 1) {
+    return [
+      { label: "Mode", value: "GROUPED V2" },
+      { label: "Orders", value: String(sheet.metrics.totalOrders) },
+      { label: "Items", value: String(sheet.metrics.totalItems) },
+      { label: "Unfit", value: String(sheet.unfitCount) },
+      { label: "Used Width", value: mm(sheet.metrics.usedWidth) },
+      { label: "Used Height", value: mm(sheet.metrics.usedHeight) },
+      { label: "Utilization", value: pct(sheet.metrics.packingUtilizationPercent) },
+      { label: "Waste", value: pct(sheet.metrics.wastePercent) },
+    ];
+  }
+
+  return [
+    { label: "Mode", value: "GROUPED V2" },
+    { label: "Sheet Count", value: String(summary.sheetCount) },
+    { label: "Orders", value: String(summary.totalOrders) },
+    { label: "Items", value: String(summary.totalItems) },
+    { label: "Unfit", value: String(sheet.unfitCount) },
+    { label: "Sum Used Height", value: mm(summary.sumUsedHeight) },
+    { label: "Overall Material Utilization", value: pct(summary.overallMaterialUtilizationPercent) },
+    { label: "Total Remaining Full-Width", value: mm(summary.totalRemainingFullWidthHeight) },
+    { label: "Bounding Utilization (Diagnostic)", value: pct(sheet.metrics.packingUtilizationPercent) },
+  ];
+}
+
+/**
+ * PHASE 2G — splits a preview into one entry per sheet so each sheet gets its
+ * own canvas and coordinate system. Every item and group goes to exactly the
+ * sheet it reports (nothing duplicated, nothing dropped); sheets are listed
+ * in sheetIndex order, including any sheet that only appears in `metrics`.
+ */
+export function partitionBySheet<I extends { sheetIndex: number }, G extends { sheetIndex: number }, M extends { sheetIndex: number }>(
+  items: I[],
+  groups: G[],
+  metrics: M[] = []
+): { sheetIndex: number; metrics: M | null; items: I[]; groups: G[] }[] {
+  const indexes = [...new Set([...items, ...groups, ...metrics].map((entry) => entry.sheetIndex))].sort((a, b) => a - b);
+  return indexes.map((sheetIndex) => ({
+    sheetIndex,
+    metrics: metrics.find((m) => m.sheetIndex === sheetIndex) ?? null,
+    items: items.filter((item) => item.sheetIndex === sheetIndex),
+    groups: groups.filter((group) => group.sheetIndex === sheetIndex),
+  }));
+}
+
+/**
+ * PHASE 2G — app vs. manual CorelDRAW for a multi-sheet batch: sheet count
+ * and total (summed) used height. `null` if either manual value is missing/
+ * invalid. Positive differences = the app uses more.
+ */
+export function compareWithManualMultiSheet(
+  app: { sheetCount: number; sumUsedHeight: number },
+  manual: { sheetCount: number; totalUsedHeight: number }
+): { sheetDifference: number; heightDifferenceMm: number; heightDifferencePercent: number } | null {
+  if (!Number.isInteger(manual.sheetCount) || manual.sheetCount <= 0) return null;
+  const height = compareWithManualHeight(app.sumUsedHeight, manual.totalUsedHeight);
+  if (!height) return null;
+  return {
+    sheetDifference: app.sheetCount - manual.sheetCount,
+    heightDifferenceMm: height.differenceMm,
+    heightDifferencePercent: height.differencePercent,
   };
 }
 
@@ -250,13 +396,14 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
 export function buildScenarioCanvas(
   sheet: GroupedV2PreviewSheet,
   scenario: GroupedV2BenchmarkScenario
-): { items: GroupedV2PreviewItem[]; groups: GroupedV2CanvasGroup[] } {
+): { items: GroupedV2PreviewItem[]; groups: (GroupedV2CanvasGroup & { sheetIndex: number })[] } {
   const mainById = new Map(sheet.items.filter((item) => item.itemId !== null).map((item) => [item.itemId, item]));
   const items: GroupedV2PreviewItem[] = scenario.items.map((item) => {
     const main = item.itemId !== null ? mainById.get(item.itemId) : undefined;
     return {
       itemId: item.itemId,
       orderId: item.orderId,
+      sheetIndex: item.sheetIndex,
       posX: item.x,
       posY: item.y,
       width: item.width,
@@ -272,6 +419,7 @@ export function buildScenarioCanvas(
     };
   });
   const groups = scenario.groups.map((group) => ({
+    sheetIndex: group.sheetIndex,
     label: resolveGroupLabel(group.orderId, group.receiptCode),
     x: group.x,
     y: group.y,

@@ -97,13 +97,17 @@ export interface SpacingScenario<T> {
   /** Effective distance from the media edge to the nearest group: sheet margin + order gap (see top doc comment). */
   edgeClearanceMm: number;
   result: GroupedNestingResult<T>;
-  usedWidth: number;
-  usedHeight: number;
-  /** SHEET_HEIGHT_MM - usedHeight. */
-  remainingFullWidthHeight: number;
-  /** SHEET_WIDTH_MM - usedWidth. */
-  sideFragmentWidth: number;
   sheetCount: number;
+  /** Widest sheet's used width. */
+  usedWidth: number;
+  /** SUM of per-sheet used heights (PHASE 2G) — equals the used height for one sheet. */
+  usedHeight: number;
+  /** sum(SHEET_HEIGHT_MM - sheet.usedHeight). */
+  remainingFullWidthHeight: number;
+  /** sum(SHEET_WIDTH_MM - sheet.usedWidth). */
+  sideFragmentWidth: number;
+  /** totalItemArea / (sheetCount * sheet area) * 100. */
+  overallMaterialUtilizationPercent: number;
   heightSavedVsDefaultMm: number;
   heightSavedVsDefaultPercent: number;
   integrity: IntegrityReport;
@@ -143,11 +147,12 @@ export function runSpacingBenchmark<T>(
       sheetMarginMm: SHEET_MARGIN_MM,
       edgeClearanceMm: SHEET_MARGIN_MM + orderGapMm,
       result,
+      sheetCount: result.summary.sheetCount,
       usedWidth: result.metrics.usedWidth,
-      usedHeight: result.metrics.usedHeight,
-      remainingFullWidthHeight: SHEET_HEIGHT_MM - result.metrics.usedHeight,
-      sideFragmentWidth: SHEET_WIDTH_MM - result.metrics.usedWidth,
-      sheetCount: result.optimizer.finalScore.sheetCount,
+      usedHeight: result.summary.sumUsedHeight,
+      remainingFullWidthHeight: result.summary.totalRemainingFullWidthHeight,
+      sideFragmentWidth: result.summary.totalSideFragmentWidth,
+      overallMaterialUtilizationPercent: result.summary.overallMaterialUtilizationPercent,
       integrity: checkLayoutIntegrity(result, orderGapMm),
     };
   });
@@ -167,9 +172,10 @@ export function runSpacingBenchmark<T>(
 
 /**
  * Recommendation for OPERATOR TESTING only. Eligible = integrity ok, no
- * unfit items, no extra sheet vs. the default. Among eligible scenarios pick
- * the lowest used height; on equal height prefer the LARGER gap (same
- * material, more separation). If nothing beats the default, keep the default.
+ * unfit items, no extra sheet vs. the default. Among eligible scenarios
+ * pick, in order: fewest sheets, lowest SUM of used heights, least total
+ * side fragment; on a full tie prefer the LARGER gap (same material, more
+ * separation). If nothing beats the default, keep the default.
  */
 export function recommendSpacing<T>(scenarios: SpacingScenario<T>[]): SpacingRecommendation {
   const reference = scenarios[0];
@@ -177,18 +183,22 @@ export function recommendSpacing<T>(scenarios: SpacingScenario<T>[]): SpacingRec
     (s) => s.integrity.ok && s.result.unfit.length === 0 && s.sheetCount <= reference.sheetCount
   );
 
+  const compare = (a: SpacingScenario<T>, b: SpacingScenario<T>) => {
+    for (const diff of [a.sheetCount - b.sheetCount, a.usedHeight - b.usedHeight, a.sideFragmentWidth - b.sideFragmentWidth]) {
+      if (Math.abs(diff) > EPS) return diff;
+    }
+    return b.orderGapMm - a.orderGapMm;
+  };
   let best = reference;
-  for (const s of eligible) {
-    const lower = s.usedHeight < best.usedHeight - EPS;
-    const sameHeightLargerGap = Math.abs(s.usedHeight - best.usedHeight) <= EPS && s.orderGapMm > best.orderGapMm;
-    if (lower || sameHeightLargerGap) best = s;
-  }
+  for (const s of eligible) if (compare(s, best) < 0) best = s;
 
   const reasons =
     best === reference
-      ? ["gap lebih kecil tidak menurunkan used height secara valid — default tetap yang terbaik"]
+      ? ["gap lebih kecil tidak mengurangi lembar / total used height secara valid — default tetap yang terbaik"]
       : [
-          `hemat ${best.heightSavedVsDefaultMm.toFixed(1)} mm tinggi material (${best.heightSavedVsDefaultPercent.toFixed(1)}%) vs ${reference.orderGapMm} mm`,
+          best.sheetCount < reference.sheetCount
+            ? `hemat ${reference.sheetCount - best.sheetCount} lembar vs ${reference.orderGapMm} mm`
+            : `hemat ${best.heightSavedVsDefaultMm.toFixed(1)} mm total tinggi material (${best.heightSavedVsDefaultPercent.toFixed(1)}%) vs ${reference.orderGapMm} mm`,
           `jarak antar group tetap >= ${best.orderGapMm} mm, tanpa overlap (dicek ulang)`,
           `jarak ke tepi media turun ke ${best.edgeClearanceMm} mm — perlu dicek operator`,
         ];

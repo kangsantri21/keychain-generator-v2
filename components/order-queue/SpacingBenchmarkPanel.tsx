@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { GroupedV2PreviewCanvas } from "@/components/order-queue/GroupedV2PreviewCanvas";
+import { MultiSheetPreview } from "@/components/order-queue/MultiSheetPreview";
 import {
   buildScenarioCanvas,
   compareWithManualHeight,
+  compareWithManualMultiSheet,
   type GroupedV2Benchmark,
   type GroupedV2PreviewSheet,
 } from "@/lib/nesting/grouped-nesting-preview";
@@ -16,13 +17,22 @@ import {
  */
 export function SpacingBenchmarkPanel({ sheet, benchmark }: { sheet: GroupedV2PreviewSheet; benchmark: GroupedV2Benchmark }) {
   const [manualHeightInput, setManualHeightInput] = useState("");
+  const [manualSheetCountInput, setManualSheetCountInput] = useState("");
   const [viewGap, setViewGap] = useState<number | null>(null);
 
   const { scenarios, recommendation, productionDefaultOrderGapMm } = benchmark;
   const reference = scenarios[0];
   const best = scenarios.find((s) => s.orderGapMm === recommendation.recommendedOrderGapMm) ?? reference;
   const manualHeight = manualHeightInput.trim() === "" ? NaN : Number(manualHeightInput);
-  const manual = compareWithManualHeight(best.usedHeight, manualHeight);
+  const multiSheet = scenarios.some((s) => s.sheetCount > 1);
+  const manualSheetCount = manualSheetCountInput.trim() === "" ? NaN : Number(manualSheetCountInput);
+  const manual = multiSheet ? null : compareWithManualHeight(best.usedHeight, manualHeight);
+  const manualMulti = multiSheet
+    ? compareWithManualMultiSheet(
+        { sheetCount: best.sheetCount, sumUsedHeight: best.usedHeight },
+        { sheetCount: manualSheetCount, totalUsedHeight: manualHeight }
+      )
+    : null;
   const viewed = viewGap === null ? null : scenarios.find((s) => s.orderGapMm === viewGap) ?? null;
   const viewedCanvas = viewed ? buildScenarioCanvas(sheet, viewed) : null;
   const signed = (value: number, digits = 1) => `${value > 0 ? "+" : ""}${value.toFixed(digits)}`;
@@ -47,11 +57,12 @@ export function SpacingBenchmarkPanel({ sheet, benchmark }: { sheet: GroupedV2Pr
                 "Items",
                 "Unfit",
                 "Sheets",
-                "Used W",
-                "Used H",
-                "Full-Width Left",
-                "Side Frag",
-                "Util",
+                "Used W (max)",
+                "Sum Used H",
+                "Σ Full-Width Left",
+                "Σ Side Frag",
+                "Bounding Util (Diag.)",
+                "Material Util",
                 "Waste",
                 "Strategy",
                 "Sort",
@@ -81,6 +92,7 @@ export function SpacingBenchmarkPanel({ sheet, benchmark }: { sheet: GroupedV2Pr
                 <td className="py-1 pr-3">{s.remainingFullWidthHeight.toFixed(1)}</td>
                 <td className="py-1 pr-3">{s.sideFragmentWidth.toFixed(1)}</td>
                 <td className="py-1 pr-3">{s.packingUtilizationPercent.toFixed(1)}%</td>
+                <td className="py-1 pr-3">{s.overallMaterialUtilizationPercent.toFixed(1)}%</td>
                 <td className="py-1 pr-3">{s.wastePercent.toFixed(1)}%</td>
                 <td className="py-1 pr-3">{s.selectedHeuristic}</td>
                 <td className="py-1 pr-3">{s.selectedSort}</td>
@@ -108,20 +120,41 @@ export function SpacingBenchmarkPanel({ sheet, benchmark }: { sheet: GroupedV2Pr
         <div className="flex flex-col gap-0.5 rounded bg-white p-2">
           <span className="font-semibold text-slate-700">BEST COMPUTER RESULT</span>
           <span>Gap: {best.orderGapMm} mm</span>
-          <span>Used Height: {best.usedHeight.toFixed(1)} mm</span>
+          <span>Sheets: {best.sheetCount}</span>
+          <span>
+            {multiSheet ? "Sum Used Height" : "Used Height"}: {best.usedHeight.toFixed(1)} mm
+          </span>
           <span>Remaining Full-Width: {best.remainingFullWidthHeight.toFixed(1)} mm</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded bg-white p-2">
           <span className="font-semibold text-slate-700">CURRENT PRODUCTION DEFAULT</span>
           <span>Gap: {reference.orderGapMm} mm</span>
-          <span>Used Height: {reference.usedHeight.toFixed(1)} mm</span>
+          <span>Sheets: {reference.sheetCount}</span>
           <span>
-            Potential Saving: {best.heightSavedVsDefaultMm.toFixed(1)} mm / {best.heightSavedVsDefaultPercent.toFixed(1)}%
+            {multiSheet ? "Sum Used Height" : "Used Height"}: {reference.usedHeight.toFixed(1)} mm
+          </span>
+          <span>
+            Potential Saving: {best.sheetCount < reference.sheetCount ? `${reference.sheetCount - best.sheetCount} lembar · ` : ""}
+            {best.heightSavedVsDefaultMm.toFixed(1)} mm / {best.heightSavedVsDefaultPercent.toFixed(1)}%
           </span>
         </div>
         <div className="flex flex-col gap-1 rounded bg-white p-2">
+          {multiSheet && (
+            <label className="flex items-center gap-2">
+              <span className="font-semibold text-slate-700">Manual Corel Sheet Count</span>
+              <input
+                type="number"
+                min={1}
+                step="1"
+                value={manualSheetCountInput}
+                onChange={(event) => setManualSheetCountInput(event.target.value)}
+                placeholder="opsional"
+                className="w-24 rounded border border-slate-300 px-1.5 py-0.5"
+              />
+            </label>
+          )}
           <label className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">Manual Corel Used Height (mm)</span>
+            <span className="font-semibold text-slate-700">{multiSheet ? "Manual Corel Total Used Height (mm)" : "Manual Corel Used Height (mm)"}</span>
             <input
               type="number"
               min={0}
@@ -132,7 +165,22 @@ export function SpacingBenchmarkPanel({ sheet, benchmark }: { sheet: GroupedV2Pr
               className="w-24 rounded border border-slate-300 px-1.5 py-0.5"
             />
           </label>
-          {manual ? (
+          {manualMulti ? (
+            <>
+              <span>
+                APP (gap {best.orderGapMm} mm): {best.sheetCount} lembar · Σ {best.usedHeight.toFixed(1)} mm
+              </span>
+              <span>
+                MANUAL: {manualSheetCount} lembar · Σ {manualHeight.toFixed(1)} mm
+              </span>
+              <span className={manualMulti.sheetDifference > 0 ? "text-red-700" : "text-green-700"}>
+                Sheets: {signed(manualMulti.sheetDifference, 0)}
+              </span>
+              <span className={manualMulti.heightDifferenceMm > 0 ? "text-red-700" : "text-green-700"}>
+                Total Height: {signed(manualMulti.heightDifferenceMm)} mm / {signed(manualMulti.heightDifferencePercent)}%
+              </span>
+            </>
+          ) : manual ? (
             <>
               <span>APP Used Height (gap {best.orderGapMm} mm): {best.usedHeight.toFixed(1)} mm</span>
               <span>MANUAL Used Height: {manualHeight.toFixed(1)} mm</span>
@@ -171,7 +219,7 @@ export function SpacingBenchmarkPanel({ sheet, benchmark }: { sheet: GroupedV2Pr
       {viewed && viewedCanvas && (
         <div className="flex flex-col gap-1">
           <span className="font-semibold text-slate-700">Layout scenario ORDER GAP {viewed.orderGapMm} mm (preview saja)</span>
-          <GroupedV2PreviewCanvas items={viewedCanvas.items} groups={viewedCanvas.groups} />
+          <MultiSheetPreview items={viewedCanvas.items} groups={viewedCanvas.groups} sheets={viewed.sheets} />
         </div>
       )}
     </div>

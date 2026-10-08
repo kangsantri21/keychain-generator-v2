@@ -43,6 +43,9 @@ import type {
   GroupedPackedRect,
   GroupedNestingMetrics,
   GroupedNestingResult,
+  PackedSheet,
+  MultiSheetSummary,
+  UnfitGroup,
 } from "./grouped-nesting-types";
 
 export type {
@@ -54,6 +57,9 @@ export type {
   GroupedPackedRect,
   GroupedNestingMetrics,
   GroupedNestingResult,
+  PackedSheet,
+  MultiSheetSummary,
+  UnfitGroup,
 } from "./grouped-nesting-types";
 
 export interface GroupedNestingConfig {
@@ -294,19 +300,33 @@ export function runGroupedNesting<T>(
 
   const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, contextByCandidateId, strategy);
 
+  // A group is one rectangle, so it lands wholly on one sheet or nowhere —
+  // never split. One that fits no sheet is reported with an explicit reason.
+  const unfitGroups: UnfitGroup[] = [];
   for (const candidate of unfitCandidates) {
     unfit.push(...candidate.placements.map((placement) => placement.item));
+    unfitGroups.push({
+      orderId: candidate.orderId,
+      reason: "ORDER_GROUP_TOO_LARGE_FOR_SHEET",
+      width: candidate.width,
+      height: candidate.height,
+      itemCount: candidate.placements.length,
+    });
     warnings.push(
-      `Grup order ${candidate.orderId ?? "(tanpa orderId)"} berukuran ${candidate.width.toFixed(1)}x${candidate.height.toFixed(1)}mm tidak muat di media manapun (${config.sheetWidth}x${config.sheetHeight}mm) — dilewati, bukan dipaksakan.`
+      `ORDER_GROUP_TOO_LARGE_FOR_SHEET: grup order ${candidate.orderId ?? "(tanpa orderId)"} berukuran ${candidate.width.toFixed(1)}x${candidate.height.toFixed(1)}mm tidak muat di media manapun (${config.sheetWidth}x${config.sheetHeight}mm) — dilewati, tidak dipecah, tidak dipaksakan.`
     );
   }
 
   const flatItems = groups.flatMap((g) => g.items);
+  const sheets = buildSheets(groups, config);
+  const summary = summarizeSheets(sheets, config, items.length, orderGroups.length, unfit.length);
 
-  const usedWidth = flatItems.length > 0 ? Math.max(...flatItems.map((item) => item.x + item.width)) : 0;
-  const usedHeight = flatItems.length > 0 ? Math.max(...flatItems.map((item) => item.y + item.height)) : 0;
-  const usedArea = usedWidth * usedHeight;
-  const totalItemArea = groups.reduce((sum, g) => sum + g.candidate.metrics.itemArea, 0);
+  // One sheet: exactly the pre-2G numbers. Several sheets: per-sheet sums
+  // (see GroupedNestingMetrics) instead of a max over every item.
+  const usedWidth = sheets.length > 0 ? Math.max(...sheets.map((sheet) => sheet.usedWidth)) : 0;
+  const usedHeight = summary.sumUsedHeight;
+  const usedArea = sheets.reduce((sum, sheet) => sum + sheet.usedWidth * sheet.usedHeight, 0);
+  const totalItemArea = summary.totalItemArea;
 
   const metrics: GroupedNestingMetrics = {
     totalItems: items.length,
@@ -321,7 +341,68 @@ export function runGroupedNesting<T>(
 
   assertGroupOrderIntegrity(groups);
 
-  return { groups, items: flatItems, metrics, warnings, unfit, optimizer };
+  return { sheets, summary, unfitGroups, groups, items: flatItems, metrics, warnings, unfit, optimizer };
+}
+
+/** PHASE 2G — groups partitioned by sheetIndex with each sheet's own metrics (coordinates are already sheet-local). */
+export function buildSheets<T>(groups: GroupPlacement<T>[], config: Pick<GroupedNestingConfig, "sheetWidth" | "sheetHeight">): PackedSheet<T>[] {
+  const bySheet = new Map<number, GroupPlacement<T>[]>();
+  for (const group of groups) bySheet.set(group.sheetIndex, [...(bySheet.get(group.sheetIndex) ?? []), group]);
+
+  return [...bySheet.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([sheetIndex, sheetGroups]) => {
+      const sheetItems = sheetGroups.flatMap((g) => g.items);
+      const usedWidth = Math.max(0, ...sheetItems.map((item) => item.x + item.width));
+      const usedHeight = Math.max(0, ...sheetItems.map((item) => item.y + item.height));
+      const itemArea = sheetGroups.reduce((sum, g) => sum + g.candidate.metrics.itemArea, 0);
+      const boxArea = usedWidth * usedHeight;
+      const utilizationPercent = boxArea > 0 ? (itemArea / boxArea) * 100 : 0;
+      return {
+        sheetIndex,
+        width: config.sheetWidth,
+        height: config.sheetHeight,
+        groups: sheetGroups,
+        orderCount: sheetGroups.length,
+        itemCount: sheetItems.length,
+        itemArea,
+        usedWidth,
+        usedHeight,
+        remainingFullWidthHeight: config.sheetHeight - usedHeight,
+        sideFragmentWidth: config.sheetWidth - usedWidth,
+        utilizationPercent,
+        wastePercent: boxArea > 0 ? 100 - utilizationPercent : 0,
+      };
+    });
+}
+
+/** PHASE 2G — totals across sheets. */
+export function summarizeSheets<T>(
+  sheets: PackedSheet<T>[],
+  config: Pick<GroupedNestingConfig, "sheetWidth" | "sheetHeight">,
+  totalItems: number,
+  totalOrders: number,
+  totalUnfitItems: number
+): MultiSheetSummary {
+  const heights = sheets.map((sheet) => sheet.usedHeight);
+  const sumUsedHeight = heights.reduce((sum, h) => sum + h, 0);
+  const totalSheetArea = sheets.length * config.sheetWidth * config.sheetHeight;
+  const totalItemArea = sheets.reduce((sum, sheet) => sum + sheet.itemArea, 0);
+  return {
+    sheetCount: sheets.length,
+    totalOrders,
+    totalItems,
+    totalUnfitItems,
+    sumUsedHeight,
+    totalRemainingFullWidthHeight: sheets.reduce((sum, sheet) => sum + sheet.remainingFullWidthHeight, 0),
+    totalSideFragmentWidth: sheets.reduce((sum, sheet) => sum + sheet.sideFragmentWidth, 0),
+    totalSheetArea,
+    totalItemArea,
+    overallMaterialUtilizationPercent: totalSheetArea > 0 ? (totalItemArea / totalSheetArea) * 100 : 0,
+    averageUsedHeight: sheets.length > 0 ? sumUsedHeight / sheets.length : 0,
+    maxUsedHeight: heights.length > 0 ? Math.max(...heights) : 0,
+    minUsedHeight: heights.length > 0 ? Math.min(...heights) : 0,
+  };
 }
 
 /**

@@ -143,6 +143,23 @@ export async function POST(request: NextRequest) {
     // Stable per-request item id (its index in groupedItems) so the client can
     // join a benchmark scenario's positions to the main response's renders.
     const itemIdByData = new Map(groupedItems.map((item) => [item.data, item.id]));
+    // PHASE 2G — per-sheet metrics only; groups/items carry sheetIndex and the
+    // client partitions them, so nothing is sent twice.
+    const sheetMetrics = (sheets: typeof result.sheets) =>
+      sheets.map((sheet) => ({
+        sheetIndex: sheet.sheetIndex,
+        width: sheet.width,
+        height: sheet.height,
+        orderCount: sheet.orderCount,
+        itemCount: sheet.itemCount,
+        itemArea: sheet.itemArea,
+        usedWidth: sheet.usedWidth,
+        usedHeight: sheet.usedHeight,
+        remainingFullWidthHeight: sheet.remainingFullWidthHeight,
+        sideFragmentWidth: sheet.sideFragmentWidth,
+        utilizationPercent: sheet.utilizationPercent,
+        wastePercent: sheet.wastePercent,
+      }));
     const labelFor = (orderId: number | null) => (orderId !== null ? (receiptCodeByOrderId.get(orderId) ?? null) : null);
 
     // PHASE 2F DEV benchmark: same items re-run once per fixed ORDER_GAP
@@ -166,6 +183,8 @@ export async function POST(request: NextRequest) {
           totalItems: s.result.metrics.totalItems,
           unfitCount: s.result.unfit.length,
           sheetCount: s.sheetCount,
+          overallMaterialUtilizationPercent: s.overallMaterialUtilizationPercent,
+          sheets: sheetMetrics(s.result.sheets),
           usedWidth: s.usedWidth,
           usedHeight: s.usedHeight,
           remainingFullWidthHeight: s.remainingFullWidthHeight,
@@ -183,6 +202,7 @@ export async function POST(request: NextRequest) {
           elapsedMs: s.elapsedMs ?? null,
           groups: s.result.groups.map((group) => ({
             orderId: group.orderId,
+            sheetIndex: group.sheetIndex,
             receiptCode: labelFor(group.orderId),
             x: group.x,
             y: group.y,
@@ -194,6 +214,7 @@ export async function POST(request: NextRequest) {
           items: s.result.items.map((item) => ({
             itemId: itemIdByData.get(item.data) ?? null,
             orderId: item.orderId,
+            sheetIndex: item.sheetIndex,
             x: item.x,
             y: item.y,
             width: item.width,
@@ -213,6 +234,7 @@ export async function POST(request: NextRequest) {
       dryRun: true,
       groups: result.groups.map((group) => ({
         orderId: group.orderId,
+        sheetIndex: group.sheetIndex,
         receiptCode: labelFor(group.orderId),
         x: group.x,
         y: group.y,
@@ -229,6 +251,7 @@ export async function POST(request: NextRequest) {
       items: result.items.map((item) => ({
         itemId: itemIdByData.get(item.data) ?? null,
         orderId: item.orderId,
+        sheetIndex: item.sheetIndex,
         x: item.x,
         y: item.y,
         width: item.width,
@@ -243,6 +266,9 @@ export async function POST(request: NextRequest) {
         render: item.data.render,
       })),
       metrics: result.metrics,
+      sheets: sheetMetrics(result.sheets),
+      summary: result.summary,
+      unfitGroups: result.unfitGroups,
       optimizer: { ...result.optimizer, elapsedMs },
       warnings: result.warnings,
       unfitCount: result.unfit.length,

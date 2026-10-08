@@ -111,7 +111,15 @@ export interface GroupedPackedRect<T> extends PackedRect<T> {
 export interface GroupedNestingMetrics {
   totalItems: number;
   totalOrders: number;
-  /** Tight bounding box actually consumed by placed content, from the sheet's own (0,0) corner — NOT the full configured sheet size. */
+  /**
+   * Tight bounding box actually consumed by placed content, from the sheet's
+   * own (0,0) corner — NOT the full configured sheet size. One sheet: that
+   * sheet's box. Several sheets (PHASE 2G): `usedWidth` = widest sheet,
+   * `usedHeight` = SUM of per-sheet used heights, `usedArea` = sum of
+   * per-sheet boxes — see `GroupedNestingResult.sheets`/`summary` for the
+   * per-sheet breakdown. (Before 2G these were a max over every item
+   * regardless of sheet, which could report >100% utilization.)
+   */
   usedWidth: number;
   usedHeight: number;
   usedArea: number;
@@ -123,7 +131,61 @@ export interface GroupedNestingMetrics {
   wastePercent: number;
 }
 
+/** PHASE 2G — one physical media sheet. Coordinates of its groups/items are local to this sheet. */
+export interface PackedSheet<T> {
+  sheetIndex: number;
+  width: number;
+  height: number;
+  groups: GroupPlacement<T>[];
+  orderCount: number;
+  itemCount: number;
+  itemArea: number;
+  usedWidth: number;
+  usedHeight: number;
+  /** height - usedHeight: the reusable full-width strip left below the layout. */
+  remainingFullWidthHeight: number;
+  /** width - usedWidth. */
+  sideFragmentWidth: number;
+  /** itemArea / (usedWidth * usedHeight) * 100. */
+  utilizationPercent: number;
+  wastePercent: number;
+}
+
+/** PHASE 2G — totals across every sheet (never "the tallest sheet" standing in for the total). */
+export interface MultiSheetSummary {
+  sheetCount: number;
+  totalOrders: number;
+  totalItems: number;
+  totalUnfitItems: number;
+  sumUsedHeight: number;
+  /** sum(sheetHeight - sheet.usedHeight). */
+  totalRemainingFullWidthHeight: number;
+  /** sum(sheetWidth - sheet.usedWidth). */
+  totalSideFragmentWidth: number;
+  /** sheetCount * sheetWidth * sheetHeight. */
+  totalSheetArea: number;
+  totalItemArea: number;
+  /** totalItemArea / totalSheetArea * 100 — material actually covered by item rectangles. */
+  overallMaterialUtilizationPercent: number;
+  averageUsedHeight: number;
+  maxUsedHeight: number;
+  minUsedHeight: number;
+}
+
+/** Explicit reason an order group could not be placed (never split across sheets, never dropped silently). */
+export interface UnfitGroup {
+  orderId: number | null;
+  reason: "ORDER_GROUP_TOO_LARGE_FOR_SHEET";
+  width: number;
+  height: number;
+  itemCount: number;
+}
+
 export interface GroupedNestingResult<T> {
+  /** PHASE 2G — per-sheet view of `groups` (same objects), ordered by sheetIndex. */
+  sheets: PackedSheet<T>[];
+  summary: MultiSheetSummary;
+  unfitGroups: UnfitGroup[];
   groups: GroupPlacement<T>[];
   /** Flattened `groups[].items`, all groups combined — the shape most callers actually want (mirrors legacy `packMaxRects`'s own flat return). */
   items: GroupedPackedRect<T>[];

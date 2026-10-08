@@ -62,6 +62,9 @@ export const DEFAULT_GLOBAL_SEARCH_LIMITS: GlobalSearchLimits = {
  *                    that drops a group or spills to a 2nd sheet must never
  *                    "win" on height)
  *   1. usedHeight ASC       — keep the full-width remainder as tall as possible
+ *                             (PHASE 2G: SUM of per-sheet used heights, so with
+ *                             several sheets this is total material height —
+ *                             identical to the old value for one sheet)
  *   2. boundingArea ASC     — then least bounding waste (sum per sheet)
  *   3. unusedSideWidth ASC  — then the thinnest side fragment
  *   4. usedWidth DESC       — (same order as 3, since usable width is fixed;
@@ -71,6 +74,7 @@ export const DEFAULT_GLOBAL_SEARCH_LIMITS: GlobalSearchLimits = {
 export interface GlobalLayoutScore {
   unfitGroups: number;
   sheetCount: number;
+  /** Sum of per-sheet used heights (= the used height when there is one sheet). */
   usedHeight: number;
   boundingArea: number;
   /** usableSheetWidth - usedWidth. */
@@ -128,7 +132,7 @@ export function scoreOuterPlacements(
   return {
     unfitGroups: groupCount - packed.length,
     sheetCount: sheets.length,
-    usedHeight: Math.max(0, ...sheets.map((b) => b.maxY)),
+    usedHeight: sheets.reduce((sum, b) => sum + b.maxY, 0),
     boundingArea: sheets.reduce((sum, b) => sum + b.maxX * b.maxY, 0),
     unusedSideWidth: usableWidth - usedWidth,
     usedWidth,

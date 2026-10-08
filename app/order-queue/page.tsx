@@ -9,9 +9,9 @@ import type { StagingSheet } from "@/lib/staging-types";
 import type { Template } from "@/lib/db/schema";
 import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import { GroupedV2PreviewCanvas } from "@/components/order-queue/GroupedV2PreviewCanvas";
+import { MultiSheetPreview } from "@/components/order-queue/MultiSheetPreview";
 import { SpacingBenchmarkPanel } from "@/components/order-queue/SpacingBenchmarkPanel";
-import { buildGroupedV2PreviewSheet, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
+import { buildGroupedV2PreviewSheet, buildHeaderMetrics, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
 import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
 
 type NestingMode = "legacy" | "grouped-v2-preview";
@@ -614,14 +614,11 @@ export default function OrderQueuePage() {
 
           {/* Alat validasi engineering — bukan tampilan produksi. */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-4">
-            <span>Mode: GROUPED V2</span>
-            <span>Orders: {v2Preview.metrics.totalOrders}</span>
-            <span>Items: {v2Preview.metrics.totalItems}</span>
-            <span>Unfit: {v2Preview.unfitCount}</span>
-            <span>Used Width: {v2Preview.metrics.usedWidth.toFixed(1)} mm</span>
-            <span>Used Height: {v2Preview.metrics.usedHeight.toFixed(1)} mm</span>
-            <span>Utilization: {v2Preview.metrics.packingUtilizationPercent.toFixed(1)}%</span>
-            <span>Waste: {v2Preview.metrics.wastePercent.toFixed(1)}%</span>
+            {buildHeaderMetrics(v2Preview).map(({ label, value }) => (
+              <span key={label}>
+                {label}: {value}
+              </span>
+            ))}
             <span>PART GAP: {PART_GAP_MM} mm</span>
             <span>ORDER GAP: {ORDER_GAP_MM} mm</span>
             <span>SHEET MARGIN: {SHEET_MARGIN_MM} mm</span>
@@ -639,8 +636,10 @@ export default function OrderQueuePage() {
           {(() => {
             const optimizer = v2Preview.optimizer;
             const formatScore = (score: typeof optimizer.finalScore) =>
-              `${score.sheetCount} lembar · H ${score.usedHeight.toFixed(1)} · ${score.boundingArea.toFixed(0)} mm²`;
+              `${score.sheetCount} lembar · ΣH ${score.usedHeight.toFixed(1)} · ${score.boundingArea.toFixed(0)} mm²`;
             const { usedWidth, usedHeight } = v2Preview.metrics;
+            const summary = v2Preview.summary;
+            const multiSheet = (summary?.sheetCount ?? 1) > 1;
             const sourceLabel = { phase2c: "Phase 2C (lokal)", phase2d: "Phase 2D (global)", phase2e: "Phase 2E (multi-outer)" }[
               optimizer.candidateSource
             ];
@@ -650,14 +649,35 @@ export default function OrderQueuePage() {
                 <span>
                   Media: {SHEET_WIDTH_MM} × {SHEET_HEIGHT_MM} mm
                 </span>
-                <span>Optimization Goal: MIN USED HEIGHT</span>
+                <span>Optimization Goal: {multiSheet ? "MIN SHEETS, then MIN SUM USED HEIGHT" : "MIN USED HEIGHT"}</span>
                 <span>Reason: preserve reusable full-width remainder</span>
-                <span>Used Width: {usedWidth.toFixed(1)} mm</span>
-                <span>Used Height: {usedHeight.toFixed(1)} mm</span>
-                <span />
-                <span>Remaining Full-Width Height: {(SHEET_HEIGHT_MM - usedHeight).toFixed(1)} mm</span>
-                <span>Side Fragment Width: {(SHEET_WIDTH_MM - usedWidth).toFixed(1)} mm</span>
-                <span />
+                {multiSheet && summary ? (
+                  <>
+                    <span className="font-semibold text-slate-700">Sheet Count: {summary.sheetCount}</span>
+                    <span>
+                      Orders: {summary.totalOrders} · Items: {summary.totalItems} · Unfit: {summary.totalUnfitItems}
+                    </span>
+                    <span>Total Item Area: {summary.totalItemArea.toFixed(0)} mm²</span>
+                    <span>Sum Used Height: {summary.sumUsedHeight.toFixed(1)} mm</span>
+                    <span>Total Remaining Full-Width: {summary.totalRemainingFullWidthHeight.toFixed(1)} mm</span>
+                    <span>Total Side Fragment: {summary.totalSideFragmentWidth.toFixed(1)} mm</span>
+                    <span>
+                      Avg / Max / Min Used Height: {summary.averageUsedHeight.toFixed(1)} / {summary.maxUsedHeight.toFixed(1)} /{" "}
+                      {summary.minUsedHeight.toFixed(1)} mm
+                    </span>
+                    <span>Total Sheet Area: {summary.totalSheetArea.toFixed(0)} mm²</span>
+                    <span>Overall Material Utilization: {summary.overallMaterialUtilizationPercent.toFixed(1)}%</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Used Width: {usedWidth.toFixed(1)} mm</span>
+                    <span>Used Height: {usedHeight.toFixed(1)} mm</span>
+                    <span />
+                    <span>Remaining Full-Width Height: {(SHEET_HEIGHT_MM - usedHeight).toFixed(1)} mm</span>
+                    <span>Side Fragment Width: {(SHEET_WIDTH_MM - usedWidth).toFixed(1)} mm</span>
+                    <span />
+                  </>
+                )}
                 <span className="mt-2 font-semibold text-slate-700 sm:col-span-3">OUTER PACKING</span>
                 <span>Selected Strategy: {optimizer.selectedHeuristic}</span>
                 <span>Selected Sort: {optimizer.selectedSort}</span>
@@ -719,7 +739,7 @@ export default function OrderQueuePage() {
 
           {v2Preview.benchmark && <SpacingBenchmarkPanel sheet={v2Preview} benchmark={v2Preview.benchmark} />}
 
-          <GroupedV2PreviewCanvas items={v2Preview.items} groups={v2Preview.groups} />
+          <MultiSheetPreview items={v2Preview.items} groups={v2Preview.groups} sheets={v2Preview.sheets} />
         </div>
       )}
 
