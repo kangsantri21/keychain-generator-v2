@@ -8,6 +8,7 @@ import type { KeychainRender } from "@/lib/render-types";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { runGroupedNesting, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
 import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
+import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
@@ -139,12 +140,80 @@ export async function POST(request: NextRequest) {
     const result = runGroupedNesting(groupedItems);
     const elapsedMs = performance.now() - startedAt;
 
+    // Stable per-request item id (its index in groupedItems) so the client can
+    // join a benchmark scenario's positions to the main response's renders.
+    const itemIdByData = new Map(groupedItems.map((item) => [item.data, item.id]));
+    const labelFor = (orderId: number | null) => (orderId !== null ? (receiptCodeByOrderId.get(orderId) ?? null) : null);
+
+    // PHASE 2F DEV benchmark: same items re-run once per fixed ORDER_GAP
+    // scenario (8/6/4, server-side list) via the engine's per-call override —
+    // the main result above is untouched and still uses the production
+    // default. Still inside this dry-run branch: nothing is written.
+    let benchmark = null;
+    if (isSpacingBenchmarkRequest(body)) {
+      const benchmarkStartedAt = performance.now();
+      const run = runSpacingBenchmark(groupedItems, undefined, () => performance.now());
+      benchmark = {
+        productionDefaultOrderGapMm: run.recommendation.productionDefaultOrderGapMm,
+        recommendation: run.recommendation,
+        totalElapsedMs: performance.now() - benchmarkStartedAt,
+        scenarios: run.scenarios.map((s) => ({
+          orderGapMm: s.orderGapMm,
+          partGapMm: s.partGapMm,
+          sheetMarginMm: s.sheetMarginMm,
+          edgeClearanceMm: s.edgeClearanceMm,
+          totalOrders: s.result.metrics.totalOrders,
+          totalItems: s.result.metrics.totalItems,
+          unfitCount: s.result.unfit.length,
+          sheetCount: s.sheetCount,
+          usedWidth: s.usedWidth,
+          usedHeight: s.usedHeight,
+          remainingFullWidthHeight: s.remainingFullWidthHeight,
+          sideFragmentWidth: s.sideFragmentWidth,
+          packingUtilizationPercent: s.result.metrics.packingUtilizationPercent,
+          wastePercent: s.result.metrics.wastePercent,
+          selectedHeuristic: s.result.optimizer.selectedHeuristic,
+          selectedSort: s.result.optimizer.selectedSort,
+          candidateStatesEvaluated: s.result.optimizer.candidateStatesEvaluated,
+          outerPackAttempts: s.result.optimizer.outerPackAttempts,
+          heightSavedVsDefaultMm: s.heightSavedVsDefaultMm,
+          heightSavedVsDefaultPercent: s.heightSavedVsDefaultPercent,
+          integrity: s.integrity,
+          warnings: s.result.warnings,
+          elapsedMs: s.elapsedMs ?? null,
+          groups: s.result.groups.map((group) => ({
+            orderId: group.orderId,
+            receiptCode: labelFor(group.orderId),
+            x: group.x,
+            y: group.y,
+            width: group.width,
+            height: group.height,
+            itemCount: group.items.length,
+          })),
+          // Positions only — the client reuses each item's render from the main response via itemId.
+          items: s.result.items.map((item) => ({
+            itemId: itemIdByData.get(item.data) ?? null,
+            orderId: item.orderId,
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height,
+            rotated: item.rotated,
+            groupX: item.groupX,
+            groupY: item.groupY,
+            groupWidth: item.groupWidth,
+            groupHeight: item.groupHeight,
+          })),
+        })),
+      };
+    }
+
     return NextResponse.json({
       mode: "grouped-v2",
       dryRun: true,
       groups: result.groups.map((group) => ({
         orderId: group.orderId,
-        receiptCode: group.orderId !== null ? (receiptCodeByOrderId.get(group.orderId) ?? null) : null,
+        receiptCode: labelFor(group.orderId),
         x: group.x,
         y: group.y,
         width: group.width,
@@ -158,6 +227,7 @@ export async function POST(request: NextRequest) {
         internalUtilizationPercent: group.candidate.metrics.utilizationPercent,
       })),
       items: result.items.map((item) => ({
+        itemId: itemIdByData.get(item.data) ?? null,
         orderId: item.orderId,
         x: item.x,
         y: item.y,
@@ -176,6 +246,7 @@ export async function POST(request: NextRequest) {
       optimizer: { ...result.optimizer, elapsedMs },
       warnings: result.warnings,
       unfitCount: result.unfit.length,
+      benchmark,
     });
   }
 

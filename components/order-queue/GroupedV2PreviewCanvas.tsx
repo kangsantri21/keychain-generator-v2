@@ -1,6 +1,6 @@
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
 import { getItemTransform, getContentSize } from "@/lib/staging-transform";
-import type { GroupedV2PreviewItem, GroupedV2PreviewGroup } from "@/lib/nesting/grouped-nesting-preview";
+import type { GroupedV2PreviewItem, GroupedV2CanvasGroup } from "@/lib/nesting/grouped-nesting-preview";
 
 /**
  * PHASE 2B visual validation canvas — dev/engineering tool only, rendered
@@ -34,7 +34,7 @@ export function GroupedV2PreviewCanvas({
   groups,
 }: {
   items: GroupedV2PreviewItem[];
-  groups: GroupedV2PreviewGroup[];
+  groups: GroupedV2CanvasGroup[];
 }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

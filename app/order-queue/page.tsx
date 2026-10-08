@@ -10,6 +10,7 @@ import type { Template } from "@/lib/db/schema";
 import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { GroupedV2PreviewCanvas } from "@/components/order-queue/GroupedV2PreviewCanvas";
+import { SpacingBenchmarkPanel } from "@/components/order-queue/SpacingBenchmarkPanel";
 import { buildGroupedV2PreviewSheet, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
 import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
 
@@ -151,6 +152,8 @@ export default function OrderQueuePage() {
   // Area was ever touched by having it set.
   const [nestingMode, setNestingMode] = useState<NestingMode>("legacy");
   const [v2Preview, setV2Preview] = useState<GroupedV2PreviewSheet | null>(null);
+  // PHASE 2F — opt-in DEV spacing benchmark (ORDER GAP 8/6/4) on the same dry-run request.
+  const [benchmarkSpacing, setBenchmarkSpacing] = useState(false);
 
   async function loadOrders() {
     const res = await fetch("/api/orders");
@@ -311,7 +314,7 @@ export default function OrderQueuePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           nestingMode === "grouped-v2-preview"
-            ? { selections: selectedRows.map((row) => row.rowId), mode: "grouped-v2" }
+            ? { selections: selectedRows.map((row) => row.rowId), mode: "grouped-v2", ...(benchmarkSpacing ? { benchmark: true } : {}) }
             : { selections: selectedRows.map((row) => row.rowId) }
         ),
       });
@@ -426,6 +429,12 @@ export default function OrderQueuePage() {
                 Grouped V2 Preview (Dev)
               </button>
             </div>
+            {nestingMode === "grouped-v2-preview" && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="DEV: jalankan juga ORDER GAP 8/6/4 mm untuk perbandingan. Default produksi tidak berubah.">
+                <input type="checkbox" checked={benchmarkSpacing} onChange={(event) => setBenchmarkSpacing(event.target.checked)} />
+                Benchmark gap 8/6/4
+              </label>
+            )}
             <select
               value={targetSheetId}
               onChange={(event) => setTargetSheetId(event.target.value ? Number(event.target.value) : "")}
@@ -707,6 +716,8 @@ export default function OrderQueuePage() {
               </tbody>
             </table>
           </div>
+
+          {v2Preview.benchmark && <SpacingBenchmarkPanel sheet={v2Preview} benchmark={v2Preview.benchmark} />}
 
           <GroupedV2PreviewCanvas items={v2Preview.items} groups={v2Preview.groups} />
         </div>
