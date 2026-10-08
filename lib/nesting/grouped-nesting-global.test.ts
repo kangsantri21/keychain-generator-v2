@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   compareScores,
-  evaluateOuterLayout,
+  scoreOuterPlacements,
   selectGlobalCandidates,
   type GlobalOrderInput,
   type OuterPackConfig,
@@ -89,9 +89,14 @@ describe("PHASE 2D TEST B — baseline fallback", () => {
   test("across many synthetic batches the final layout is never scored worse than Phase 2C", () => {
     for (let seed = 1; seed <= 20; seed++) {
       const result = runGroupedNesting(syntheticItems(2 + (seed % 9), seed));
-      const config = { sheetWidth: 310, sheetHeight: 470, orderGapMm: 8, sheetMarginMm: 5 };
-      const finalScore = evaluateOuterLayout(result.groups.map((g) => g.candidate), config).score;
-      assert.ok(compareScores(finalScore, result.optimizer.baselineScore) <= 0, `seed ${seed}: worse than baseline`);
+      // Score the layout actually produced (group positions as placed, margin
+      // removed to match the usable-area coordinates the baseline was scored in).
+      const finalScore = scoreOuterPlacements(
+        result.groups.map((g) => ({ x: g.x - 5, y: g.y - 5, width: g.width, height: g.height, sheetIndex: g.sheetIndex })),
+        result.groups.length + result.unfit.length,
+        310 - 2 * 5
+      );
+      assert.ok(compareScores(finalScore, result.optimizer.phase2d.baselineScore) <= 0, `seed ${seed}: worse than baseline`);
     }
   });
 });
@@ -137,7 +142,7 @@ describe("PHASE 2D TEST F — deterministic", () => {
     const summarize = (r: ReturnType<typeof runGroupedNesting<Payload>>) => ({
       groups: r.groups.map((g) => [g.orderId, g.candidate.candidateId, g.x, g.y, g.sheetIndex]),
       metrics: r.metrics,
-      optimizer: r.optimizer,
+      optimizer: r.optimizer.phase2d,
     });
     assert.deepEqual(summarize(runGroupedNesting(syntheticItems(15, 3))), summarize(runGroupedNesting(syntheticItems(15, 3))));
   });
@@ -147,15 +152,15 @@ describe("PHASE 2D TEST G — beam bound", () => {
   test("states evaluated never exceed the configured limit", () => {
     const limits = { beamWidth: 64, maxCandidatesPerOrder: 12, maxStatesEvaluated: 40 };
     const result = runGroupedNesting(syntheticItems(20, 11), {}, limits);
-    assert.ok(result.optimizer.statesEvaluated <= limits.maxStatesEvaluated, `${result.optimizer.statesEvaluated} > 40`);
-    assert.ok(result.optimizer.effectiveBeamWidth <= limits.beamWidth);
+    assert.ok(result.optimizer.phase2d.statesEvaluated <= limits.maxStatesEvaluated, `${result.optimizer.phase2d.statesEvaluated} > 40`);
+    assert.ok(result.optimizer.phase2d.effectiveBeamWidth <= limits.beamWidth);
   });
 
   test("a tiny budget still returns a complete, valid layout", () => {
     const limits = { beamWidth: 4, maxCandidatesPerOrder: 3, maxStatesEvaluated: 5 };
     const items = syntheticItems(8, 5);
     const result = runGroupedNesting(items, {}, limits);
-    assert.ok(result.optimizer.statesEvaluated <= 5);
+    assert.ok(result.optimizer.phase2d.statesEvaluated <= 5);
     assert.equal(result.items.length + result.unfit.length, items.length);
   });
 });
@@ -168,8 +173,48 @@ describe("PHASE 2D TEST H — many orders", () => {
     const elapsedMs = performance.now() - start;
 
     assert.ok(elapsedMs < 5000, `took ${elapsedMs.toFixed(0)} ms`);
-    assert.ok(result.optimizer.statesEvaluated <= 3000);
+    assert.ok(result.optimizer.phase2d.statesEvaluated <= 3000);
     assert.equal(result.groups.length, 100);
     assert.equal(result.unfit.length, 0);
+  });
+});
+
+describe("PHASE 2E OBJECTIVE — full-width strip preference (media 310 mm wide)", () => {
+  const MEDIA_WIDTH = 310;
+  const layout = (...sheets: [number, number][]) =>
+    scoreOuterPlacements(
+      sheets.map(([width, height], sheetIndex) => ({ x: 0, y: 0, width, height, sheetIndex })),
+      sheets.length,
+      MEDIA_WIDTH
+    );
+
+  test("273 x 210 beats 209 x 263 even though 209 x 263 has the smaller bounding area", () => {
+    const a = layout([273, 210]);
+    const b = layout([209, 263]);
+    assert.ok(b.boundingArea < a.boundingArea, "precondition: B is smaller by area");
+    assert.ok(compareScores(a, b) < 0, "lower used height must win");
+  });
+
+  test("same used height -> smaller bounding area wins", () => {
+    assert.ok(compareScores(layout([200, 150]), layout([240, 150])) < 0);
+  });
+
+  test("same used height and bounding area -> smaller unused side width (wider usage) wins", () => {
+    // Two sheets each: max height 50 both, total area 7400 both, but max width 100 vs 85.
+    const wide = layout([100, 50], [60, 40]);
+    const narrow = layout([80, 50], [85, 40]);
+    assert.equal(wide.usedHeight, narrow.usedHeight);
+    assert.equal(wide.boundingArea, narrow.boundingArea);
+    assert.equal(wide.unusedSideWidth, 210);
+    assert.equal(narrow.unusedSideWidth, 225);
+    assert.ok(compareScores(wide, narrow) < 0);
+  });
+
+  test("validity gates still come first: a lower layout that drops a group or adds a sheet never wins", () => {
+    const valid = layout([273, 210]);
+    const droppedGroup = { ...layout([200, 100]), unfitGroups: 1 };
+    const extraSheet = layout([200, 100], [50, 50]);
+    assert.ok(compareScores(valid, droppedGroup) < 0);
+    assert.ok(compareScores(valid, extraSheet) < 0);
   });
 });

@@ -14,7 +14,7 @@
  * per the PHASE 2B instructions, "transform item tidak berubah".
  */
 import type { KeychainRenderPayload } from "@/lib/staging-types";
-import type { GlobalSearchStats } from "./grouped-nesting-global";
+import type { OuterOptimizerStats } from "./grouped-nesting-outer";
 
 export interface GroupedV2PreviewItem {
   orderId: number | null;
@@ -65,7 +65,7 @@ export interface GroupedV2PreviewSheet {
   items: GroupedV2PreviewItem[];
   groups: GroupedV2PreviewGroup[];
   metrics: GroupedV2PreviewMetrics;
-  optimizer: GlobalSearchStats;
+  optimizer: OuterOptimizerStats & { elapsedMs?: number };
   warnings: string[];
   unfitCount: number;
 }
@@ -108,8 +108,8 @@ export interface GroupedV2ApiResponse {
     render: KeychainRenderPayload | null;
   }[];
   metrics: GroupedV2PreviewMetrics;
-  /** PHASE 2D global candidate-selection diagnostics. */
-  optimizer: GlobalSearchStats;
+  /** PHASE 2D/2E optimizer diagnostics (`elapsedMs` added by the API route, not part of the deterministic result). */
+  optimizer: OuterOptimizerStats & { elapsedMs?: number };
   warnings: string[];
   unfitCount: number;
 }

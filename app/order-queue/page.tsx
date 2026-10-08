@@ -11,7 +11,7 @@ import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { GroupedV2PreviewCanvas } from "@/components/order-queue/GroupedV2PreviewCanvas";
 import { buildGroupedV2PreviewSheet, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
-import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "@/lib/nesting/grouped-nesting-config";
+import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
 
 type NestingMode = "legacy" | "grouped-v2-preview";
 
@@ -626,27 +626,52 @@ export default function OrderQueuePage() {
             </ul>
           )}
 
-          {/* PHASE 2D dev diagnostics — did the global search beat the Phase 2C local picks? */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-4">
-            <span>Global Optimizer: {v2Preview.optimizer.strategy}</span>
-            <span>
-              Beam Width: {v2Preview.optimizer.effectiveBeamWidth}/{v2Preview.optimizer.beamWidth}
-            </span>
-            <span>
-              States Evaluated: {v2Preview.optimizer.statesEvaluated}
-              {v2Preview.optimizer.limitReached ? " (limit)" : ""}
-            </span>
-            <span>Result: {v2Preview.optimizer.usedBaseline ? "baseline 2C dipertahankan" : "optimized 2D"}</span>
-            <span>
-              Baseline Score: {v2Preview.optimizer.baselineScore.sheetCount} lembar ·{" "}
-              {v2Preview.optimizer.baselineScore.boundingArea.toFixed(0)} mm²
-            </span>
-            <span>
-              Optimized Score: {v2Preview.optimizer.optimizedScore.sheetCount} lembar ·{" "}
-              {v2Preview.optimizer.optimizedScore.boundingArea.toFixed(0)} mm²
-            </span>
-            <span>Improvement: {v2Preview.optimizer.improvementPercent.toFixed(1)}%</span>
-          </div>
+          {/* PHASE 2D/2E dev diagnostics — did the gain come from candidate selection or from the outer packing strategy? */}
+          {(() => {
+            const optimizer = v2Preview.optimizer;
+            const formatScore = (score: typeof optimizer.finalScore) =>
+              `${score.sheetCount} lembar · H ${score.usedHeight.toFixed(1)} · ${score.boundingArea.toFixed(0)} mm²`;
+            const { usedWidth, usedHeight } = v2Preview.metrics;
+            const sourceLabel = { phase2c: "Phase 2C (lokal)", phase2d: "Phase 2D (global)", phase2e: "Phase 2E (multi-outer)" }[
+              optimizer.candidateSource
+            ];
+            return (
+              <div className="grid grid-cols-1 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-3">
+                <span className="font-semibold text-slate-700 sm:col-span-3">OBJECTIVE</span>
+                <span>
+                  Media: {SHEET_WIDTH_MM} × {SHEET_HEIGHT_MM} mm
+                </span>
+                <span>Optimization Goal: MIN USED HEIGHT</span>
+                <span>Reason: preserve reusable full-width remainder</span>
+                <span>Used Width: {usedWidth.toFixed(1)} mm</span>
+                <span>Used Height: {usedHeight.toFixed(1)} mm</span>
+                <span />
+                <span>Remaining Full-Width Height: {(SHEET_HEIGHT_MM - usedHeight).toFixed(1)} mm</span>
+                <span>Side Fragment Width: {(SHEET_WIDTH_MM - usedWidth).toFixed(1)} mm</span>
+                <span />
+                <span className="mt-2 font-semibold text-slate-700 sm:col-span-3">OUTER PACKING</span>
+                <span>Selected Strategy: {optimizer.selectedHeuristic}</span>
+                <span>Selected Sort: {optimizer.selectedSort}</span>
+                <span>Global Candidate State: {sourceLabel}</span>
+                <span>
+                  Strategies Tried: {optimizer.attemptsPerState}/{optimizer.strategiesTried} per state
+                </span>
+                <span>
+                  Outer Attempts: {optimizer.outerPackAttempts}
+                  {optimizer.limitReached ? " (limit)" : ""}
+                </span>
+                <span>
+                  States Evaluated: {optimizer.candidateStatesEvaluated}
+                  {optimizer.elapsedMs !== undefined ? ` · ${optimizer.elapsedMs.toFixed(0)} ms` : ""}
+                </span>
+                <span>Baseline 2C: {formatScore(optimizer.phase2cScore)}</span>
+                <span>Phase 2D: {formatScore(optimizer.phase2dScore)}</span>
+                <span>Final: {formatScore(optimizer.finalScore)}</span>
+                <span>Height Improvement vs 2C: {optimizer.improvementVsPhase2CPercent.toFixed(1)}%</span>
+                <span>Height Improvement vs 2D: {optimizer.improvementVsPhase2DPercent.toFixed(1)}%</span>
+              </div>
+            );
+          })()}
 
           {/* PHASE 2C dev diagnostics — which group wastes the most of its own box. */}
           <div className="overflow-x-auto">

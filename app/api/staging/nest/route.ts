@@ -134,7 +134,10 @@ export async function POST(request: NextRequest) {
       data: rect.data,
     }));
 
+    // Dev diagnostic only — measured here, outside the deterministic result.
+    const startedAt = performance.now();
     const result = runGroupedNesting(groupedItems);
+    const elapsedMs = performance.now() - startedAt;
 
     return NextResponse.json({
       mode: "grouped-v2",
@@ -170,7 +173,7 @@ export async function POST(request: NextRequest) {
         render: item.data.render,
       })),
       metrics: result.metrics,
-      optimizer: result.optimizer,
+      optimizer: { ...result.optimizer, elapsedMs },
       warnings: result.warnings,
       unfitCount: result.unfit.length,
     });

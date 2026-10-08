@@ -54,17 +54,27 @@ export const DEFAULT_GLOBAL_SEARCH_LIMITS: GlobalSearchLimits = {
 };
 
 /**
- * Lexicographic score for a FIXED-SHEET media (the keychain module packs onto
- * discrete 310 x 470 mm sheets and spills onto new ones): fewer unplaceable
- * groups, then fewer sheets, then less bounding waste (sum of each sheet's
- * used bounding-box area — total item area is the same for every
- * combination, so this IS waste), then a shorter, then a narrower layout.
+ * Lexicographic production score for the keychain media (310 x 470 mm,
+ * fixed width). The most reusable leftover is a FULL-WIDTH strip below the
+ * layout, so a lower layout wins even with slightly more bounding waste:
+ *
+ *   validity gates — fewer unplaceable groups, then fewer sheets (a layout
+ *                    that drops a group or spills to a 2nd sheet must never
+ *                    "win" on height)
+ *   1. usedHeight ASC       — keep the full-width remainder as tall as possible
+ *   2. boundingArea ASC     — then least bounding waste (sum per sheet)
+ *   3. unusedSideWidth ASC  — then the thinnest side fragment
+ *   4. usedWidth DESC       — (same order as 3, since usable width is fixed;
+ *                             kept explicit to mirror the business rule)
+ *   5. caller's deterministic tie-break (strategy / candidate order)
  */
 export interface GlobalLayoutScore {
   unfitGroups: number;
   sheetCount: number;
-  boundingArea: number;
   usedHeight: number;
+  boundingArea: number;
+  /** usableSheetWidth - usedWidth. */
+  unusedSideWidth: number;
   usedWidth: number;
 }
 
@@ -75,12 +85,13 @@ export interface OuterLayoutEvaluation {
 const EPSILON = 1e-6;
 
 export function compareScores(a: GlobalLayoutScore, b: GlobalLayoutScore): number {
-  const keys: (keyof GlobalLayoutScore)[] = ["unfitGroups", "sheetCount", "boundingArea", "usedHeight", "usedWidth"];
-  for (const key of keys) {
+  const ascending: (keyof GlobalLayoutScore)[] = ["unfitGroups", "sheetCount", "usedHeight", "boundingArea", "unusedSideWidth"];
+  for (const key of ascending) {
     const diff = a[key] - b[key];
     if (Math.abs(diff) > EPSILON) return diff;
   }
-  return 0;
+  const widthDiff = b.usedWidth - a.usedWidth;
+  return Math.abs(widthDiff) > EPSILON ? widthDiff : 0;
 }
 
 /**
@@ -94,7 +105,16 @@ export function evaluateOuterLayout<T>(candidates: OrderLayoutCandidate<T>[], co
   const usableHeight = config.sheetHeight - 2 * config.sheetMarginMm;
   const rects: NestableRect<null>[] = candidates.map((c) => ({ width: c.width, height: c.height, data: null }));
   const packed = packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false);
+  return { score: scoreOuterPlacements(packed, candidates.length, usableWidth) };
+}
 
+/** Scores any outer placement list (legacy or Phase 2E packer) with the same fixed-sheet objective. */
+export function scoreOuterPlacements(
+  packed: { x: number; y: number; width: number; height: number; sheetIndex: number }[],
+  groupCount: number,
+  /** Width of the area the placements were packed into (sheet minus margins) — for unusedSideWidth. */
+  usableWidth: number
+): GlobalLayoutScore {
   const boundsBySheet = new Map<number, { maxX: number; maxY: number }>();
   for (const p of packed) {
     const bounds = boundsBySheet.get(p.sheetIndex) ?? { maxX: 0, maxY: 0 };
@@ -104,14 +124,34 @@ export function evaluateOuterLayout<T>(candidates: OrderLayoutCandidate<T>[], co
   }
 
   const sheets = [...boundsBySheet.values()];
+  const usedWidth = Math.max(0, ...sheets.map((b) => b.maxX));
   return {
-    score: {
-      unfitGroups: candidates.length - packed.length,
-      sheetCount: sheets.length,
-      boundingArea: sheets.reduce((sum, b) => sum + b.maxX * b.maxY, 0),
-      usedHeight: Math.max(0, ...sheets.map((b) => b.maxY)),
-      usedWidth: Math.max(0, ...sheets.map((b) => b.maxX)),
-    },
+    unfitGroups: groupCount - packed.length,
+    sheetCount: sheets.length,
+    usedHeight: Math.max(0, ...sheets.map((b) => b.maxY)),
+    boundingArea: sheets.reduce((sum, b) => sum + b.maxX * b.maxY, 0),
+    unusedSideWidth: usableWidth - usedWidth,
+    usedWidth,
+  };
+}
+
+/**
+ * How a candidate selection is turned into a score. Phase 2D's default packs
+ * once with the legacy packer; Phase 2E plugs in a multi-strategy evaluator
+ * (see grouped-nesting-outer.ts). `exhausted()` lets an evaluator with its
+ * own budget stop the search early.
+ */
+export interface OuterLayoutEvaluator<T> {
+  evaluate(selection: OrderLayoutCandidate<T>[]): { score: GlobalLayoutScore; strategyId: string };
+  exhausted(): boolean;
+}
+
+export const LEGACY_STRATEGY_ID = "BSSF/AREA_DESC";
+
+function legacyEvaluator<T>(config: OuterPackConfig): OuterLayoutEvaluator<T> {
+  return {
+    evaluate: (selection) => ({ score: evaluateOuterLayout(selection, config).score, strategyId: LEGACY_STRATEGY_ID }),
+    exhausted: () => false,
   };
 }
 
@@ -134,14 +174,17 @@ export interface GlobalSearchStats {
   optimizedScore: GlobalLayoutScore;
   /** True when the search result was not strictly better and the Phase 2C selection was kept. */
   usedBaseline: boolean;
-  /** Bounding-area reduction vs. the Phase 2C baseline, percent (0 when the baseline was kept). */
+  /** usedHeight reduction vs. the Phase 2C baseline, percent (0 when the baseline was kept). */
   improvementPercent: number;
+  /** Outer packing strategy behind `optimizedScore` (always the legacy one in Phase 2D). */
+  outerStrategyId: string;
 }
 
 interface BeamState {
   /** choice[orderIndex] = index into that order's option list; 0 = its Phase 2C local choice. */
   choice: number[];
   score: GlobalLayoutScore;
+  strategyId: string;
 }
 
 /** Local choice first, then smallest area, then candidateId — bounded by maxCandidatesPerOrder. */
@@ -185,11 +228,13 @@ function compareStates(a: BeamState, b: BeamState): number {
 export function selectGlobalCandidates<T>(
   orders: GlobalOrderInput<T>[],
   config: OuterPackConfig,
-  limits: GlobalSearchLimits = DEFAULT_GLOBAL_SEARCH_LIMITS
+  limits: GlobalSearchLimits = DEFAULT_GLOBAL_SEARCH_LIMITS,
+  evaluator: OuterLayoutEvaluator<T> = legacyEvaluator(config)
 ): { selected: OrderLayoutCandidate<T>[]; stats: GlobalSearchStats } {
   const options = orders.map((order) => candidateOptions(order, limits.maxCandidatesPerOrder));
   const baselineSelection = orders.map((order) => order.local);
-  const baselineScore = evaluateOuterLayout(baselineSelection, config).score;
+  const baseline = evaluator.evaluate(baselineSelection);
+  const baselineScore = baseline.score;
   let statesEvaluated = 1;
 
   // Decide big orders first (they constrain the layout most); ties by orderId then candidateId.
@@ -211,7 +256,7 @@ export function selectGlobalCandidates<T>(
   // Start from the baseline itself (every order on its local choice). Each
   // depth re-decides one order, keeping option 0 ("stay local") among the
   // expansions, so the best score never gets worse from one depth to the next.
-  let beam: BeamState[] = [{ choice: orders.map(() => 0), score: baselineScore }];
+  let beam: BeamState[] = [{ choice: orders.map(() => 0), score: baselineScore, strategyId: baseline.strategyId }];
   let limitReached = false;
 
   for (const orderIndex of decisionOrder) {
@@ -219,13 +264,13 @@ export function selectGlobalCandidates<T>(
     for (const state of beam) {
       expanded.push(state);
       for (let optionIndex = 1; optionIndex < options[orderIndex].length; optionIndex++) {
-        if (statesEvaluated >= limits.maxStatesEvaluated) {
+        if (statesEvaluated >= limits.maxStatesEvaluated || evaluator.exhausted()) {
           limitReached = true;
           break;
         }
         const choice = state.choice.slice();
         choice[orderIndex] = optionIndex;
-        expanded.push({ choice, score: evaluateOuterLayout(selectionOf(choice), config).score });
+        expanded.push({ choice, ...evaluator.evaluate(selectionOf(choice)) });
         statesEvaluated++;
       }
       if (limitReached) break;
@@ -242,8 +287,8 @@ export function selectGlobalCandidates<T>(
 
   const useOptimized = compareScores(optimizedScore, baselineScore) < 0;
   const improvementPercent =
-    useOptimized && baselineScore.boundingArea > 0
-      ? ((baselineScore.boundingArea - optimizedScore.boundingArea) / baselineScore.boundingArea) * 100
+    useOptimized && baselineScore.usedHeight > 0
+      ? ((baselineScore.usedHeight - optimizedScore.usedHeight) / baselineScore.usedHeight) * 100
       : 0;
 
   return {
@@ -258,6 +303,7 @@ export function selectGlobalCandidates<T>(
       optimizedScore,
       usedBaseline: !useOptimized,
       improvementPercent,
+      outerStrategyId: useOptimized ? beam[0].strategyId : baseline.strategyId,
     },
   };
 }

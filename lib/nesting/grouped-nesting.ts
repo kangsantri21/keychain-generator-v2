@@ -31,7 +31,9 @@
  */
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { generateOrderCandidates } from "./grouped-nesting-candidates";
-import { selectGlobalCandidates, DEFAULT_GLOBAL_SEARCH_LIMITS, type GlobalSearchLimits } from "./grouped-nesting-global";
+import { DEFAULT_GLOBAL_SEARCH_LIMITS, type GlobalSearchLimits } from "./grouped-nesting-global";
+import { optimizeOuterLayout, DEFAULT_OUTER_PACKING_LIMITS, type OuterPackingLimits } from "./grouped-nesting-outer";
+import { packOuterRects, LEGACY_OUTER_STRATEGY, type OuterPackingStrategy } from "./outer-maxrects";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "./grouped-nesting-config";
 import type {
   GroupedNestingItem,
@@ -188,7 +190,8 @@ export function packOrderGroup<T>(
 export function packGroupsOntoSheet<T>(
   candidates: OrderLayoutCandidate<T>[],
   config: GroupedNestingConfig,
-  contextByCandidateId: Map<string, { alternatives: OrderLayoutCandidate<T>[]; local: OrderLayoutCandidate<T> }> = new Map()
+  contextByCandidateId: Map<string, { alternatives: OrderLayoutCandidate<T>[]; local: OrderLayoutCandidate<T> }> = new Map(),
+  strategy: OuterPackingStrategy = LEGACY_OUTER_STRATEGY
 ): { groups: GroupPlacement<T>[]; unfitCandidates: OrderLayoutCandidate<T>[] } {
   if (candidates.length === 0) {
     return { groups: [], unfitCandidates: [] };
@@ -203,7 +206,13 @@ export function packGroupsOntoSheet<T>(
     data: candidate,
   }));
 
-  const packed = packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false);
+  // Legacy strategy -> the untouched legacy packer, byte-for-byte the Phase
+  // 2A-2D behavior. Any other Phase 2E strategy -> the V2 packer, which has
+  // identical placement semantics (no rotation, so `rotated` is always false).
+  const packed =
+    strategy.id === LEGACY_OUTER_STRATEGY.id
+      ? packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false)
+      : packOuterRects(rects, usableWidth, usableHeight, config.orderGapMm, strategy).map((p) => ({ ...p, rotated: false }));
 
   const placedCandidateIds = new Set(packed.map((p) => p.data.candidateId));
   const unfitCandidates = candidates.filter((c) => !placedCandidateIds.has(c.candidateId));
@@ -254,7 +263,8 @@ export function packGroupsOntoSheet<T>(
 export function runGroupedNesting<T>(
   items: GroupedNestingItem<T>[],
   overrides: GroupedNestingConfigOverrides = {},
-  searchLimits: GlobalSearchLimits = DEFAULT_GLOBAL_SEARCH_LIMITS
+  searchLimits: GlobalSearchLimits = DEFAULT_GLOBAL_SEARCH_LIMITS,
+  outerLimits: OuterPackingLimits = DEFAULT_OUTER_PACKING_LIMITS
 ): GroupedNestingResult<T> {
   const config = resolveConfig(overrides);
 
@@ -275,13 +285,14 @@ export function runGroupedNesting<T>(
     unfit.push(...groupUnfit);
   }
 
-  // PHASE 2D: pick one candidate per order by global outer-layout score
-  // (never worse than the Phase 2C local picks — see grouped-nesting-global.ts).
-  // `selected` keeps orderInputs' order, so packGroupsOntoSheet below packs
-  // exactly the layout the search scored.
-  const { selected: candidates, stats: optimizer } = selectGlobalCandidates(orderInputs, config, searchLimits);
+  // PHASE 2D/2E: pick one candidate per order AND the outer packing
+  // strategy by global outer-layout score — never worse than Phase 2D, which
+  // is never worse than the Phase 2C local picks (see grouped-nesting-
+  // outer.ts). `selected` keeps orderInputs' order, so packGroupsOntoSheet
+  // below packs exactly the layout that was scored.
+  const { selected: candidates, strategy, stats: optimizer } = optimizeOuterLayout(orderInputs, config, searchLimits, outerLimits);
 
-  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, contextByCandidateId);
+  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, contextByCandidateId, strategy);
 
   for (const candidate of unfitCandidates) {
     unfit.push(...candidate.placements.map((placement) => placement.item));

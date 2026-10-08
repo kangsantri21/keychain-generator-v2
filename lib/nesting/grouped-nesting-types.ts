@@ -10,7 +10,7 @@
  * never its implementation — so nothing here can affect legacy behavior.
  */
 import type { NestableRect, PackedRect } from "@/lib/nesting";
-import type { GlobalSearchStats } from "./grouped-nesting-global";
+import type { OuterOptimizerStats } from "./grouped-nesting-outer";
 
 /**
  * One nestable unit going into Grouped Nesting — the "Order" (resi) it
@@ -132,6 +132,6 @@ export interface GroupedNestingResult<T> {
   warnings: string[];
   /** Items that could not be placed at all (e.g. larger than the sheet in every orientation) — never silently dropped without a trace, unlike legacy `packMaxRects`. */
   unfit: GroupedNestingItem<T>[];
-  /** PHASE 2D global candidate-selection diagnostics. */
-  optimizer: GlobalSearchStats;
+  /** PHASE 2D/2E global candidate-selection + outer-strategy diagnostics. */
+  optimizer: OuterOptimizerStats;
 }
