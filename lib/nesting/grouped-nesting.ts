@@ -197,7 +197,9 @@ export function packGroupsOntoSheet<T>(
   candidates: OrderLayoutCandidate<T>[],
   config: GroupedNestingConfig,
   contextByCandidateId: Map<string, { alternatives: OrderLayoutCandidate<T>[]; local: OrderLayoutCandidate<T> }> = new Map(),
-  strategy: OuterPackingStrategy = LEGACY_OUTER_STRATEGY
+  strategy: OuterPackingStrategy = LEGACY_OUTER_STRATEGY,
+  /** PHASE 2H — must match what the optimizer scored with, so the final pack reproduces it. */
+  maxExistingSheetTrials?: number
 ): { groups: GroupPlacement<T>[]; unfitCandidates: OrderLayoutCandidate<T>[] } {
   if (candidates.length === 0) {
     return { groups: [], unfitCandidates: [] };
@@ -218,7 +220,10 @@ export function packGroupsOntoSheet<T>(
   const packed =
     strategy.id === LEGACY_OUTER_STRATEGY.id
       ? packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false)
-      : packOuterRects(rects, usableWidth, usableHeight, config.orderGapMm, strategy).map((p) => ({ ...p, rotated: false }));
+      : packOuterRects(rects, usableWidth, usableHeight, config.orderGapMm, strategy, { maxExistingSheetTrials }).map((p) => ({
+          ...p,
+          rotated: false,
+        }));
 
   const placedCandidateIds = new Set(packed.map((p) => p.data.candidateId));
   const unfitCandidates = candidates.filter((c) => !placedCandidateIds.has(c.candidateId));
@@ -298,7 +303,7 @@ export function runGroupedNesting<T>(
   // below packs exactly the layout that was scored.
   const { selected: candidates, strategy, stats: optimizer } = optimizeOuterLayout(orderInputs, config, searchLimits, outerLimits);
 
-  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, contextByCandidateId, strategy);
+  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, contextByCandidateId, strategy, outerLimits.maxExistingSheetTrials);
 
   // A group is one rectangle, so it lands wholly on one sheet or nowhere —
   // never split. One that fits no sheet is reported with an explicit reason.

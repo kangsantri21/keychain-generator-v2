@@ -640,7 +640,7 @@ export default function OrderQueuePage() {
             const { usedWidth, usedHeight } = v2Preview.metrics;
             const summary = v2Preview.summary;
             const multiSheet = (summary?.sheetCount ?? 1) > 1;
-            const sourceLabel = { phase2c: "Phase 2C (lokal)", phase2d: "Phase 2D (global)", phase2e: "Phase 2E (multi-outer)" }[
+            const sourceLabel = { phase2c: "Phase 2C (lokal)", phase2d: "Phase 2D (global)", phase2e: "Phase 2E (multi-outer)", phase2h: "Phase 2H (best-existing)" }[
               optimizer.candidateSource
             ];
             return (
@@ -698,6 +698,29 @@ export default function OrderQueuePage() {
                 <span>Final: {formatScore(optimizer.finalScore)}</span>
                 <span>Height Improvement vs 2C: {optimizer.improvementVsPhase2CPercent.toFixed(1)}%</span>
                 <span>Height Improvement vs 2D: {optimizer.improvementVsPhase2DPercent.toFixed(1)}%</span>
+                {/* PHASE 2H — "before" is the Phase 2G LAST_ONLY result. */}
+                <span className="mt-2 font-semibold text-slate-700 sm:col-span-3">MULTI-SHEET PACKING</span>
+                <span>
+                  Strategy: {optimizer.multiSheet.mode}
+                  {optimizer.multiSheet.bestExistingEvaluated && optimizer.multiSheet.mode === "LAST_ONLY" ? " (fallback — 2G tetap terbaik)" : ""}
+                  {!optimizer.multiSheet.bestExistingEvaluated ? " (1 lembar — BEST_EXISTING tidak diperlukan)" : ""}
+                </span>
+                <span>
+                  Sheets Before → After: {optimizer.multiSheet.sheetsBefore} → {optimizer.multiSheet.sheetsAfter}
+                </span>
+                <span>
+                  Sum Used Height Before → After: {optimizer.multiSheet.sumUsedHeightBefore.toFixed(1)} → {optimizer.multiSheet.sumUsedHeightAfter.toFixed(1)} mm
+                </span>
+                <span>
+                  Height Saved: {optimizer.multiSheet.heightSavedMm.toFixed(1)} mm / {optimizer.multiSheet.heightSavedPercent.toFixed(1)}%
+                </span>
+                <span>Existing-Sheet Attempts: {optimizer.multiSheet.existingSheetAttempts}</span>
+                <span>Successful Backfills: {optimizer.multiSheet.successfulBackfills}</span>
+                <span>New Sheets Avoided: {optimizer.multiSheet.newSheetsAvoided}</span>
+                <span>Relocation Pass: {optimizer.multiSheet.relocationPass}</span>
+                <span>
+                  BEST_EXISTING Stage: {optimizer.multiSheet.statesEvaluated} states · {optimizer.multiSheet.packEvaluations} packs
+                </span>
               </div>
             );
           })()}

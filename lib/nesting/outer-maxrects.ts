@@ -23,11 +23,43 @@
 export type PlacementHeuristic = "BSSF" | "BLSF" | "BAF" | "BL";
 export type SortStrategy = "AREA_DESC" | "HEIGHT_DESC" | "WIDTH_DESC" | "MAX_SIDE_DESC" | "PERIMETER_DESC";
 
+/**
+ * PHASE 2H — how a group that does not fit picks a sheet.
+ * LAST_ONLY: try the most recently opened sheet, else open a new one (the
+ * legacy/Phase 2G behavior). BEST_EXISTING: try EVERY open sheet and take the
+ * best insertion; open a new sheet only when no open sheet can take it.
+ */
+export type SheetMode = "LAST_ONLY" | "BEST_EXISTING";
+
 export interface OuterPackingStrategy {
   id: string;
   heuristic: PlacementHeuristic;
   sort: SortStrategy;
+  /** Omitted = LAST_ONLY. */
+  sheetMode?: SheetMode;
 }
+
+/** The same heuristic x sort, but placing with BEST_EXISTING (id gets a "+BEST_EXISTING" suffix). */
+export function withBestExisting(strategy: OuterPackingStrategy): OuterPackingStrategy {
+  return { ...strategy, id: `${strategy.id}+BEST_EXISTING`, sheetMode: "BEST_EXISTING" };
+}
+
+/** PHASE 2H — counters filled in by a BEST_EXISTING pack (all zero for LAST_ONLY). */
+export interface MultiSheetPackStats {
+  /** Open sheets tried (findBest calls) across the whole pack. */
+  existingSheetAttempts: number;
+  /** Groups placed on a sheet other than the most recently opened one. */
+  backfills: number;
+  /** Groups the last sheet could NOT take but an earlier sheet could — each one a sheet LAST_ONLY would have opened. */
+  newSheetsAvoided: number;
+}
+
+export function emptyMultiSheetPackStats(): MultiSheetPackStats {
+  return { existingSheetAttempts: 0, backfills: 0, newSheetsAvoided: 0 };
+}
+
+/** Default cap on findBest calls in one BEST_EXISTING pack; past it, placement falls back to the last sheet only. */
+export const MAX_EXISTING_SHEET_TRIALS = 5000;
 
 export const PLACEMENT_HEURISTICS: PlacementHeuristic[] = ["BSSF", "BAF", "BLSF", "BL"];
 export const SORT_STRATEGIES: SortStrategy[] = ["AREA_DESC", "HEIGHT_DESC", "WIDTH_DESC", "MAX_SIDE_DESC", "PERIMETER_DESC"];
@@ -130,12 +162,17 @@ function pruneFreeRects(freeRects: Rect[]): Rect[] {
 
 class OuterSheet {
   freeRects: Rect[];
+  /** Extent of what is placed so far (unpadded) and its area — for BEST_EXISTING scoring. */
+  maxX = 0;
+  maxY = 0;
+  placedArea = 0;
 
   constructor(usableWidth: number, usableHeight: number, border: number) {
     this.freeRects = [{ x: border, y: border, width: usableWidth, height: usableHeight }];
   }
 
-  place(width: number, height: number, gap: number, heuristic: PlacementHeuristic): Rect | null {
+  /** Best padded node for a width x height rect, WITHOUT touching this sheet's state. */
+  findBest(width: number, height: number, gap: number, heuristic: PlacementHeuristic): { node: Rect; score: number } | null {
     const paddedWidth = width + gap;
     const paddedHeight = height + gap;
     let best: Rect | null = null;
@@ -150,17 +187,27 @@ class OuterSheet {
         bestScore = score;
       }
     }
-    if (!best) return null;
+    return best ? { node: best, score: bestScore } : null;
+  }
 
+  /** Carves a node found by findBest out of this sheet; returns the unpadded placement. */
+  commit(node: Rect, width: number, height: number): Rect {
     const next: Rect[] = [];
     for (const free of this.freeRects) {
-      const pieces = splitFreeRect(free, best);
+      const pieces = splitFreeRect(free, node);
       if (pieces.length === 0) next.push(free);
       else next.push(...pieces);
     }
     this.freeRects = pruneFreeRects(next);
+    this.maxX = Math.max(this.maxX, node.x + width);
+    this.maxY = Math.max(this.maxY, node.y + height);
+    this.placedArea += width * height;
+    return { x: node.x, y: node.y, width, height };
+  }
 
-    return { x: best.x, y: best.y, width, height };
+  place(width: number, height: number, gap: number, heuristic: PlacementHeuristic): Rect | null {
+    const found = this.findBest(width, height, gap, heuristic);
+    return found ? this.commit(found.node, width, height) : null;
   }
 }
 
@@ -177,7 +224,8 @@ export function packOuterRects<T>(
   sheetWidth: number,
   sheetHeight: number,
   gap: number,
-  strategy: OuterPackingStrategy
+  strategy: OuterPackingStrategy,
+  options: { stats?: MultiSheetPackStats; maxExistingSheetTrials?: number } = {}
 ): OuterPlacement<T>[] {
   const usableWidth = sheetWidth - 2 * gap;
   const usableHeight = sheetHeight - 2 * gap;
@@ -187,8 +235,27 @@ export function packOuterRects<T>(
   const results: OuterPlacement<T>[] = [];
   const sheets: OuterSheet[] = [new OuterSheet(usableWidth, usableHeight, gap)];
 
+  const bestExisting = strategy.sheetMode === "BEST_EXISTING";
+  const maxTrials = options.maxExistingSheetTrials ?? MAX_EXISTING_SHEET_TRIALS;
+  const stats = options.stats ?? emptyMultiSheetPackStats();
+  let trials = 0;
+
   for (const rect of sorted) {
     if (rect.width > usableWidth || rect.height > usableHeight) continue;
+
+    if (bestExisting) {
+      const placed = placeOnBestExistingSheet(sheets, rect, gap, strategy.heuristic, maxTrials - trials, stats);
+      trials += placed.trials;
+      if (placed.result) {
+        results.push({ ...placed.result.rect, sheetIndex: placed.result.sheetIndex, data: rect.data });
+        continue;
+      }
+      // No open sheet can take it: only now open a new one.
+      sheets.push(new OuterSheet(usableWidth, usableHeight, gap));
+      const fresh = sheets[sheets.length - 1].place(rect.width, rect.height, gap, strategy.heuristic);
+      if (fresh) results.push({ ...fresh, sheetIndex: sheets.length - 1, data: rect.data });
+      continue;
+    }
 
     let sheetIndex = sheets.length - 1;
     let placed = sheets[sheetIndex].place(rect.width, rect.height, gap, strategy.heuristic);
@@ -201,4 +268,61 @@ export function packOuterRects<T>(
   }
 
   return results;
+}
+
+/**
+ * BEST_EXISTING insertion: simulate the rect on every open sheet (findBest
+ * never mutates), then commit only the winner. Ranking among sheets that can
+ * take it:
+ *   1. smallest increase of that sheet's used height (= of the global sum)
+ *   2. smallest resulting bounding waste on that sheet (fills its holes)
+ *   3. the heuristic's own placement score (tightest fit)
+ *   4. lower sheetIndex
+ * Once `trialsLeft` runs out only the last sheet is tried (LAST_ONLY).
+ */
+function placeOnBestExistingSheet(
+  sheets: OuterSheet[],
+  rect: { width: number; height: number },
+  gap: number,
+  heuristic: PlacementHeuristic,
+  trialsLeft: number,
+  stats: MultiSheetPackStats
+): { result: { sheetIndex: number; rect: Rect } | null; trials: number } {
+  const lastIndex = sheets.length - 1;
+  const firstIndex = trialsLeft >= sheets.length ? 0 : lastIndex;
+  let trials = 0;
+  let lastSheetFits = false;
+  let best: { sheetIndex: number; node: Rect; key: number[] } | null = null;
+
+  for (let sheetIndex = firstIndex; sheetIndex <= lastIndex; sheetIndex++) {
+    const sheet = sheets[sheetIndex];
+    trials++;
+    stats.existingSheetAttempts++;
+    const found = sheet.findBest(rect.width, rect.height, gap, heuristic);
+    if (!found) continue;
+    if (sheetIndex === lastIndex) lastSheetFits = true;
+
+    const newMaxX = Math.max(sheet.maxX, found.node.x + rect.width);
+    const newMaxY = Math.max(sheet.maxY, found.node.y + rect.height);
+    const heightDelta = newMaxY - sheet.maxY;
+    const waste = newMaxX * newMaxY - (sheet.placedArea + rect.width * rect.height);
+    const key = [heightDelta, waste, found.score, sheetIndex];
+
+    if (!best || compareKeys(key, best.key) < 0) best = { sheetIndex, node: found.node, key };
+  }
+
+  if (!best) return { result: null, trials };
+  if (best.sheetIndex !== lastIndex) stats.backfills++;
+  if (!lastSheetFits) stats.newSheetsAvoided++;
+  return { result: { sheetIndex: best.sheetIndex, rect: sheets[best.sheetIndex].commit(best.node, rect.width, rect.height) }, trials };
+}
+
+const KEY_EPSILON = 1e-9;
+
+function compareKeys(a: number[], b: number[]): number {
+  for (let i = 0; i < a.length; i++) {
+    const diff = a[i] - b[i];
+    if (Math.abs(diff) > KEY_EPSILON) return diff;
+  }
+  return 0;
 }

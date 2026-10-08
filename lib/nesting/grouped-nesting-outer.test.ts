@@ -191,7 +191,7 @@ describe("PHASE 2E TEST G — budget", () => {
   });
 
   test("per-state attempts respect maxOuterAttemptsPerState and the strategy/sort caps", () => {
-    const limits = { maxOuterStrategies: 2, maxSortVariants: 2, maxOuterAttemptsPerState: 3, maxTotalPackEvaluations: 12000 };
+    const limits = { ...DEFAULT_OUTER_PACKING_LIMITS, maxOuterStrategies: 2, maxSortVariants: 2, maxOuterAttemptsPerState: 3, maxTotalPackEvaluations: 12000 };
     const result = runGroupedNesting(syntheticItems(6, 8), {}, undefined, limits);
     assert.equal(result.optimizer.strategiesTried, 4);
     assert.ok(result.optimizer.attemptsPerState <= 3);
