@@ -60,6 +60,8 @@ export interface GroupItemPlacement<T> {
 export interface OrderLayoutCandidate<T> {
   candidateId: string;
   orderId: number | null;
+  /** Which Phase 2C attempt produced this layout (e.g. "unbounded", "landscape w1.25") — dev diagnostics only. */
+  strategy: string;
   /** Tight bounding box of this candidate's own packed items (already normalized to a (0,0) origin) — NOT the sheet size. */
   width: number;
   height: number;
@@ -82,6 +84,8 @@ export interface GroupPlacement<T> {
   rotated: boolean;
   sheetIndex: number;
   candidate: OrderLayoutCandidate<T>;
+  /** Every Pareto-surviving inner layout for this order (includes `candidate`) — kept so Phase 2D can choose by inter-order fit. */
+  alternatives: OrderLayoutCandidate<T>[];
   /** Absolute (on-sheet) placements — `candidate.placements` shifted by (x, y) (and re-oriented if the whole group itself was rotated as a block). */
   items: GroupedPackedRect<T>[];
 }

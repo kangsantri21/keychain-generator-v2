@@ -40,6 +40,11 @@ export interface GroupedV2PreviewGroup {
   width: number;
   height: number;
   itemCount: number;
+  /** PHASE 2C dev diagnostics (see `GroupedV2ApiResponse.groups`). */
+  candidateCount: number;
+  selectedStrategy: string;
+  itemArea: number;
+  internalUtilizationPercent: number;
 }
 
 export interface GroupedV2PreviewMetrics {
@@ -73,6 +78,13 @@ export interface GroupedV2ApiResponse {
     width: number;
     height: number;
     itemCount: number;
+    /** Pareto-surviving inner layouts generated for this order (PHASE 2C). */
+    candidateCount: number;
+    selectedStrategy: string;
+    /** Sum of item rectangle areas, mm². */
+    itemArea: number;
+    /** itemArea / (width * height) * 100. */
+    internalUtilizationPercent: number;
   }[];
   items: {
     orderId: number | null;
@@ -126,6 +138,10 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
     width: group.width,
     height: group.height,
     itemCount: group.itemCount,
+    candidateCount: group.candidateCount,
+    selectedStrategy: group.selectedStrategy,
+    itemArea: group.itemArea,
+    internalUtilizationPercent: group.internalUtilizationPercent,
   }));
 
   return {

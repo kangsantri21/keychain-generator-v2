@@ -22,19 +22,20 @@
  * legacy keychain flow, which keeps using it exactly as before.
  *
  * Phase 2A scope (see the PHASE 2A instructions this module was built
- * against for the full list): ONE deterministic candidate per order (no
- * multi-candidate optimization), rectangle-only outer packing (no group
+ * against for the full list): ONE deterministic candidate per order (Phase
+ * 2C since replaced this with a bounded multi-candidate inner pack — see
+ * grouped-nesting-candidates.ts), rectangle-only outer packing (no group
  * rotation, no true-shape/polygon nesting), no per-item OR per-group
  * receipt-label rendering, no persistence wiring — this module is a pure,
  * standalone computation with no I/O and no side effects.
  */
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
+import { generateOrderCandidates } from "./grouped-nesting-candidates";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "./grouped-nesting-config";
 import type {
   GroupedNestingItem,
   OrderGroup,
   OrderLayoutCandidate,
-  GroupItemPlacement,
   GroupPlacement,
   GroupedPackedRect,
   GroupedNestingMetrics,
@@ -119,23 +120,16 @@ export function groupItemsByOrder<T>(items: GroupedNestingItem<T>[]): { groups: 
 }
 
 /**
- * Inner pack: one deterministic, compact candidate layout for a single
- * order's items. Reuses legacy `packMaxRects` against a deliberately
- * oversized VIRTUAL sheet (`virtualWidth`/`virtualHeight` below) so this
- * order's items are mathematically guaranteed to fit in a single pass —
- * even a naive single-row-or-column arrangement would fit inside that
- * bound, so `packMaxRects` never has to spill onto a second (virtual)
- * sheet, which would break Phase 2A's "exactly one candidate per group"
- * contract. The candidate's own reported `width`/`height` is then
- * normalized to a tight (0,0)-origin bounding box of whatever `packMaxRects`
- * actually produced — NOT the oversized virtual sheet size.
+ * Inner pack for a single order. Phase 2A packed once against an unbounded
+ * virtual bin; Phase 2C (grouped-nesting-candidates.ts) instead generates a
+ * bounded set of layouts (target width x orientation policy, plus that same
+ * Phase 2A layout as a baseline), shrink-wraps each to its TRUE used bounds,
+ * prunes duplicates and Pareto-dominated layouts, and selects one —
+ * `candidate`. `candidates` is the whole surviving Pareto set, kept for
+ * Phase 2D.
  *
- * Rotation is all-or-nothing per group in Phase 2A: if every item in the
- * group allows rotation, the whole group's inner pack runs with rotation
- * enabled; if even one item disallows it, rotation is disabled for the
- * WHOLE group's inner pack (never rotates just the items that allow it) —
- * a deliberately conservative simplification for this phase rather than
- * partitioning a group's own packing by per-item rotation permission.
+ * Rotation stays all-or-nothing per group: if even one item disallows it,
+ * only the as-is orientation is tried, never a per-item mix.
  *
  * Deliberately does NOT reserve any receipt-label clearance — Phase 2A's
  * `PART_GAP_MM` is a plain production safety gap only (see grouped-
@@ -146,79 +140,25 @@ export function groupItemsByOrder<T>(items: GroupedNestingItem<T>[]): { groups: 
 export function packOrderGroup<T>(
   group: OrderGroup<T>,
   config: GroupedNestingConfig
-): { candidate: OrderLayoutCandidate<T> | null; unfit: GroupedNestingItem<T>[] } {
+): {
+  candidate: OrderLayoutCandidate<T> | null;
+  candidates: OrderLayoutCandidate<T>[];
+  attemptCount: number;
+  unfit: GroupedNestingItem<T>[];
+} {
   if (group.items.length === 0) {
-    return { candidate: null, unfit: [] };
+    return { candidate: null, candidates: [], attemptCount: 0, unfit: [] };
   }
 
-  const allowRotation = group.items.every((item) => item.allowRotation);
+  const { selected, candidates, attemptCount } = generateOrderCandidates(group, config);
 
-  const totalWidth = group.items.reduce((sum, item) => sum + item.width, 0);
-  const totalHeight = group.items.reduce((sum, item) => sum + item.height, 0);
-  const n = group.items.length;
-  // +n*gap: every item's own trailing gap in a naive single-row layout.
-  // +2*gap on top of that (not +1): packMaxRects's OWN usable-area
-  // computation is `virtualSize - 2*border` (border == the padding value
-  // passed in) BEFORE any item is even placed, so the virtual sheet must be
-  // oversized by that same 2*gap just to break even at zero items, in
-  // addition to the n trailing gaps the items themselves consume — a
-  // single-item group with the naive "+1" version of this formula came up
-  // exactly `gap` short of the border reservation and failed to place at
-  // all (caught by this module's own TEST C/E, see grouped-nesting.test.ts).
-  const virtualWidth = totalWidth + (n + 2) * config.partGapMm;
-  const virtualHeight = totalHeight + (n + 2) * config.partGapMm;
-
-  const rects: NestableRect<GroupedNestingItem<T>>[] = group.items.map((item) => ({
-    width: item.width,
-    height: item.height,
-    data: item,
-  }));
-
-  const packed = packMaxRects(rects, virtualWidth, virtualHeight, config.partGapMm, config.partGapMm, allowRotation);
-
-  const placedIds = new Set(packed.map((p) => p.data.id));
-  const unfit = group.items.filter((item) => !placedIds.has(item.id));
-
-  if (packed.length === 0) {
-    return { candidate: null, unfit: group.items };
+  // Every attempt's bin is sized to always hold every item, so this only
+  // triggers if the packer itself misbehaves — reported, never hidden.
+  if (!selected) {
+    return { candidate: null, candidates: [], attemptCount, unfit: group.items };
   }
 
-  // Normalize away the virtual sheet's own border inset (= config.partGapMm)
-  // so the candidate's reported size is tight against whatever was actually
-  // placed, not the artificially oversized virtual bound.
-  const minX = Math.min(...packed.map((p) => p.x));
-  const minY = Math.min(...packed.map((p) => p.y));
-  const maxX = Math.max(...packed.map((p) => p.x + p.width));
-  const maxY = Math.max(...packed.map((p) => p.y + p.height));
-
-  const placements: GroupItemPlacement<T>[] = packed.map((p) => ({
-    item: p.data,
-    x: p.x - minX,
-    y: p.y - minY,
-    width: p.width,
-    height: p.height,
-    rotated: p.rotated,
-  }));
-
-  const width = maxX - minX;
-  const height = maxY - minY;
-  const itemArea = group.items.reduce((sum, item) => sum + item.originalWidth * item.originalHeight, 0);
-  const area = width * height;
-
-  const candidate: OrderLayoutCandidate<T> = {
-    candidateId: `order-${group.orderId ?? "unknown"}:${group.items.map((item) => String(item.id)).join(",")}`,
-    orderId: group.orderId,
-    width,
-    height,
-    placements,
-    metrics: {
-      area,
-      itemArea,
-      utilizationPercent: area > 0 ? (itemArea / area) * 100 : 0,
-    },
-  };
-
-  return { candidate, unfit };
+  return { candidate: selected, candidates, attemptCount, unfit: [] };
 }
 
 /**
@@ -246,7 +186,8 @@ export function packOrderGroup<T>(
  */
 export function packGroupsOntoSheet<T>(
   candidates: OrderLayoutCandidate<T>[],
-  config: GroupedNestingConfig
+  config: GroupedNestingConfig,
+  alternativesByCandidateId: Map<string, OrderLayoutCandidate<T>[]> = new Map()
 ): { groups: GroupPlacement<T>[]; unfitCandidates: OrderLayoutCandidate<T>[] } {
   if (candidates.length === 0) {
     return { groups: [], unfitCandidates: [] };
@@ -295,6 +236,7 @@ export function packGroupsOntoSheet<T>(
       rotated: p.rotated,
       sheetIndex: p.sheetIndex,
       candidate,
+      alternatives: alternativesByCandidateId.get(candidate.candidateId) ?? [candidate],
       items,
     };
   });
@@ -316,15 +258,19 @@ export function runGroupedNesting<T>(
   const { groups: orderGroups, warnings } = groupItemsByOrder(items);
 
   const candidates: OrderLayoutCandidate<T>[] = [];
+  const alternativesByCandidateId = new Map<string, OrderLayoutCandidate<T>[]>();
   const unfit: GroupedNestingItem<T>[] = [];
 
   for (const group of orderGroups) {
-    const { candidate, unfit: groupUnfit } = packOrderGroup(group, config);
-    if (candidate) candidates.push(candidate);
+    const { candidate, candidates: alternatives, unfit: groupUnfit } = packOrderGroup(group, config);
+    if (candidate) {
+      candidates.push(candidate);
+      alternativesByCandidateId.set(candidate.candidateId, alternatives);
+    }
     unfit.push(...groupUnfit);
   }
 
-  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config);
+  const { groups, unfitCandidates } = packGroupsOntoSheet(candidates, config, alternativesByCandidateId);
 
   for (const candidate of unfitCandidates) {
     unfit.push(...candidate.placements.map((placement) => placement.item));

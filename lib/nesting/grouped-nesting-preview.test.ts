@@ -13,8 +13,8 @@ function mockResponse(overrides: Partial<GroupedV2ApiResponse> = {}): GroupedV2A
     mode: "grouped-v2",
     dryRun: true,
     groups: [
-      { orderId: 1, receiptCode: "RESI-A", x: 5, y: 5, width: 40, height: 20, itemCount: 2 },
-      { orderId: 2, receiptCode: null, x: 60, y: 5, width: 30, height: 15, itemCount: 1 },
+      { orderId: 1, receiptCode: "RESI-A", x: 5, y: 5, width: 40, height: 20, itemCount: 2, candidateCount: 3, selectedStrategy: "free w1", itemArea: 760, internalUtilizationPercent: 95 },
+      { orderId: 2, receiptCode: null, x: 60, y: 5, width: 30, height: 15, itemCount: 1, candidateCount: 1, selectedStrategy: "unbounded", itemArea: 450, internalUtilizationPercent: 100 },
     ],
     items: [
       { orderId: 1, x: 5, y: 5, width: 20, height: 20, rotated: false, groupX: 5, groupY: 5, groupWidth: 40, groupHeight: 20, customerName: "Ana", templateId: 10, render: null },

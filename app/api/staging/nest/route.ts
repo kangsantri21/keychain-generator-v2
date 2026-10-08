@@ -147,6 +147,11 @@ export async function POST(request: NextRequest) {
         width: group.width,
         height: group.height,
         itemCount: group.items.length,
+        // PHASE 2C dev diagnostics — which inner layout was picked and how much of its own box it fills.
+        candidateCount: group.alternatives.length,
+        selectedStrategy: group.candidate.strategy,
+        itemArea: group.candidate.metrics.itemArea,
+        internalUtilizationPercent: group.candidate.metrics.utilizationPercent,
       })),
       items: result.items.map((item) => ({
         orderId: item.orderId,

@@ -626,6 +626,36 @@ export default function OrderQueuePage() {
             </ul>
           )}
 
+          {/* PHASE 2C dev diagnostics — which group wastes the most of its own box. */}
+          <div className="overflow-x-auto">
+            <table className="w-full font-mono text-xs text-slate-600">
+              <thead className="text-left text-slate-400">
+                <tr>
+                  <th className="py-1 pr-4 font-medium">Order/Resi</th>
+                  <th className="py-1 pr-4 font-medium">Candidates</th>
+                  <th className="py-1 pr-4 font-medium">Selected</th>
+                  <th className="py-1 pr-4 font-medium">Group W×H</th>
+                  <th className="py-1 pr-4 font-medium">Item Area</th>
+                  <th className="py-1 font-medium">Internal Util</th>
+                </tr>
+              </thead>
+              <tbody>
+                {v2Preview.groups.map((group, index) => (
+                  <tr key={index} className="border-t border-slate-100">
+                    <td className="py-1 pr-4">{group.label}</td>
+                    <td className="py-1 pr-4">{group.candidateCount}</td>
+                    <td className="py-1 pr-4">{group.selectedStrategy}</td>
+                    <td className="py-1 pr-4">
+                      {group.width.toFixed(1)} × {group.height.toFixed(1)} mm
+                    </td>
+                    <td className="py-1 pr-4">{group.itemArea.toFixed(0)} mm²</td>
+                    <td className="py-1">{group.internalUtilizationPercent.toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           <GroupedV2PreviewCanvas items={v2Preview.items} groups={v2Preview.groups} />
         </div>
       )}
