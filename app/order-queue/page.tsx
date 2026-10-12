@@ -157,6 +157,8 @@ export default function OrderQueuePage() {
   const [benchmarkSpacing, setBenchmarkSpacing] = useState(false);
   // V3A-1 EXPERIMENTAL — opt-in slot-aware reflow on the same dry-run request (off = plain V2).
   const [slotReflow, setSlotReflow] = useState(false);
+  // V3A-3 EXPERIMENTAL — two-group compound moves on top of the slot reflow (needs slotReflow).
+  const [slotReflowCompound, setSlotReflowCompound] = useState(false);
 
   async function loadOrders() {
     const res = await fetch("/api/orders");
@@ -322,6 +324,7 @@ export default function OrderQueuePage() {
                 mode: "grouped-v2",
                 ...(benchmarkSpacing ? { benchmark: true } : {}),
                 ...(slotReflow ? { slotReflow: true } : {}),
+                ...(slotReflow && slotReflowCompound ? { slotReflowCompound: true } : {}),
               }
             : { selections: selectedRows.map((row) => row.rowId) }
         ),
@@ -447,6 +450,12 @@ export default function OrderQueuePage() {
               <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: setelah V2, coba pindahkan + susun ulang satu resi ke free slot. Dipakai hanya jika lebih baik. Dry-run, tidak disimpan.">
                 <input type="checkbox" checked={slotReflow} onChange={(event) => setSlotReflow(event.target.checked)} />
                 V3A Slot Reflow (exp)
+              </label>
+            )}
+            {nestingMode === "grouped-v2-preview" && slotReflow && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: setelah slot reflow, coba pasangan 2 resi (A pindah dulu, lalu B). Dipakai hanya jika hasil akhirnya lebih baik. Dry-run.">
+                <input type="checkbox" checked={slotReflowCompound} onChange={(event) => setSlotReflowCompound(event.target.checked)} />
+                V3A-3 Compound (exp)
               </label>
             )}
             <select

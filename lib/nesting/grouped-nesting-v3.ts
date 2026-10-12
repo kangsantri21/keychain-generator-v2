@@ -44,6 +44,7 @@ import { DEFAULT_OUTER_PACKING_LIMITS, type OuterPackingLimits } from "./grouped
 import { replayFreeRects, type FreeRect } from "./outer-maxrects";
 import { reflowOrderIntoSlot, slotCanPossiblyHold, V2_ROTATION_RULE, type RotationRule } from "./slot-reflow";
 import { geometryPruneReason, summarizeFunnel, type SlotFunnel, type SlotOutcome, type SlotRecord } from "./grouped-nesting-v3-funnel";
+import type { CompoundDiagnostics } from "./grouped-nesting-v3-compound";
 import type {
   GroupedNestingItem,
   GroupedNestingResult,
@@ -176,6 +177,17 @@ export interface SlotReflowDiagnostics {
   runtimeMs: number | null;
   /** V3A-2B DEV search funnel (null when tracing is off or the search did not run). */
   funnel: SlotFunnel | null;
+  /** V3A-3 compound-move stage (null unless requested). */
+  compound: CompoundDiagnostics | null;
+}
+
+/**
+ * V3A-3 hook: an optional stage run on the single-move result (see
+ * grouped-nesting-v3-compound.ts). Its layout goes through the same final
+ * validation and strict-improvement check against V2.
+ */
+export interface SlotReflowStage<T> {
+  run(groups: GroupPlacement<T>[]): { groups: GroupPlacement<T>[]; diagnostics: CompoundDiagnostics };
 }
 
 type Config = GroupedNestingConfig;
@@ -183,7 +195,7 @@ type Config = GroupedNestingConfig;
 /** Search counters of one improveWithSlotReflow run. */
 export type SlotReflowSearchStats = Omit<
   SlotReflowDiagnostics,
-  "applied" | "fallbackReason" | "baseline" | "final" | "sheetsAvoided" | "heightSavedMm" | "heightSavedPercent" | "baselineViolations" | "finalViolations" | "runtimeMs" | "funnel"
+  "applied" | "fallbackReason" | "baseline" | "final" | "sheetsAvoided" | "heightSavedMm" | "heightSavedPercent" | "baselineViolations" | "finalViolations" | "runtimeMs" | "funnel" | "compound"
 >;
 
 /** One group positioned on a sheet (sheet coordinates), rebuilt exactly like packGroupsOntoSheet does. */
@@ -223,7 +235,7 @@ export function placeGroup<T>(
   };
 }
 
-function usableRects<T>(groups: GroupPlacement<T>[], config: Config) {
+export function usableRects<T>(groups: GroupPlacement<T>[], config: Config) {
   return groups.map((g) => ({
     x: g.x - config.sheetMarginMm,
     y: g.y - config.sheetMarginMm,
@@ -233,11 +245,11 @@ function usableRects<T>(groups: GroupPlacement<T>[], config: Config) {
   }));
 }
 
-function scoreRects(rects: { x: number; y: number; width: number; height: number; sheetIndex: number }[], config: Config): GlobalLayoutScore {
+export function scoreRects(rects: { x: number; y: number; width: number; height: number; sheetIndex: number }[], config: Config): GlobalLayoutScore {
   return scoreOuterPlacements(rects, rects.length, config.sheetWidth - 2 * config.sheetMarginMm);
 }
 
-const sheetHeightOf = (score: GlobalLayoutScore, config: Config) => score.usedHeight + score.sheetCount * config.sheetMarginMm;
+export const sheetHeightOf = (score: GlobalLayoutScore, config: Config) => score.usedHeight + score.sheetCount * config.sheetMarginMm;
 
 /**
  * Lexicographic objective (same key order as compareScores): PRIMARY fewer
@@ -279,7 +291,7 @@ export function classifyRelocation(
 }
 
 /** Drops empty sheets and renumbers the rest 0..n-1 in order. */
-function normalizeSheets<T>(groups: GroupPlacement<T>[]): { groups: GroupPlacement<T>[]; mapping: Map<number, number> } {
+export function normalizeSheets<T>(groups: GroupPlacement<T>[]): { groups: GroupPlacement<T>[]; mapping: Map<number, number> } {
   const used = [...new Set(groups.map((g) => g.sheetIndex))].sort((a, b) => a - b);
   const mapping = new Map(used.map((sheetIndex, index) => [sheetIndex, index]));
   if (used.every((sheetIndex, index) => sheetIndex === index)) return { groups, mapping };
@@ -394,7 +406,7 @@ interface CandidateMove<T> {
 }
 
 /** Smallest footprint the order could possibly have (for the slot bound): widest item's min side x tallest item's min side. */
-function minimalFootprint<T>(group: GroupPlacement<T>, rule: RotationRule): { width: number; height: number } {
+export function minimalFootprint<T>(group: GroupPlacement<T>, rule: RotationRule): { width: number; height: number } {
   const items = group.candidate.placements.map((p) => p.item);
   const canRotate = rule(items);
   const sides = items.map((item) => (canRotate(item) ? Math.min(item.width, item.height) : null));
@@ -781,7 +793,14 @@ export function runGroupedNestingV3<T>(
   items: GroupedNestingItem<T>[],
   overrides: GroupedNestingConfigOverrides = {},
   limits: SlotReflowLimits = DEFAULT_SLOT_REFLOW_LIMITS,
-  options: { clock?: () => number; searchLimits?: GlobalSearchLimits; outerLimits?: OuterPackingLimits; rule?: RotationRule; trace?: boolean } = {}
+  options: {
+    clock?: () => number;
+    searchLimits?: GlobalSearchLimits;
+    outerLimits?: OuterPackingLimits;
+    rule?: RotationRule;
+    trace?: boolean;
+    compound?: SlotReflowStage<T>;
+  } = {}
 ): { result: GroupedNestingResult<T>; v2: GroupedNestingResult<T>; diagnostics: SlotReflowDiagnostics } {
   const v2 = runGroupedNesting(items, overrides, options.searchLimits ?? DEFAULT_GLOBAL_SEARCH_LIMITS, options.outerLimits ?? DEFAULT_OUTER_PACKING_LIMITS);
   return { ...applySlotReflow(v2, resolveConfig(overrides), limits, options), v2 };
@@ -796,7 +815,7 @@ export function applySlotReflow<T>(
   v2: GroupedNestingResult<T>,
   config: Config,
   limits: SlotReflowLimits = DEFAULT_SLOT_REFLOW_LIMITS,
-  options: { clock?: () => number; rule?: RotationRule; trace?: boolean } = {}
+  options: { clock?: () => number; rule?: RotationRule; trace?: boolean; compound?: SlotReflowStage<T> } = {}
 ): { result: GroupedNestingResult<T>; diagnostics: SlotReflowDiagnostics } {
   const startedAt = options.clock?.();
 
@@ -809,6 +828,7 @@ export function applySlotReflow<T>(
   let finalViolations = baselineViolations;
   let stats: SlotReflowSearchStats = emptySearchStats(limits);
   let funnel: SlotFunnel | null = null;
+  let compound: CompoundDiagnostics | null = null;
 
   if (baselineViolations.length > 0) {
     fallbackReason = "V2 baseline failed validation — V3A not run";
@@ -818,10 +838,18 @@ export function applySlotReflow<T>(
     const improved = improveWithSlotReflow(v2.groups, config, limits, options.rule ?? V2_ROTATION_RULE, options.trace ?? true);
     stats = improved.stats;
     funnel = improved.funnel;
-    if (improved.stats.acceptedRelocations === 0) {
+    let finalGroups = improved.groups;
+    let accepted = improved.stats.acceptedRelocations;
+    if (options.compound) {
+      const stage = options.compound.run(improved.groups);
+      compound = stage.diagnostics;
+      finalGroups = stage.groups;
+      accepted += stage.diagnostics.acceptedCompoundMoves;
+    }
+    if (accepted === 0) {
       fallbackReason = improved.stats.budgetExhausted ? "budget exhausted without an improvement" : "no strictly better relocation";
     } else {
-      const candidate = resultFromGroups(v2, improved.groups, config);
+      const candidate = resultFromGroups(v2, finalGroups, config);
       const violations = validateLayout(candidate.groups, config, itemIds);
       const before = scoreRects(usableRects(v2.groups, config), config);
       const after = scoreRects(usableRects(candidate.groups, config), config);
@@ -852,6 +880,7 @@ export function applySlotReflow<T>(
     finalViolations,
     runtimeMs,
     funnel,
+    compound,
   };
   return { result, diagnostics };
 }

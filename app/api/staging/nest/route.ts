@@ -6,10 +6,11 @@ import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import type { KeychainRender } from "@/lib/render-types";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
-import { runGroupedNesting, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
+import { runGroupedNesting, resolveConfig, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
 import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
 import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
 import { isSlotReflowRequest, runGroupedNestingV3 } from "@/lib/nesting/grouped-nesting-v3";
+import { compoundStage, isCompoundRequest } from "@/lib/nesting/grouped-nesting-v3-compound";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
@@ -141,7 +142,10 @@ export async function POST(request: NextRequest) {
     // V3A-1 (EXPERIMENTAL): only for an explicit `slotReflow: true`. It runs
     // V2 first and returns the V2 result unless a relocation is strictly
     // better. Without the flag this is exactly the V2 call.
-    const v3Run = isSlotReflowRequest(body) ? runGroupedNestingV3(groupedItems, {}, undefined, { clock: () => performance.now() }) : null;
+    // V3A-3 (EXPERIMENTAL): `slotReflowCompound: true` adds the two-group compound stage on top.
+    const clock = () => performance.now();
+    const compound = isCompoundRequest(body) ? compoundStage<PackData>(resolveConfig({}), undefined, { clock }) : undefined;
+    const v3Run = isSlotReflowRequest(body) ? runGroupedNestingV3(groupedItems, {}, undefined, { clock, compound }) : null;
     const result = v3Run ? v3Run.result : runGroupedNesting(groupedItems);
     const elapsedMs = performance.now() - startedAt;
 
@@ -287,6 +291,16 @@ export async function POST(request: NextRequest) {
                   ...v3Run.diagnostics.funnel,
                   orders: v3Run.diagnostics.funnel.orders.map((order) => ({ ...order, receiptCode: labelFor(order.orderId) })),
                   topPrunedForeign: v3Run.diagnostics.funnel.topPrunedForeign.map((c) => ({ ...c, receiptCode: labelFor(c.orderId) })),
+                }
+              : null,
+            compound: v3Run.diagnostics.compound
+              ? {
+                  ...v3Run.diagnostics.compound,
+                  moves: v3Run.diagnostics.compound.moves.map((move) => ({
+                    ...move,
+                    primaryReceiptCode: labelFor(move.primary.orderId),
+                    secondaryReceiptCode: labelFor(move.secondary.orderId),
+                  })),
                 }
               : null,
           }

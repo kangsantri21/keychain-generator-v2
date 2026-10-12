@@ -17,13 +17,20 @@ import type { KeychainRenderPayload } from "@/lib/staging-types";
 import type { OuterOptimizerStats } from "./grouped-nesting-outer";
 import type { SlotReflowDiagnostics, SlotReflowMove } from "./grouped-nesting-v3";
 import type { OrderFunnel, PrunedCandidate, SlotFunnel } from "./grouped-nesting-v3-funnel";
+import type { CompoundDiagnostics, CompoundMoveDetail } from "./grouped-nesting-v3-compound";
 
 type Labeled<X> = X & { receiptCode: string | null };
 
 /** V3A diagnostics as the API sends them (moves and funnel rows labeled with their receipt code). */
-export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves" | "funnel"> & {
+export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves" | "funnel" | "compound"> & {
   moves: Labeled<SlotReflowMove>[];
   funnel: (Omit<SlotFunnel, "orders" | "topPrunedForeign"> & { orders: Labeled<OrderFunnel>[]; topPrunedForeign: Labeled<PrunedCandidate>[] }) | null;
+  /** V3A-3 compound stage (null unless requested). */
+  compound:
+    | (Omit<CompoundDiagnostics, "moves"> & {
+        moves: (CompoundMoveDetail & { primaryReceiptCode: string | null; secondaryReceiptCode: string | null })[];
+      })
+    | null;
 };
 
 export interface GroupedV2PreviewItem {
