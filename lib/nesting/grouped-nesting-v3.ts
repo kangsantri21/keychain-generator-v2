@@ -43,6 +43,7 @@ import { scoreOuterPlacements, DEFAULT_GLOBAL_SEARCH_LIMITS, compareScores, type
 import { DEFAULT_OUTER_PACKING_LIMITS, type OuterPackingLimits } from "./grouped-nesting-outer";
 import { replayFreeRects, type FreeRect } from "./outer-maxrects";
 import { reflowOrderIntoSlot, slotCanPossiblyHold, V2_ROTATION_RULE, type RotationRule } from "./slot-reflow";
+import { geometryPruneReason, summarizeFunnel, type SlotFunnel, type SlotOutcome, type SlotRecord } from "./grouped-nesting-v3-funnel";
 import type {
   GroupedNestingItem,
   GroupedNestingResult,
@@ -173,6 +174,8 @@ export interface SlotReflowDiagnostics {
   finalViolations: string[];
   /** Filled by the caller's clock (dev diagnostic, outside the deterministic result). */
   runtimeMs: number | null;
+  /** V3A-2B DEV search funnel (null when tracing is off or the search did not run). */
+  funnel: SlotFunnel | null;
 }
 
 type Config = GroupedNestingConfig;
@@ -180,7 +183,7 @@ type Config = GroupedNestingConfig;
 /** Search counters of one improveWithSlotReflow run. */
 export type SlotReflowSearchStats = Omit<
   SlotReflowDiagnostics,
-  "applied" | "fallbackReason" | "baseline" | "final" | "sheetsAvoided" | "heightSavedMm" | "heightSavedPercent" | "baselineViolations" | "finalViolations" | "runtimeMs"
+  "applied" | "fallbackReason" | "baseline" | "final" | "sheetsAvoided" | "heightSavedMm" | "heightSavedPercent" | "baselineViolations" | "finalViolations" | "runtimeMs" | "funnel"
 >;
 
 /** One group positioned on a sheet (sheet coordinates), rebuilt exactly like packGroupsOntoSheet does. */
@@ -416,8 +419,10 @@ export function improveWithSlotReflow<T>(
   baseline: GroupPlacement<T>[],
   config: Config,
   limits: SlotReflowLimits = DEFAULT_SLOT_REFLOW_LIMITS,
-  rule: RotationRule = V2_ROTATION_RULE
-): { groups: GroupPlacement<T>[]; stats: SlotReflowSearchStats } {
+  rule: RotationRule = V2_ROTATION_RULE,
+  /** V3A-2B: record the DEV search funnel. Bookkeeping only — never changes a decision. */
+  trace = true
+): { groups: GroupPlacement<T>[]; stats: SlotReflowSearchStats; funnel: SlotFunnel | null } {
   const margin = config.sheetMarginMm;
   const gap = config.orderGapMm;
   const packSheetWidth = config.sheetWidth - 2 * margin;
@@ -425,6 +430,8 @@ export function improveWithSlotReflow<T>(
 
   const stats = emptySearchStats(limits);
   const remaining = () => limits.maxTotalEvaluations - stats.budgetUsed;
+  const records: SlotRecord[] = [];
+  const orderKeyOf = (g: GroupPlacement<T>) => (g.orderId !== null ? `order-${g.orderId}` : `item-${String(g.candidate.placements[0]?.item.id)}`);
 
   let current = baseline;
   let currentScore = scoreRects(usableRects(current, config), config);
@@ -454,17 +461,8 @@ export function improveWithSlotReflow<T>(
       );
     stats.ordersConsidered += ranked.length;
 
-    let best: CandidateMove<T> | null = null;
-
-    for (const { g: group, index } of ranked.slice(0, limits.maxOrdersPerPass)) {
-      if (stats.budgetExhausted) break;
-      stats.ordersTried++;
-
-      const restRects = rects.filter((_, i) => i !== index);
-      const items = group.candidate.placements.map((p) => p.item);
-      const minimal = minimalFootprint(group, rule);
-
-      // Free space of EVERY sheet with this order removed (its own old area included).
+    // Free space of EVERY sheet with `group` removed (its own old area included).
+    const enumerateSlots = (group: GroupPlacement<T>, restRects: ReturnType<typeof usableRects<T>>): Slot[] => {
       const slots: Slot[] = [];
       for (const sheetIndex of sheetIndices) {
         const occupied = restRects.filter((r) => r.sheetIndex === sheetIndex);
@@ -473,20 +471,91 @@ export function improveWithSlotReflow<T>(
           slots.push({ sheetIndex, free, width: free.width - gap, height: free.height - gap, region });
         }
       }
+      return slots;
+    };
+    // Optimistic bound: the order's smallest possible footprint at this slot.
+    const boundOf = (slot: Slot, restRects: ReturnType<typeof usableRects<T>>, minimal: { width: number; height: number }) =>
+      scoreRects(
+        [...restRects, { x: slot.free.x, y: slot.free.y, width: Math.min(minimal.width, slot.width), height: Math.min(minimal.height, slot.height), sheetIndex: slot.sheetIndex }],
+        config
+      );
+    const record = (group: GroupPlacement<T>, slot: Slot, outcome: SlotOutcome, orderSearched: boolean, boundDeltaMm: number | null): SlotRecord => {
+      const items = group.candidate.placements.map((p) => p.item);
+      const pg = config.partGapMm;
+      const padded = items.reduce((sum, item) => sum + (item.width + pg) * (item.height + pg), 0);
+      const slotArea = Math.max(0, slot.width + pg) * Math.max(0, slot.height + pg);
+      const r: SlotRecord = {
+        pass,
+        region: slot.region,
+        orderId: group.orderId,
+        orderKey: orderKeyOf(group),
+        orderWidth: group.width,
+        orderHeight: group.height,
+        sheetIndex: slot.sheetIndex,
+        slot: { x: slot.free.x + margin, y: slot.free.y + margin, width: slot.width, height: slot.height },
+        outcome,
+        orderSearched,
+        areaRatio: slotArea > 0 ? padded / slotArea : Infinity,
+        boundDeltaMm,
+        shapeFound: false,
+        validPlacement: false,
+        strictlyBetter: false,
+      };
+      records.push(r);
+      return r;
+    };
+    const deltaOf = (bound: GlobalLayoutScore) => sheetHeightOf(bound, config) - sheetHeightOf(currentScore, config);
+    /** Funnel-only classification of an order the search did not reach: hard reasons first, else `soft`. */
+    const recordUnreached = (group: GroupPlacement<T>, index: number, soft: SlotOutcome) => {
+      const restRects = rects.filter((_, i) => i !== index);
+      const items = group.candidate.placements.map((p) => p.item);
+      const minimal = minimalFootprint(group, rule);
+      for (const slot of enumerateSlots(group, restRects)) {
+        const geometry = geometryPruneReason(items, slot.width, slot.height, config.partGapMm, rule);
+        if (geometry) {
+          record(group, slot, geometry, false, null);
+          continue;
+        }
+        const bound = boundOf(slot, restRects, minimal);
+        const improves = improvementLevel(bound, currentScore, limits.acceptFragmentationGain) !== null;
+        record(group, slot, improves ? soft : "CANNOT_IMPROVE_OBJECTIVE", false, deltaOf(bound));
+      }
+    };
+
+    let best: CandidateMove<T> | null = null;
+    let bestRecord: SlotRecord | null = null;
+
+    for (let rank = 0; rank < ranked.length; rank++) {
+      const { g: group, index } = ranked[rank];
+      if (rank >= limits.maxOrdersPerPass || stats.budgetExhausted) {
+        if (trace) recordUnreached(group, index, rank >= limits.maxOrdersPerPass ? "ORDER_RANK_CUTOFF" : "ORDER_NOT_REACHED_BUDGET");
+        continue;
+      }
+      stats.ordersTried++;
+
+      const restRects = rects.filter((_, i) => i !== index);
+      const items = group.candidate.placements.map((p) => p.item);
+      const minimal = minimalFootprint(group, rule);
+
+      const slots = enumerateSlots(group, restRects);
       const foreignAll = slots.filter((s) => s.region === "FOREIGN_RELOCATION");
       stats.foreignSlotsDetected += foreignAll.length;
       stats.selfSlotsDetected += slots.length - foreignAll.length;
       stats.slotsDetected += slots.length;
 
-      const promising = slots.filter((slot) => {
-        if (!slotCanPossiblyHold(items, slot.width, slot.height, config.partGapMm, rule)) return false;
-        // Optimistic bound: even the order's smallest possible footprint at this slot must beat the current score.
-        const bound = scoreRects(
-          [...restRects, { x: slot.free.x, y: slot.free.y, width: Math.min(minimal.width, slot.width), height: Math.min(minimal.height, slot.height), sheetIndex: slot.sheetIndex }],
-          config
-        );
-        return improvementLevel(bound, currentScore, limits.acceptFragmentationGain) !== null;
-      });
+      const slotRecords = new Map<Slot, SlotRecord>();
+      const promising: Slot[] = [];
+      for (const slot of slots) {
+        if (!slotCanPossiblyHold(items, slot.width, slot.height, config.partGapMm, rule)) {
+          if (trace) record(group, slot, geometryPruneReason(items, slot.width, slot.height, config.partGapMm, rule) ?? "SLOT_DEGENERATE", true, null);
+          continue;
+        }
+        // Even the order's smallest possible footprint at this slot must beat the current score.
+        const bound = boundOf(slot, restRects, minimal);
+        const improves = improvementLevel(bound, currentScore, limits.acceptFragmentationGain) !== null;
+        if (trace) slotRecords.set(slot, record(group, slot, improves ? "PER_ORDER_SLOT_CAP" : "CANNOT_IMPROVE_OBJECTIVE", true, deltaOf(bound)));
+        if (improves) promising.push(slot);
+      }
       stats.slotsPruned += slots.length - promising.length;
 
       // FOREIGN first (other sheets before the order's own sheet), then SELF.
@@ -505,8 +574,14 @@ export function improveWithSlotReflow<T>(
         .filter((s) => s.region === "SELF_REFLOW")
         .sort((a, b) => a.free.y - b.free.y || a.free.x - b.free.x || b.width * b.height - a.width * a.height)
         .slice(0, limits.maxSelfSlotsPerOrder);
+      const queue = [...foreign, ...self];
+      // Until tried, a capped-in slot is "not reached because of the budget".
+      for (const slot of queue) {
+        const r = slotRecords.get(slot);
+        if (r) r.outcome = "SEARCH_BUDGET";
+      }
 
-      for (const slot of [...foreign, ...self]) {
+      for (const slot of queue) {
         if (remaining() <= 0) {
           stats.budgetExhausted = true;
           break;
@@ -514,6 +589,10 @@ export function improveWithSlotReflow<T>(
         stats.slotsTried++;
         if (slot.region === "FOREIGN_RELOCATION") stats.foreignSlotsTried++;
         else stats.selfSlotsTried++;
+        const slotRecord = slotRecords.get(slot) ?? null;
+        let evaluated = 0;
+        let interrupted = false;
+        let betterInvalid = false;
 
         const normal = group.alternatives
           .filter((c) => c.width <= slot.width + GEOMETRY_EPSILON && c.height <= slot.height + GEOMETRY_EPSILON)
@@ -527,10 +606,12 @@ export function improveWithSlotReflow<T>(
         stats.budgetUsed += reflow.attempts;
         stats.successfulReflows += reflow.candidates.length;
         const shapes = [...normal, ...reflow.candidates.map((candidate) => ({ candidate, source: "SLOT_REFLOW" as const }))];
+        if (slotRecord) slotRecord.shapeFound = shapes.length > 0;
 
         for (const { candidate, source } of shapes) {
           if (remaining() <= 0) {
             stats.budgetExhausted = true;
+            interrupted = true;
             break;
           }
           const x = slot.free.x + margin;
@@ -548,11 +629,22 @@ export function improveWithSlotReflow<T>(
 
           stats.budgetUsed++;
           stats.layoutEvaluations++;
+          evaluated++;
           const score = scoreRects(
             [...restRects, { x: slot.free.x, y: slot.free.y, width: candidate.width, height: candidate.height, sheetIndex: slot.sheetIndex }],
             config
           );
           const level = improvementLevel(score, currentScore, limits.acceptFragmentationGain);
+
+          if (slotRecord) {
+            // Funnel only: validity of EVERY evaluated placement (the search itself validates only a new pass-best).
+            const probe = placeGroup(candidate, x, y, slot.sheetIndex, { alternatives: group.alternatives, localCandidate: group.localCandidate });
+            const valid = validateLayout(normalizeSheets(current.map((g, i) => (i === index ? probe : g))).groups, config).length === 0;
+            if (valid) slotRecord.validPlacement = true;
+            if (valid && level !== null) slotRecord.strictlyBetter = true;
+            if (!valid && level !== null) betterInvalid = true;
+          }
+
           if (level === null) {
             stats.rejectedNotBetter++;
             continue;
@@ -566,6 +658,7 @@ export function improveWithSlotReflow<T>(
             stats.rejectedInvalid++;
             continue;
           }
+          bestRecord = slotRecord;
           best = {
             groups: next,
             mapping,
@@ -591,12 +684,27 @@ export function improveWithSlotReflow<T>(
             },
           };
         }
+
+        if (slotRecord) {
+          slotRecord.outcome = !slotRecord.shapeFound
+            ? "NO_ARRANGEMENT_FOUND"
+            : slotRecord.strictlyBetter
+              ? "BETTER_NOT_SELECTED"
+              : interrupted
+                ? "BUDGET_INTERRUPTED"
+                : evaluated === 0
+                  ? "ONLY_NO_OP"
+                  : betterInvalid
+                    ? "INVALID_PLACEMENT"
+                    : "NOT_BETTER";
+        }
         if (stats.budgetExhausted) break;
       }
     }
 
     // A validated, strictly better move found before the budget ran out is still applied.
     if (!best) break;
+    if (bestRecord) bestRecord.outcome = "ACCEPTED";
     const remap = (sheetIndex: number | null) => (sheetIndex === null ? null : (best!.mapping.get(sheetIndex) ?? null));
     for (const move of stats.moves) {
       move.finalSheetIndex = remap(move.finalSheetIndex);
@@ -621,7 +729,14 @@ export function improveWithSlotReflow<T>(
     currentScore = best.score;
   }
 
-  return { groups: current, stats };
+  const funnel = trace
+    ? summarizeFunnel(
+        records,
+        baseline.map((g) => ({ orderId: g.orderId, orderKey: orderKeyOf(g), width: g.width, height: g.height })),
+        stats.passes
+      )
+    : null;
+  return { groups: current, stats, funnel };
 }
 
 function totalsOf<T>(result: GroupedNestingResult<T>): SlotReflowTotals {
@@ -666,7 +781,7 @@ export function runGroupedNestingV3<T>(
   items: GroupedNestingItem<T>[],
   overrides: GroupedNestingConfigOverrides = {},
   limits: SlotReflowLimits = DEFAULT_SLOT_REFLOW_LIMITS,
-  options: { clock?: () => number; searchLimits?: GlobalSearchLimits; outerLimits?: OuterPackingLimits; rule?: RotationRule } = {}
+  options: { clock?: () => number; searchLimits?: GlobalSearchLimits; outerLimits?: OuterPackingLimits; rule?: RotationRule; trace?: boolean } = {}
 ): { result: GroupedNestingResult<T>; v2: GroupedNestingResult<T>; diagnostics: SlotReflowDiagnostics } {
   const v2 = runGroupedNesting(items, overrides, options.searchLimits ?? DEFAULT_GLOBAL_SEARCH_LIMITS, options.outerLimits ?? DEFAULT_OUTER_PACKING_LIMITS);
   return { ...applySlotReflow(v2, resolveConfig(overrides), limits, options), v2 };
@@ -681,7 +796,7 @@ export function applySlotReflow<T>(
   v2: GroupedNestingResult<T>,
   config: Config,
   limits: SlotReflowLimits = DEFAULT_SLOT_REFLOW_LIMITS,
-  options: { clock?: () => number; rule?: RotationRule } = {}
+  options: { clock?: () => number; rule?: RotationRule; trace?: boolean } = {}
 ): { result: GroupedNestingResult<T>; diagnostics: SlotReflowDiagnostics } {
   const startedAt = options.clock?.();
 
@@ -693,14 +808,16 @@ export function applySlotReflow<T>(
   let fallbackReason: string | null = null;
   let finalViolations = baselineViolations;
   let stats: SlotReflowSearchStats = emptySearchStats(limits);
+  let funnel: SlotFunnel | null = null;
 
   if (baselineViolations.length > 0) {
     fallbackReason = "V2 baseline failed validation — V3A not run";
   } else if (v2.groups.length === 0) {
     fallbackReason = "no groups";
   } else {
-    const improved = improveWithSlotReflow(v2.groups, config, limits, options.rule ?? V2_ROTATION_RULE);
+    const improved = improveWithSlotReflow(v2.groups, config, limits, options.rule ?? V2_ROTATION_RULE, options.trace ?? true);
     stats = improved.stats;
+    funnel = improved.funnel;
     if (improved.stats.acceptedRelocations === 0) {
       fallbackReason = improved.stats.budgetExhausted ? "budget exhausted without an improvement" : "no strictly better relocation";
     } else {
@@ -734,6 +851,7 @@ export function applySlotReflow<T>(
     baselineViolations,
     finalViolations,
     runtimeMs,
+    funnel,
   };
   return { result, diagnostics };
 }

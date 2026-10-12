@@ -279,7 +279,17 @@ export async function POST(request: NextRequest) {
       unfitCount: result.unfit.length,
       benchmark,
       slotReflow: v3Run
-        ? { ...v3Run.diagnostics, moves: v3Run.diagnostics.moves.map((move) => ({ ...move, receiptCode: labelFor(move.orderId) })) }
+        ? {
+            ...v3Run.diagnostics,
+            moves: v3Run.diagnostics.moves.map((move) => ({ ...move, receiptCode: labelFor(move.orderId) })),
+            funnel: v3Run.diagnostics.funnel
+              ? {
+                  ...v3Run.diagnostics.funnel,
+                  orders: v3Run.diagnostics.funnel.orders.map((order) => ({ ...order, receiptCode: labelFor(order.orderId) })),
+                  topPrunedForeign: v3Run.diagnostics.funnel.topPrunedForeign.map((c) => ({ ...c, receiptCode: labelFor(c.orderId) })),
+                }
+              : null,
+          }
         : null,
     });
   }

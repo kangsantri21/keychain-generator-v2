@@ -16,9 +16,15 @@
 import type { KeychainRenderPayload } from "@/lib/staging-types";
 import type { OuterOptimizerStats } from "./grouped-nesting-outer";
 import type { SlotReflowDiagnostics, SlotReflowMove } from "./grouped-nesting-v3";
+import type { OrderFunnel, PrunedCandidate, SlotFunnel } from "./grouped-nesting-v3-funnel";
 
-/** V3A-1 diagnostics as the API sends them (each move labeled with its receipt code). */
-export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves"> & { moves: (SlotReflowMove & { receiptCode: string | null })[] };
+type Labeled<X> = X & { receiptCode: string | null };
+
+/** V3A diagnostics as the API sends them (moves and funnel rows labeled with their receipt code). */
+export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves" | "funnel"> & {
+  moves: Labeled<SlotReflowMove>[];
+  funnel: (Omit<SlotFunnel, "orders" | "topPrunedForeign"> & { orders: Labeled<OrderFunnel>[]; topPrunedForeign: Labeled<PrunedCandidate>[] }) | null;
+};
 
 export interface GroupedV2PreviewItem {
   /** Per-request item id (PHASE 2F) — joins a benchmark scenario's positions to this item's render. */
