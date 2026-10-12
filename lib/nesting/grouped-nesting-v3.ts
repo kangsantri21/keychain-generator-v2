@@ -1,22 +1,29 @@
 /**
- * Grouped Nesting V3A-1 (EXPERIMENTAL, OPT-IN) — local slot-aware reflow /
- * direct relocation.
+ * Grouped Nesting V3A (EXPERIMENTAL, OPT-IN) — local slot-aware reflow and
+ * relocation of whole receipt groups.
  *
  * Runs AFTER the full V2 pipeline and only ever starts from its finished,
  * valid layout. Mimics how an operator tidies a CorelDRAW sheet: take one
  * resi off the sheet, look at the free areas that are actually left (the
  * packer's own free rectangles, on every sheet), re-arrange that resi's
  * items to fit one of those areas, and keep the move only if the whole
- * batch gets strictly better (fewer sheets, else less total used height).
+ * batch gets strictly better.
+ *
+ * V3A-1 proved the reflow primitive (in practice: in place). V3A-2 makes
+ * the search look elsewhere first: every move is classified as
+ * SELF_REFLOW (same sheet, same origin, new footprint) or
+ * FOREIGN_RELOCATION (another origin or another sheet — see
+ * `classifyRelocation`), foreign slots are tried before the order's own
+ * one (other sheets first), and all orders are ranked and tried, not only
+ * the ones that set a sheet's height.
  *
  * Each pass evaluates every (order, slot, shape) within budget and applies
  * the single best strictly-improving move (best-improvement local search),
  * then recomputes every free rectangle from scratch before the next pass.
- * Nothing else moves: other groups keep their exact positions, so every
- * accepted move only ever lowers the objective.
+ * Nothing else moves: other groups keep their exact positions.
  *
- * Out of scope here (later experiments): feeding slot shapes into the V2
- * beam search, moving two groups at once, cross-receipt spillover, guest
+ * Out of scope (later experiments): feeding slot shapes into the V2 beam
+ * search, moving two groups at once, cross-receipt spillover, guest
  * pockets, true-shape nesting. One resi is still one group on one sheet.
  *
  * If nothing improves, the budget runs out before an improvement, or the
@@ -48,29 +55,47 @@ import type {
 export interface SlotReflowLimits {
   /** Max improvement passes; each pass applies at most one relocation. */
   maxPasses: number;
-  /** Max orders tried per pass (after the critical-order filter). */
+  /** Max orders tried per pass, in ranking order. */
   maxOrdersPerPass: number;
-  /** Max free slots tried per order. */
-  maxSlotsPerOrder: number;
+  /** Max FOREIGN slots tried per order (tried first). */
+  maxForeignSlotsPerOrder: number;
+  /** Max SELF slots (free rects starting at the order's own origin) tried per order, after the foreign ones. */
+  maxSelfSlotsPerOrder: number;
   /** Max reflow packings per (order, slot). */
   maxReflowVariants: number;
   /** Hard cap on reflow packings + layout evaluations across the whole V3A run. */
   maxTotalEvaluations: number;
+  /**
+   * Also accept a move that keeps the sheet count and used height but
+   * shrinks the summed per-sheet bounding area by more than
+   * MIN_AREA_GAIN_MM2 — the existing objective's third key (compareScores).
+   */
+  acceptFragmentationGain: boolean;
 }
 
-/** Conservative defaults (see the V3A-1 report for the benchmark behind them). */
+/** Conservative defaults (see the V3A-2 report for the benchmark behind them). */
 export const DEFAULT_SLOT_REFLOW_LIMITS: SlotReflowLimits = {
   maxPasses: 8,
   maxOrdersPerPass: 24,
-  maxSlotsPerOrder: 16,
+  maxForeignSlotsPerOrder: 16,
+  maxSelfSlotsPerOrder: 2,
   maxReflowVariants: 25,
-  maxTotalEvaluations: 5000,
+  maxTotalEvaluations: 8000,
+  acceptFragmentationGain: true,
 };
 
-/** A move must save more than this (mm of summed used height) to count as an improvement on the same sheet count. */
+/** A move must save more than this (mm of summed used height) to count as a height improvement. */
 export const MIN_HEIGHT_GAIN_MM = 0.01;
+/** A fragmentation-only move must shrink the summed bounding area by more than this (mm², = 1 cm²). */
+export const MIN_AREA_GAIN_MM2 = 100;
+/** Origins closer than this (mm, both axes, same sheet) count as the same place. */
+export const ORIGIN_TOLERANCE_MM = 1;
 const POSITION_EPSILON = 0.01;
 const GEOMETRY_EPSILON = 1e-6;
+
+export type RelocationType = "SELF_REFLOW" | "FOREIGN_RELOCATION";
+/** Which objective key a move improved: fewer sheets, less summed used height, or (same both) less bounding area. */
+export type ImprovementLevel = "SHEETS" | "HEIGHT" | "FRAGMENTATION";
 
 export interface SlotReflowTotals {
   sheetCount: number;
@@ -80,6 +105,8 @@ export interface SlotReflowTotals {
 }
 
 export interface SlotReflowMove {
+  type: RelocationType;
+  improvement: ImprovementLevel;
   orderId: number | null;
   source: "NORMAL" | "SLOT_REFLOW";
   strategy: string;
@@ -97,9 +124,13 @@ export interface SlotReflowMove {
   newHeight: number;
   before: { sheetCount: number; sumUsedHeight: number };
   after: { sheetCount: number; sumUsedHeight: number };
+  /** before.sumUsedHeight - after.sumUsedHeight for this move (sheet coordinates). */
+  heightSavedMm: number;
+  heightSavedPercent: number;
   sheetRemoved: boolean;
-  /** Sheet index of `slot` in the FINAL layout (later moves can renumber sheets); null if that sheet is gone. */
+  /** Sheet index of `slot` / of the old position in the FINAL layout (later moves can renumber sheets); null if that sheet is gone. */
   finalSheetIndex: number | null;
+  finalFromSheetIndex: number | null;
 }
 
 export interface SlotReflowDiagnostics {
@@ -112,17 +143,23 @@ export interface SlotReflowDiagnostics {
   heightSavedMm: number;
   heightSavedPercent: number;
   passes: number;
+  /** Ranked orders summed over passes (before the per-pass cap). */
+  ordersConsidered: number;
   ordersTried: number;
-  /** Orders skipped because removing them does not lower any sheet's used height (no single move of them can help). */
-  ordersSkippedNonCritical: number;
   slotsDetected: number;
+  foreignSlotsDetected: number;
+  selfSlotsDetected: number;
   /** Slots dropped before packing: cannot hold the order, or cannot improve even with the order's smallest possible footprint. */
   slotsPruned: number;
   slotsTried: number;
+  foreignSlotsTried: number;
+  selfSlotsTried: number;
   reflowAttempts: number;
   successfulReflows: number;
   layoutEvaluations: number;
   acceptedRelocations: number;
+  acceptedSelfReflow: number;
+  acceptedForeignRelocation: number;
   rejectedNoOps: number;
   rejectedNotBetter: number;
   rejectedInvalid: number;
@@ -199,11 +236,43 @@ function scoreRects(rects: { x: number; y: number; width: number; height: number
 
 const sheetHeightOf = (score: GlobalLayoutScore, config: Config) => score.usedHeight + score.sheetCount * config.sheetMarginMm;
 
-/** PRIMARY fewer sheets; SECONDARY less summed used height (by more than MIN_HEIGHT_GAIN_MM). Equal = not better. */
-export function isStrictlyBetter(candidate: GlobalLayoutScore, current: GlobalLayoutScore): boolean {
-  if (candidate.unfitGroups !== current.unfitGroups) return candidate.unfitGroups < current.unfitGroups;
-  if (candidate.sheetCount !== current.sheetCount) return candidate.sheetCount < current.sheetCount;
-  return candidate.usedHeight < current.usedHeight - MIN_HEIGHT_GAIN_MM;
+/**
+ * Lexicographic objective (same key order as compareScores): PRIMARY fewer
+ * sheets; SECONDARY less summed used height (by more than
+ * MIN_HEIGHT_GAIN_MM); TERTIARY — only with `acceptFragmentationGain` and
+ * no height increase — less summed bounding area (by more than
+ * MIN_AREA_GAIN_MM2). Returns the key that improved, or null (equal or
+ * worse = not better).
+ */
+export function improvementLevel(candidate: GlobalLayoutScore, current: GlobalLayoutScore, acceptFragmentationGain = false): ImprovementLevel | null {
+  if (candidate.unfitGroups > current.unfitGroups) return null;
+  if (candidate.sheetCount !== current.sheetCount) return candidate.sheetCount < current.sheetCount ? "SHEETS" : null;
+  if (candidate.usedHeight < current.usedHeight - MIN_HEIGHT_GAIN_MM) return "HEIGHT";
+  if (candidate.usedHeight > current.usedHeight + GEOMETRY_EPSILON) return null;
+  if (acceptFragmentationGain && candidate.boundingArea < current.boundingArea - MIN_AREA_GAIN_MM2) return "FRAGMENTATION";
+  return null;
+}
+
+export function isStrictlyBetter(candidate: GlobalLayoutScore, current: GlobalLayoutScore, acceptFragmentationGain = false): boolean {
+  return improvementLevel(candidate, current, acceptFragmentationGain) !== null;
+}
+
+/**
+ * SELF_REFLOW: same sheet and the origin moved less than ORIGIN_TOLERANCE_MM
+ * on both axes (the order is re-arranged where it already starts).
+ * FOREIGN_RELOCATION: another sheet, or an origin that moved by at least
+ * the tolerance — a different free region than its own starting point.
+ * Compares coordinates, never object identity.
+ */
+export function classifyRelocation(
+  oldPlacement: { sheetIndex: number; x: number; y: number },
+  newPlacement: { sheetIndex: number; x: number; y: number }
+): RelocationType {
+  const sameOrigin =
+    oldPlacement.sheetIndex === newPlacement.sheetIndex &&
+    Math.abs(oldPlacement.x - newPlacement.x) < ORIGIN_TOLERANCE_MM &&
+    Math.abs(oldPlacement.y - newPlacement.y) < ORIGIN_TOLERANCE_MM;
+  return sameOrigin ? "SELF_REFLOW" : "FOREIGN_RELOCATION";
 }
 
 /** Drops empty sheets and renumbers the rest 0..n-1 in order. */
@@ -310,22 +379,22 @@ interface Slot {
   free: FreeRect;
   width: number;
   height: number;
+  region: RelocationType;
 }
 
 interface CandidateMove<T> {
   groups: GroupPlacement<T>[];
   mapping: Map<number, number>;
   score: GlobalLayoutScore;
-  move: Omit<SlotReflowMove, "after" | "sheetRemoved" | "finalSheetIndex">;
+  level: ImprovementLevel;
+  move: Omit<SlotReflowMove, "after" | "sheetRemoved" | "finalSheetIndex" | "finalFromSheetIndex" | "heightSavedMm" | "heightSavedPercent" | "improvement">;
 }
 
 /** Smallest footprint the order could possibly have (for the slot bound): widest item's min side x tallest item's min side. */
 function minimalFootprint<T>(group: GroupPlacement<T>, rule: RotationRule): { width: number; height: number } {
   const items = group.candidate.placements.map((p) => p.item);
   const canRotate = rule(items);
-  const sides = items.map((item) =>
-    canRotate(item) ? Math.min(item.width, item.height) : null
-  );
+  const sides = items.map((item) => (canRotate(item) ? Math.min(item.width, item.height) : null));
   return {
     width: Math.max(...items.map((item, i) => sides[i] ?? item.width)),
     height: Math.max(...items.map((item, i) => sides[i] ?? item.height)),
@@ -333,8 +402,15 @@ function minimalFootprint<T>(group: GroupPlacement<T>, rule: RotationRule): { wi
 }
 
 /**
- * The V3A-1 local search on an already-valid layout. Pure and deterministic
+ * The V3A local search on an already-valid layout. Pure and deterministic
  * (no clock, no randomness): same groups + config + limits -> same result.
+ *
+ * Per pass: rank the orders, and for each tried order take it off a copy of
+ * the layout, rebuild the free rectangles of EVERY sheet, try its FOREIGN
+ * slots first (other sheets before its own), then its SELF slot(s), with
+ * its normal V2 shapes and every slot reflow. Every strictly improving,
+ * validated placement is a candidate move; the pass applies only the BEST
+ * one (lowest global score), then the next pass starts from scratch.
  */
 export function improveWithSlotReflow<T>(
   baseline: GroupPlacement<T>[],
@@ -360,33 +436,28 @@ export function improveWithSlotReflow<T>(
       Math.max(-Infinity, ...rects.filter((r, i) => i !== skip && r.sheetIndex === sheetIndex).map((r) => r.y + r.height));
     const sheetIndices = [...new Set(rects.map((r) => r.sheetIndex))].sort((a, b) => a - b);
 
-    // Deterministic order priority: last sheet first, then lowest bottom edge, then largest box, then orderId/candidateId.
-    const order = current
-      .map((g, index) => ({ g, index }))
+    // Deterministic order ranking. Groups that set their sheet's used height
+    // come first (only their move can lower sheets/height on its own), then
+    // the rest; within each tier: last sheet first, then taller, larger
+    // (= bigger freed slot), more flexible (more V2 shapes), orderId.
+    const ranked = current
+      .map((g, index) => ({ g, index, critical: bottomOf(g.sheetIndex, index) < rects[index].y + rects[index].height - MIN_HEIGHT_GAIN_MM }))
       .sort(
         (a, b) =>
+          Number(b.critical) - Number(a.critical) ||
           b.g.sheetIndex - a.g.sheetIndex ||
-          b.g.y + b.g.height - (a.g.y + a.g.height) ||
+          b.g.height - a.g.height ||
           b.g.width * b.g.height - a.g.width * a.g.height ||
+          b.g.alternatives.length - a.g.alternatives.length ||
           (a.g.orderId ?? -1) - (b.g.orderId ?? -1) ||
           a.g.candidate.candidateId.localeCompare(b.g.candidate.candidateId)
       );
+    stats.ordersConsidered += ranked.length;
 
     let best: CandidateMove<T> | null = null;
-    let ordersThisPass = 0;
 
-    for (const { g: group, index } of order) {
-      if (ordersThisPass >= limits.maxOrdersPerPass || stats.budgetExhausted) break;
-
-      // Only a group that sets its sheet's used height (or is alone on it) can improve the
-      // objective by moving: any other group's removal leaves every sheet's height unchanged.
-      const own = rects[index];
-      const bottomWithout = bottomOf(own.sheetIndex, index);
-      if (!(bottomWithout < own.y + own.height - MIN_HEIGHT_GAIN_MM)) {
-        stats.ordersSkippedNonCritical++;
-        continue;
-      }
-      ordersThisPass++;
+    for (const { g: group, index } of ranked.slice(0, limits.maxOrdersPerPass)) {
+      if (stats.budgetExhausted) break;
       stats.ordersTried++;
 
       const restRects = rects.filter((_, i) => i !== index);
@@ -398,9 +469,13 @@ export function improveWithSlotReflow<T>(
       for (const sheetIndex of sheetIndices) {
         const occupied = restRects.filter((r) => r.sheetIndex === sheetIndex);
         for (const free of replayFreeRects(occupied, packSheetWidth, packSheetHeight, gap)) {
-          slots.push({ sheetIndex, free, width: free.width - gap, height: free.height - gap });
+          const region = classifyRelocation(group, { sheetIndex, x: free.x + margin, y: free.y + margin });
+          slots.push({ sheetIndex, free, width: free.width - gap, height: free.height - gap, region });
         }
       }
+      const foreignAll = slots.filter((s) => s.region === "FOREIGN_RELOCATION");
+      stats.foreignSlotsDetected += foreignAll.length;
+      stats.selfSlotsDetected += slots.length - foreignAll.length;
       stats.slotsDetected += slots.length;
 
       const promising = slots.filter((slot) => {
@@ -410,23 +485,35 @@ export function improveWithSlotReflow<T>(
           [...restRects, { x: slot.free.x, y: slot.free.y, width: Math.min(minimal.width, slot.width), height: Math.min(minimal.height, slot.height), sheetIndex: slot.sheetIndex }],
           config
         );
-        return isStrictlyBetter(bound, currentScore);
+        return improvementLevel(bound, currentScore, limits.acceptFragmentationGain) !== null;
       });
       stats.slotsPruned += slots.length - promising.length;
-      promising.sort(
-        (a, b) =>
-          a.free.y - b.free.y ||
-          a.sheetIndex - b.sheetIndex ||
-          a.free.x - b.free.x ||
-          b.width * b.height - a.width * a.height
-      );
 
-      for (const slot of promising.slice(0, limits.maxSlotsPerOrder)) {
+      // FOREIGN first (other sheets before the order's own sheet), then SELF.
+      const foreign = promising
+        .filter((s) => s.region === "FOREIGN_RELOCATION")
+        .sort(
+          (a, b) =>
+            Number(a.sheetIndex === group.sheetIndex) - Number(b.sheetIndex === group.sheetIndex) ||
+            a.sheetIndex - b.sheetIndex ||
+            a.free.y - b.free.y ||
+            a.free.x - b.free.x ||
+            b.width * b.height - a.width * a.height
+        )
+        .slice(0, limits.maxForeignSlotsPerOrder);
+      const self = promising
+        .filter((s) => s.region === "SELF_REFLOW")
+        .sort((a, b) => a.free.y - b.free.y || a.free.x - b.free.x || b.width * b.height - a.width * a.height)
+        .slice(0, limits.maxSelfSlotsPerOrder);
+
+      for (const slot of [...foreign, ...self]) {
         if (remaining() <= 0) {
           stats.budgetExhausted = true;
           break;
         }
         stats.slotsTried++;
+        if (slot.region === "FOREIGN_RELOCATION") stats.foreignSlotsTried++;
+        else stats.selfSlotsTried++;
 
         const normal = group.alternatives
           .filter((c) => c.width <= slot.width + GEOMETRY_EPSILON && c.height <= slot.height + GEOMETRY_EPSILON)
@@ -449,7 +536,7 @@ export function improveWithSlotReflow<T>(
           const x = slot.free.x + margin;
           const y = slot.free.y + margin;
           if (
-            slot.sheetIndex === group.sheetIndex &&
+            slot.region === "SELF_REFLOW" &&
             Math.abs(x - group.x) < POSITION_EPSILON &&
             Math.abs(y - group.y) < POSITION_EPSILON &&
             Math.abs(candidate.width - group.width) < POSITION_EPSILON &&
@@ -465,10 +552,12 @@ export function improveWithSlotReflow<T>(
             [...restRects, { x: slot.free.x, y: slot.free.y, width: candidate.width, height: candidate.height, sheetIndex: slot.sheetIndex }],
             config
           );
-          if (!isStrictlyBetter(score, currentScore)) {
+          const level = improvementLevel(score, currentScore, limits.acceptFragmentationGain);
+          if (level === null) {
             stats.rejectedNotBetter++;
             continue;
           }
+          // Best move of the pass: keep only a strictly better global score (ties keep the earlier, foreign-first one).
           if (best && compareScores(score, best.score) >= 0) continue;
 
           const moved = placeGroup(candidate, x, y, slot.sheetIndex, { alternatives: group.alternatives, localCandidate: group.localCandidate });
@@ -481,7 +570,9 @@ export function improveWithSlotReflow<T>(
             groups: next,
             mapping,
             score,
+            level,
             move: {
+              type: classifyRelocation(group, { sheetIndex: slot.sheetIndex, x, y }),
               orderId: group.orderId,
               source,
               strategy: candidate.strategy,
@@ -506,16 +597,26 @@ export function improveWithSlotReflow<T>(
 
     // A validated, strictly better move found before the budget ran out is still applied.
     if (!best) break;
+    const remap = (sheetIndex: number | null) => (sheetIndex === null ? null : (best!.mapping.get(sheetIndex) ?? null));
     for (const move of stats.moves) {
-      move.finalSheetIndex = move.finalSheetIndex === null ? null : (best.mapping.get(move.finalSheetIndex) ?? null);
+      move.finalSheetIndex = remap(move.finalSheetIndex);
+      move.finalFromSheetIndex = remap(move.finalFromSheetIndex);
     }
+    const before = best.move.before.sumUsedHeight;
+    const after = sheetHeightOf(best.score, config);
     stats.moves.push({
       ...best.move,
-      after: { sheetCount: best.score.sheetCount, sumUsedHeight: sheetHeightOf(best.score, config) },
+      improvement: best.level,
+      after: { sheetCount: best.score.sheetCount, sumUsedHeight: after },
+      heightSavedMm: before - after,
+      heightSavedPercent: before > 0 ? ((before - after) / before) * 100 : 0,
       sheetRemoved: best.score.sheetCount < currentScore.sheetCount,
       finalSheetIndex: best.mapping.get(best.move.toSheetIndex) ?? null,
+      finalFromSheetIndex: best.mapping.get(best.move.fromSheetIndex) ?? null,
     });
     stats.acceptedRelocations++;
+    if (best.move.type === "FOREIGN_RELOCATION") stats.acceptedForeignRelocation++;
+    else stats.acceptedSelfReflow++;
     current = best.groups;
     currentScore = best.score;
   }
@@ -610,7 +711,7 @@ export function applySlotReflow<T>(
       if (violations.length > 0) {
         fallbackReason = "V3A layout failed validation";
         finalViolations = violations;
-      } else if (!isStrictlyBetter(after, before)) {
+      } else if (!isStrictlyBetter(after, before, limits.acceptFragmentationGain)) {
         fallbackReason = "V3A layout not strictly better";
       } else {
         result = candidate;
@@ -640,15 +741,21 @@ export function applySlotReflow<T>(
 function emptySearchStats(limits: SlotReflowLimits): SlotReflowSearchStats {
   return {
     passes: 0,
+    ordersConsidered: 0,
     ordersTried: 0,
-    ordersSkippedNonCritical: 0,
     slotsDetected: 0,
+    foreignSlotsDetected: 0,
+    selfSlotsDetected: 0,
     slotsPruned: 0,
     slotsTried: 0,
+    foreignSlotsTried: 0,
+    selfSlotsTried: 0,
     reflowAttempts: 0,
     successfulReflows: 0,
     layoutEvaluations: 0,
     acceptedRelocations: 0,
+    acceptedSelfReflow: 0,
+    acceptedForeignRelocation: 0,
     rejectedNoOps: 0,
     rejectedNotBetter: 0,
     rejectedInvalid: 0,

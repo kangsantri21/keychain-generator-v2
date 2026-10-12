@@ -42,16 +42,19 @@ export function SlotReflowPanel({ diagnostics: d }: { diagnostics: GroupedV2Slot
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded bg-white p-2 sm:grid-cols-4">
         <span className="col-span-2 font-semibold text-slate-700 sm:col-span-4">SEARCH</span>
         <span>Passes: {d.passes}</span>
+        <span>Orders Considered: {d.ordersConsidered}</span>
         <span>Orders Tried: {d.ordersTried}</span>
-        <span>Orders Skipped (non-critical): {d.ordersSkippedNonCritical}</span>
-        <span>Slots Detected: {d.slotsDetected}</span>
         <span>Slots Pruned: {d.slotsPruned}</span>
-        <span>Slots Tried: {d.slotsTried}</span>
+        <span>Foreign Slots Detected: {d.foreignSlotsDetected}</span>
+        <span>Self Slots Detected: {d.selfSlotsDetected}</span>
+        <span>Foreign Slots Tried: {d.foreignSlotsTried}</span>
+        <span>Self Slots Tried: {d.selfSlotsTried}</span>
         <span>Reflow Attempts: {d.reflowAttempts}</span>
         <span>Successful Reflows: {d.successfulReflows}</span>
         <span>Layout Evaluations: {d.layoutEvaluations}</span>
-        <span>Accepted Relocations: {d.acceptedRelocations}</span>
-        <span>Rejected No-Ops: {d.rejectedNoOps}</span>
+        <span>Accepted SELF_REFLOW: {d.acceptedSelfReflow}</span>
+        <span>Accepted FOREIGN_RELOCATION: {d.acceptedForeignRelocation}</span>
+        <span>Rejected No-op: {d.rejectedNoOps}</span>
         <span>Rejected Not Better: {d.rejectedNotBetter}</span>
         <span>Rejected Invalid: {d.rejectedInvalid}</span>
         <span>
@@ -70,20 +73,29 @@ export function SlotReflowPanel({ diagnostics: d }: { diagnostics: GroupedV2Slot
           {d.moves.map((move, index) => (
             <div key={index} className="grid grid-cols-1 gap-0.5 rounded bg-white p-2 sm:grid-cols-2">
               <span className="font-semibold text-slate-700 sm:col-span-2">
-                #{index + 1} Order: {move.receiptCode ?? `Order #${move.orderId ?? "-"}`} · {move.source} · {move.strategy}
+                #{index + 1}{" "}
+                <span className={move.type === "FOREIGN_RELOCATION" ? "text-violet-700" : "text-amber-700"}>{move.type}</span> · Order:{" "}
+                {move.receiptCode ?? `Order #${move.orderId ?? "-"}`} · {move.source} · {move.strategy} · gain: {move.improvement}
               </span>
               <span>
-                FROM: {sheet(move.fromSheetIndex)} · {move.fromWidth.toFixed(1)}×{move.fromHeight.toFixed(1)} @ ({move.fromX.toFixed(1)}, {move.fromY.toFixed(1)})
+                FROM: {sheet(move.fromSheetIndex)} · ({move.fromX.toFixed(1)}, {move.fromY.toFixed(1)}) · {move.fromWidth.toFixed(1)}×
+                {move.fromHeight.toFixed(1)}
               </span>
               <span>
-                TO: {sheet(move.toSheetIndex)} · slot {move.slot.width.toFixed(1)}×{move.slot.height.toFixed(1)} → group {move.newWidth.toFixed(1)}×
-                {move.newHeight.toFixed(1)} @ ({move.toX.toFixed(1)}, {move.toY.toFixed(1)})
+                TO: {sheet(move.toSheetIndex)} · ({move.toX.toFixed(1)}, {move.toY.toFixed(1)}) · slot {move.slot.width.toFixed(1)}×
+                {move.slot.height.toFixed(1)}
               </span>
               <span>
-                Global before: {move.before.sheetCount} sheet · {mm(move.before.sumUsedHeight)}
+                REFLOW RESULT: {move.newWidth.toFixed(1)}×{move.newHeight.toFixed(1)}
               </span>
               <span>
-                Global after: {move.after.sheetCount} sheet · {mm(move.after.sumUsedHeight)}
+                HEIGHT SAVED: {mm(move.heightSavedMm)} / {move.heightSavedPercent.toFixed(1)}%
+              </span>
+              <span>
+                GLOBAL BEFORE: {move.before.sheetCount} sheet · {mm(move.before.sumUsedHeight)}
+              </span>
+              <span>
+                GLOBAL AFTER: {move.after.sheetCount} sheet · {mm(move.after.sumUsedHeight)}
                 {move.sheetRemoved ? " · sheet dihapus" : ""}
               </span>
             </div>
@@ -95,17 +107,38 @@ export function SlotReflowPanel({ diagnostics: d }: { diagnostics: GroupedV2Slot
   );
 }
 
-/** Dashed DEV overlay of each used slot on its final sheet (only when V3A was applied). */
+/**
+ * Dashed DEV overlays on the FINAL sheets (only when V3A was applied): the
+ * slot each move used, and for a FOREIGN_RELOCATION also the order's old
+ * position. Preview only, never exported.
+ */
 export function slotOverlaysOf(d: GroupedV2SlotReflow | null | undefined) {
   if (!d || !d.applied) return [];
-  return d.moves
-    .filter((move) => move.finalSheetIndex !== null)
-    .map((move) => ({
-      sheetIndex: move.finalSheetIndex!,
-      x: move.slot.x,
-      y: move.slot.y,
-      width: move.slot.width,
-      height: move.slot.height,
-      label: `FREE SLOT ${move.slot.width.toFixed(1)} × ${move.slot.height.toFixed(1)} · FILLED BY ${move.receiptCode ?? `Order #${move.orderId ?? "-"}`}`,
-    }));
+  const name = (move: GroupedV2SlotReflow["moves"][number]) => move.receiptCode ?? `Order #${move.orderId ?? "-"}`;
+  return d.moves.flatMap((move) => {
+    const overlays = [];
+    if (move.finalSheetIndex !== null) {
+      overlays.push({
+        sheetIndex: move.finalSheetIndex,
+        x: move.slot.x,
+        y: move.slot.y,
+        width: move.slot.width,
+        height: move.slot.height,
+        kind: "slot" as const,
+        label: `${move.type === "FOREIGN_RELOCATION" ? "FOREIGN SLOT" : "SELF SLOT"} ${move.slot.width.toFixed(1)} × ${move.slot.height.toFixed(1)} · FILLED BY ${name(move)}`,
+      });
+    }
+    if (move.type === "FOREIGN_RELOCATION" && move.finalFromSheetIndex !== null) {
+      overlays.push({
+        sheetIndex: move.finalFromSheetIndex,
+        x: move.fromX,
+        y: move.fromY,
+        width: move.fromWidth,
+        height: move.fromHeight,
+        kind: "from" as const,
+        label: `OLD ORDER POSITION · ${name(move)}`,
+      });
+    }
+    return overlays;
+  });
 }

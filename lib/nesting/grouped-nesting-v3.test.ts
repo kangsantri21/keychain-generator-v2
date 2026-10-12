@@ -325,12 +325,20 @@ describe("V3A TEST J — budget", () => {
   test("every hard limit is respected and the result stays valid", () => {
     const items = realisticBatch(60, 3);
     const v2 = runGroupedNesting(items);
-    const limits: SlotReflowLimits = { maxPasses: 2, maxOrdersPerPass: 2, maxSlotsPerOrder: 2, maxReflowVariants: 3, maxTotalEvaluations: 40 };
+    const limits: SlotReflowLimits = {
+      maxPasses: 2,
+      maxOrdersPerPass: 2,
+      maxForeignSlotsPerOrder: 1,
+      maxSelfSlotsPerOrder: 1,
+      maxReflowVariants: 3,
+      maxTotalEvaluations: 40,
+      acceptFragmentationGain: true,
+    };
     const { result, diagnostics } = applySlotReflow(v2, config, limits);
     assert.ok(diagnostics.budgetUsed <= limits.maxTotalEvaluations);
     assert.ok(diagnostics.passes <= limits.maxPasses);
     assert.ok(diagnostics.ordersTried <= limits.maxPasses * limits.maxOrdersPerPass);
-    assert.ok(diagnostics.slotsTried <= diagnostics.ordersTried * limits.maxSlotsPerOrder);
+    assert.ok(diagnostics.slotsTried <= diagnostics.ordersTried * (limits.maxForeignSlotsPerOrder + limits.maxSelfSlotsPerOrder));
     assert.ok(diagnostics.reflowAttempts <= diagnostics.slotsTried * limits.maxReflowVariants);
     assert.equal(diagnostics.budgetUsed, diagnostics.reflowAttempts + diagnostics.layoutEvaluations);
     assertIntegrity(result, items);

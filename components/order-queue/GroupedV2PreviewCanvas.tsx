@@ -36,6 +36,8 @@ export interface PreviewSlotOverlay {
   width: number;
   height: number;
   label: string;
+  /** "slot" (default): a used free slot; "from": a relocated order's old position. */
+  kind?: "slot" | "from";
 }
 
 export function GroupedV2PreviewCanvas({
@@ -89,25 +91,28 @@ export function GroupedV2PreviewCanvas({
         })}
 
         {/* V3A-1 DEV: used free slots, drawn under the group boundaries. */}
-        {slots.map((slot, index) => (
-          <g key={`slot-${index}`}>
-            <rect
-              x={slot.x}
-              y={slot.y}
-              width={slot.width}
-              height={slot.height}
-              fill="#f59e0b"
-              fillOpacity={0.06}
-              stroke="#d97706"
-              strokeWidth={0.5}
-              strokeDasharray="1.5 1.5"
-              vectorEffect="non-scaling-stroke"
-            />
-            <text x={slot.x + 1} y={slot.y + slot.height - 1.5} fontSize={2.8} fill="#b45309">
-              {slot.label}
-            </text>
-          </g>
-        ))}
+        {slots.map((slot, index) => {
+          const color = slot.kind === "from" ? "#64748b" : "#d97706";
+          return (
+            <g key={`slot-${index}`}>
+              <rect
+                x={slot.x}
+                y={slot.y}
+                width={slot.width}
+                height={slot.height}
+                fill={color}
+                fillOpacity={0.06}
+                stroke={color}
+                strokeWidth={0.5}
+                strokeDasharray={slot.kind === "from" ? "0.8 1.6" : "1.5 1.5"}
+                vectorEffect="non-scaling-stroke"
+              />
+              <text x={slot.x + 1} y={slot.y + slot.height - 1.5} fontSize={2.8} fill={color}>
+                {slot.label}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Group boundaries + one label each — preview-only visual aid, never part of any export. */}
         {groups.map((group, index) => {
