@@ -154,6 +154,23 @@ function splitFreeRect(free: Rect, used: Rect): Rect[] {
   return pieces;
 }
 
+/**
+ * How a used node relates to a free rect. `splitFreeRect` alone cannot tell
+ * NO_OVERLAP from FULLY_CONSUMED (it returns [] for both), so a caller that
+ * keeps the free rect whenever it gets [] also keeps a free rect the node
+ * covers exactly — a phantom slot on top of a placed rect.
+ */
+export type FreeRectCut = "NO_OVERLAP" | "PARTIAL_OVERLAP" | "FULLY_CONSUMED";
+
+/** Exact-fit-safe classification + split of `free` by `used` (pieces are empty unless PARTIAL_OVERLAP). */
+export function cutFreeRect(free: Rect, used: Rect): { kind: FreeRectCut; pieces: Rect[] } {
+  const overlaps =
+    used.x < free.x + free.width && used.x + used.width > free.x && used.y < free.y + free.height && used.y + used.height > free.y;
+  if (!overlaps) return { kind: "NO_OVERLAP", pieces: [] };
+  const pieces = splitFreeRect(free, used);
+  return pieces.length === 0 ? { kind: "FULLY_CONSUMED", pieces } : { kind: "PARTIAL_OVERLAP", pieces };
+}
+
 /** Same as lib/nesting.ts's pruneFreeRects. */
 function pruneFreeRects(freeRects: Rect[]): Rect[] {
   const contains = (a: Rect, b: Rect) => b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
@@ -167,7 +184,13 @@ class OuterSheet {
   maxY = 0;
   placedArea = 0;
 
-  constructor(usableWidth: number, usableHeight: number, border: number) {
+  constructor(
+    usableWidth: number,
+    usableHeight: number,
+    border: number,
+    /** V3 only: drop a free rect the node covers exactly (see cutFreeRect). Off = the legacy/V2 behavior. */
+    private readonly exactFitSafe = false
+  ) {
     this.freeRects = [{ x: border, y: border, width: usableWidth, height: usableHeight }];
   }
 
@@ -194,6 +217,12 @@ class OuterSheet {
   commit(node: Rect, width: number, height: number): Rect {
     const next: Rect[] = [];
     for (const free of this.freeRects) {
+      if (this.exactFitSafe) {
+        const cut = cutFreeRect(free, node);
+        if (cut.kind === "NO_OVERLAP") next.push(free);
+        else next.push(...cut.pieces);
+        continue;
+      }
       const pieces = splitFreeRect(free, node);
       if (pieces.length === 0) next.push(free);
       else next.push(...pieces);
@@ -225,7 +254,12 @@ export function packOuterRects<T>(
   sheetHeight: number,
   gap: number,
   strategy: OuterPackingStrategy,
-  options: { stats?: MultiSheetPackStats; maxExistingSheetTrials?: number } = {}
+  options: {
+    stats?: MultiSheetPackStats;
+    maxExistingSheetTrials?: number;
+    /** V3 only (slot reflow): exact-fit-safe free-rect carving. Omitted/false = unchanged legacy/V2 semantics. */
+    exactFitSafe?: boolean;
+  } = {}
 ): OuterPlacement<T>[] {
   const usableWidth = sheetWidth - 2 * gap;
   const usableHeight = sheetHeight - 2 * gap;
@@ -233,7 +267,8 @@ export function packOuterRects<T>(
   const sorted = rects.slice().sort((a, b) => key(b) - key(a));
 
   const results: OuterPlacement<T>[] = [];
-  const sheets: OuterSheet[] = [new OuterSheet(usableWidth, usableHeight, gap)];
+  const exactFitSafe = options.exactFitSafe ?? false;
+  const sheets: OuterSheet[] = [new OuterSheet(usableWidth, usableHeight, gap, exactFitSafe)];
 
   const bestExisting = strategy.sheetMode === "BEST_EXISTING";
   const maxTrials = options.maxExistingSheetTrials ?? MAX_EXISTING_SHEET_TRIALS;
@@ -251,7 +286,7 @@ export function packOuterRects<T>(
         continue;
       }
       // No open sheet can take it: only now open a new one.
-      sheets.push(new OuterSheet(usableWidth, usableHeight, gap));
+      sheets.push(new OuterSheet(usableWidth, usableHeight, gap, exactFitSafe));
       const fresh = sheets[sheets.length - 1].place(rect.width, rect.height, gap, strategy.heuristic);
       if (fresh) results.push({ ...fresh, sheetIndex: sheets.length - 1, data: rect.data });
       continue;
@@ -260,7 +295,7 @@ export function packOuterRects<T>(
     let sheetIndex = sheets.length - 1;
     let placed = sheets[sheetIndex].place(rect.width, rect.height, gap, strategy.heuristic);
     if (!placed) {
-      sheets.push(new OuterSheet(usableWidth, usableHeight, gap));
+      sheets.push(new OuterSheet(usableWidth, usableHeight, gap, exactFitSafe));
       sheetIndex = sheets.length - 1;
       placed = sheets[sheetIndex].place(rect.width, rect.height, gap, strategy.heuristic);
     }
@@ -333,10 +368,11 @@ export type FreeRect = Rect;
 /**
  * V3A — read-only view of one sheet's free-rectangle state. Replays
  * `occupied` (unpadded placements in the same coordinates `packOuterRects`
- * returns) onto a fresh `OuterSheet` with exactly the commit the packer
- * itself performs, and returns copies of the resulting free rectangles.
- * Carving is order-independent, so this equals the state the packer held
- * after placing the same rects. Packing behavior is unchanged.
+ * returns) onto a fresh `OuterSheet` and returns copies of the resulting
+ * free rectangles. Uses exact-fit-safe carving (see `cutFreeRect`): with the
+ * legacy carve a rect committed after neighbours that box it in exactly left
+ * its own node behind as a "free" phantom slot, so the result depended on the
+ * replay order. Packing behavior (legacy/V2) is unchanged.
  */
 export function replayFreeRects(
   occupied: { x: number; y: number; width: number; height: number }[],
@@ -344,7 +380,7 @@ export function replayFreeRects(
   sheetHeight: number,
   gap: number
 ): FreeRect[] {
-  const sheet = new OuterSheet(sheetWidth - 2 * gap, sheetHeight - 2 * gap, gap);
+  const sheet = new OuterSheet(sheetWidth - 2 * gap, sheetHeight - 2 * gap, gap, true);
   for (const rect of occupied) {
     sheet.commit({ x: rect.x, y: rect.y, width: rect.width + gap, height: rect.height + gap }, rect.width, rect.height);
   }

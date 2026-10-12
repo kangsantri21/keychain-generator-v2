@@ -79,6 +79,23 @@ function orient<T>(item: GroupedNestingItem<T>, orientation: ReflowOrientation, 
 
 const FIT_EPSILON = 1e-6;
 
+/** True if two placements overlap or sit closer than `gap` on both axes. */
+export function hasItemCollision(placements: { x: number; y: number; width: number; height: number }[], gap: number): boolean {
+  for (let i = 0; i < placements.length; i++) {
+    const a = placements[i];
+    for (let j = i + 1; j < placements.length; j++) {
+      const b = placements[j];
+      const apart =
+        a.x + a.width + gap <= b.x + FIT_EPSILON ||
+        b.x + b.width + gap <= a.x + FIT_EPSILON ||
+        a.y + a.height + gap <= b.y + FIT_EPSILON ||
+        b.y + b.height + gap <= a.y + FIT_EPSILON;
+      if (!apart) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Cheap necessary conditions before any packing: every item fits the slot
  * in an allowed orientation, and the items' padded area fits the slot's
@@ -167,14 +184,17 @@ export function reflowOrderIntoSlot<T>(
         binWidth,
         binHeight,
         partGap,
-        { id: variant.label, heuristic: variant.heuristic, sort: variant.sort }
+        { id: variant.label, heuristic: variant.heuristic, sort: variant.sort },
+        { exactFitSafe: true }
       );
       if (packed.length === n && packed.every((p) => p.sheetIndex === 0)) {
         placements = packed.map((p) => ({ item: p.data.item, x: p.x, y: p.y, width: p.width, height: p.height, rotated: p.data.preRotated }));
       }
     }
 
-    if (!placements) continue;
+    // Exact-fit guard: the "free" variant uses the untouched legacy packer, whose carve can leave a
+    // phantom free rect on an exact fit; any arrangement with two items closer than PART_GAP is dropped.
+    if (!placements || hasItemCollision(placements, partGap)) continue;
     const wrapped = shrinkWrapPlacements(placements);
     if (wrapped.width > slotWidth + FIT_EPSILON || wrapped.height > slotHeight + FIT_EPSILON) continue;
 
