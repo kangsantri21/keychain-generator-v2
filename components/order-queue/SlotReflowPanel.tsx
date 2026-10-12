@@ -1,6 +1,7 @@
 import type { GroupedV2SlotReflow } from "@/lib/nesting/grouped-nesting-preview";
 import { SlotFunnelPanel } from "@/components/order-queue/SlotFunnelPanel";
 import { CompoundMovePanel } from "@/components/order-queue/CompoundMovePanel";
+import { RegionRepackPanel } from "@/components/order-queue/RegionRepackPanel";
 
 /**
  * V3A-1 EXPERIMENTAL DEV panel — baseline V2 vs the slot-aware reflow pass,
@@ -107,6 +108,8 @@ export function SlotReflowPanel({ diagnostics: d }: { diagnostics: GroupedV2Slot
       )}
 
       {d.compound && <CompoundMovePanel compound={d.compound} />}
+
+      {d.region && <RegionRepackPanel region={d.region} />}
 
       {d.funnel && <SlotFunnelPanel funnel={d.funnel} />}
     </div>

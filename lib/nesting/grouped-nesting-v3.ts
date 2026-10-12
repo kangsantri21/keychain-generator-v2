@@ -45,6 +45,7 @@ import { replayFreeRects, type FreeRect } from "./outer-maxrects";
 import { reflowOrderIntoSlot, slotCanPossiblyHold, V2_ROTATION_RULE, type RotationRule } from "./slot-reflow";
 import { geometryPruneReason, summarizeFunnel, type SlotFunnel, type SlotOutcome, type SlotRecord } from "./grouped-nesting-v3-funnel";
 import type { CompoundDiagnostics } from "./grouped-nesting-v3-compound";
+import type { RegionDiagnostics } from "./grouped-nesting-v3-region";
 import type {
   GroupedNestingItem,
   GroupedNestingResult,
@@ -179,6 +180,13 @@ export interface SlotReflowDiagnostics {
   funnel: SlotFunnel | null;
   /** V3A-3 compound-move stage (null unless requested). */
   compound: CompoundDiagnostics | null;
+  /** V3A-4 FAST local region repack stage (null unless requested). */
+  region: RegionDiagnostics | null;
+}
+
+/** V3A-4 hook: like SlotReflowStage, run after the compound stage (or after V3A-2 when compound is off). */
+export interface RegionReflowStage<T> {
+  run(groups: GroupPlacement<T>[]): { groups: GroupPlacement<T>[]; diagnostics: RegionDiagnostics };
 }
 
 /**
@@ -195,7 +203,7 @@ type Config = GroupedNestingConfig;
 /** Search counters of one improveWithSlotReflow run. */
 export type SlotReflowSearchStats = Omit<
   SlotReflowDiagnostics,
-  "applied" | "fallbackReason" | "baseline" | "final" | "sheetsAvoided" | "heightSavedMm" | "heightSavedPercent" | "baselineViolations" | "finalViolations" | "runtimeMs" | "funnel" | "compound"
+  "applied" | "fallbackReason" | "baseline" | "final" | "sheetsAvoided" | "heightSavedMm" | "heightSavedPercent" | "baselineViolations" | "finalViolations" | "runtimeMs" | "funnel" | "compound" | "region"
 >;
 
 /** One group positioned on a sheet (sheet coordinates), rebuilt exactly like packGroupsOntoSheet does. */
@@ -800,6 +808,7 @@ export function runGroupedNestingV3<T>(
     rule?: RotationRule;
     trace?: boolean;
     compound?: SlotReflowStage<T>;
+    region?: RegionReflowStage<T>;
   } = {}
 ): { result: GroupedNestingResult<T>; v2: GroupedNestingResult<T>; diagnostics: SlotReflowDiagnostics } {
   const v2 = runGroupedNesting(items, overrides, options.searchLimits ?? DEFAULT_GLOBAL_SEARCH_LIMITS, options.outerLimits ?? DEFAULT_OUTER_PACKING_LIMITS);
@@ -815,7 +824,7 @@ export function applySlotReflow<T>(
   v2: GroupedNestingResult<T>,
   config: Config,
   limits: SlotReflowLimits = DEFAULT_SLOT_REFLOW_LIMITS,
-  options: { clock?: () => number; rule?: RotationRule; trace?: boolean; compound?: SlotReflowStage<T> } = {}
+  options: { clock?: () => number; rule?: RotationRule; trace?: boolean; compound?: SlotReflowStage<T>; region?: RegionReflowStage<T> } = {}
 ): { result: GroupedNestingResult<T>; diagnostics: SlotReflowDiagnostics } {
   const startedAt = options.clock?.();
 
@@ -829,6 +838,7 @@ export function applySlotReflow<T>(
   let stats: SlotReflowSearchStats = emptySearchStats(limits);
   let funnel: SlotFunnel | null = null;
   let compound: CompoundDiagnostics | null = null;
+  let region: RegionDiagnostics | null = null;
 
   if (baselineViolations.length > 0) {
     fallbackReason = "V2 baseline failed validation — V3A not run";
@@ -845,6 +855,12 @@ export function applySlotReflow<T>(
       compound = stage.diagnostics;
       finalGroups = stage.groups;
       accepted += stage.diagnostics.acceptedCompoundMoves;
+    }
+    if (options.region) {
+      const stage = options.region.run(finalGroups);
+      region = stage.diagnostics;
+      finalGroups = stage.groups;
+      accepted += stage.diagnostics.acceptedRegions;
     }
     if (accepted === 0) {
       fallbackReason = improved.stats.budgetExhausted ? "budget exhausted without an improvement" : "no strictly better relocation";
@@ -881,6 +897,7 @@ export function applySlotReflow<T>(
     runtimeMs,
     funnel,
     compound,
+    region,
   };
   return { result, diagnostics };
 }

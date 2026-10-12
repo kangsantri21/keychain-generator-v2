@@ -11,6 +11,7 @@ import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
 import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
 import { isSlotReflowRequest, runGroupedNestingV3 } from "@/lib/nesting/grouped-nesting-v3";
 import { compoundStage, isCompoundRequest } from "@/lib/nesting/grouped-nesting-v3-compound";
+import { regionStage, isRegionRequest } from "@/lib/nesting/grouped-nesting-v3-region";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
@@ -145,7 +146,9 @@ export async function POST(request: NextRequest) {
     // V3A-3 (EXPERIMENTAL): `slotReflowCompound: true` adds the two-group compound stage on top.
     const clock = () => performance.now();
     const compound = isCompoundRequest(body) ? compoundStage<PackData>(resolveConfig({}), undefined, { clock }) : undefined;
-    const v3Run = isSlotReflowRequest(body) ? runGroupedNestingV3(groupedItems, {}, undefined, { clock, compound }) : null;
+    // V3A-4 FAST (EXPERIMENTAL): `slotReflowRegion: true` adds the local region repack stage last.
+    const region = isRegionRequest(body) ? regionStage<PackData>(resolveConfig({}), undefined, { clock }) : undefined;
+    const v3Run = isSlotReflowRequest(body) ? runGroupedNestingV3(groupedItems, {}, undefined, { clock, compound, region }) : null;
     const result = v3Run ? v3Run.result : runGroupedNesting(groupedItems);
     const elapsedMs = performance.now() - startedAt;
 
@@ -300,6 +303,15 @@ export async function POST(request: NextRequest) {
                     ...move,
                     primaryReceiptCode: labelFor(move.primary.orderId),
                     secondaryReceiptCode: labelFor(move.secondary.orderId),
+                  })),
+                }
+              : null,
+            region: v3Run.diagnostics.region
+              ? {
+                  ...v3Run.diagnostics.region,
+                  accepted: v3Run.diagnostics.region.accepted.map((a) => ({
+                    ...a,
+                    receipts: a.receipts.map((r) => ({ ...r, receiptCode: labelFor(r.orderId) })),
                   })),
                 }
               : null,

@@ -18,11 +18,12 @@ import type { OuterOptimizerStats } from "./grouped-nesting-outer";
 import type { SlotReflowDiagnostics, SlotReflowMove } from "./grouped-nesting-v3";
 import type { OrderFunnel, PrunedCandidate, SlotFunnel } from "./grouped-nesting-v3-funnel";
 import type { CompoundDiagnostics, CompoundMoveDetail } from "./grouped-nesting-v3-compound";
+import type { AcceptedRegion, RegionDiagnostics, RegionReceiptChange } from "./grouped-nesting-v3-region";
 
 type Labeled<X> = X & { receiptCode: string | null };
 
 /** V3A diagnostics as the API sends them (moves and funnel rows labeled with their receipt code). */
-export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves" | "funnel" | "compound"> & {
+export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves" | "funnel" | "compound" | "region"> & {
   moves: Labeled<SlotReflowMove>[];
   funnel: (Omit<SlotFunnel, "orders" | "topPrunedForeign"> & { orders: Labeled<OrderFunnel>[]; topPrunedForeign: Labeled<PrunedCandidate>[] }) | null;
   /** V3A-3 compound stage (null unless requested). */
@@ -31,6 +32,8 @@ export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves" | "funnel"
         moves: (CompoundMoveDetail & { primaryReceiptCode: string | null; secondaryReceiptCode: string | null })[];
       })
     | null;
+  /** V3A-4 FAST region repack stage (null unless requested). */
+  region: (Omit<RegionDiagnostics, "accepted"> & { accepted: (Omit<AcceptedRegion, "receipts"> & { receipts: Labeled<RegionReceiptChange>[] })[] }) | null;
 };
 
 export interface GroupedV2PreviewItem {

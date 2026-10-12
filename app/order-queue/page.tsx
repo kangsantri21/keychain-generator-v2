@@ -159,6 +159,8 @@ export default function OrderQueuePage() {
   const [slotReflow, setSlotReflow] = useState(false);
   // V3A-3 EXPERIMENTAL — two-group compound moves on top of the slot reflow (needs slotReflow).
   const [slotReflowCompound, setSlotReflowCompound] = useState(false);
+  // V3A-4 EXPERIMENTAL — local region repack (FAST) on top of the slot reflow (needs slotReflow).
+  const [slotReflowRegion, setSlotReflowRegion] = useState(false);
 
   async function loadOrders() {
     const res = await fetch("/api/orders");
@@ -325,6 +327,7 @@ export default function OrderQueuePage() {
                 ...(benchmarkSpacing ? { benchmark: true } : {}),
                 ...(slotReflow ? { slotReflow: true } : {}),
                 ...(slotReflow && slotReflowCompound ? { slotReflowCompound: true } : {}),
+                ...(slotReflow && slotReflowRegion ? { slotReflowRegion: true } : {}),
               }
             : { selections: selectedRows.map((row) => row.rowId) }
         ),
@@ -456,6 +459,12 @@ export default function OrderQueuePage() {
               <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: setelah slot reflow, coba pasangan 2 resi (A pindah dulu, lalu B). Dipakai hanya jika hasil akhirnya lebih baik. Dry-run.">
                 <input type="checkbox" checked={slotReflowCompound} onChange={(event) => setSlotReflowCompound(event.target.checked)} />
                 V3A-3 Compound (exp)
+              </label>
+            )}
+            {nestingMode === "grouped-v2-preview" && slotReflow && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: lepas 2–3 resi sekaligus dan susun ulang region itu (beam search FAST). Dipakai hanya jika hasil akhirnya lebih baik. Dry-run.">
+                <input type="checkbox" checked={slotReflowRegion} onChange={(event) => setSlotReflowRegion(event.target.checked)} />
+                V3A-4 Region Repack (FAST)
               </label>
             )}
             <select
