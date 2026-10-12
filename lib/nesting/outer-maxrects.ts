@@ -326,3 +326,27 @@ function compareKeys(a: number[], b: number[]): number {
   }
   return 0;
 }
+
+/** A free rectangle of the packer's own state (padded space: a W x H rect fits iff W + gap <= width and H + gap <= height). */
+export type FreeRect = Rect;
+
+/**
+ * V3A — read-only view of one sheet's free-rectangle state. Replays
+ * `occupied` (unpadded placements in the same coordinates `packOuterRects`
+ * returns) onto a fresh `OuterSheet` with exactly the commit the packer
+ * itself performs, and returns copies of the resulting free rectangles.
+ * Carving is order-independent, so this equals the state the packer held
+ * after placing the same rects. Packing behavior is unchanged.
+ */
+export function replayFreeRects(
+  occupied: { x: number; y: number; width: number; height: number }[],
+  sheetWidth: number,
+  sheetHeight: number,
+  gap: number
+): FreeRect[] {
+  const sheet = new OuterSheet(sheetWidth - 2 * gap, sheetHeight - 2 * gap, gap);
+  for (const rect of occupied) {
+    sheet.commit({ x: rect.x, y: rect.y, width: rect.width + gap, height: rect.height + gap }, rect.width, rect.height);
+  }
+  return sheet.freeRects.map((free) => ({ ...free }));
+}

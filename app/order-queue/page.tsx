@@ -11,6 +11,7 @@ import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { MultiSheetPreview } from "@/components/order-queue/MultiSheetPreview";
 import { SpacingBenchmarkPanel } from "@/components/order-queue/SpacingBenchmarkPanel";
+import { SlotReflowPanel, slotOverlaysOf } from "@/components/order-queue/SlotReflowPanel";
 import { buildGroupedV2PreviewSheet, buildHeaderMetrics, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
 import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
 
@@ -154,6 +155,8 @@ export default function OrderQueuePage() {
   const [v2Preview, setV2Preview] = useState<GroupedV2PreviewSheet | null>(null);
   // PHASE 2F — opt-in DEV spacing benchmark (ORDER GAP 8/6/4) on the same dry-run request.
   const [benchmarkSpacing, setBenchmarkSpacing] = useState(false);
+  // V3A-1 EXPERIMENTAL — opt-in slot-aware reflow on the same dry-run request (off = plain V2).
+  const [slotReflow, setSlotReflow] = useState(false);
 
   async function loadOrders() {
     const res = await fetch("/api/orders");
@@ -314,7 +317,12 @@ export default function OrderQueuePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           nestingMode === "grouped-v2-preview"
-            ? { selections: selectedRows.map((row) => row.rowId), mode: "grouped-v2", ...(benchmarkSpacing ? { benchmark: true } : {}) }
+            ? {
+                selections: selectedRows.map((row) => row.rowId),
+                mode: "grouped-v2",
+                ...(benchmarkSpacing ? { benchmark: true } : {}),
+                ...(slotReflow ? { slotReflow: true } : {}),
+              }
             : { selections: selectedRows.map((row) => row.rowId) }
         ),
       });
@@ -433,6 +441,12 @@ export default function OrderQueuePage() {
               <label className="flex items-center gap-1.5 text-xs text-slate-600" title="DEV: jalankan juga ORDER GAP 8/6/4 mm untuk perbandingan. Default produksi tidak berubah.">
                 <input type="checkbox" checked={benchmarkSpacing} onChange={(event) => setBenchmarkSpacing(event.target.checked)} />
                 Benchmark gap 8/6/4
+              </label>
+            )}
+            {nestingMode === "grouped-v2-preview" && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: setelah V2, coba pindahkan + susun ulang satu resi ke free slot. Dipakai hanya jika lebih baik. Dry-run, tidak disimpan.">
+                <input type="checkbox" checked={slotReflow} onChange={(event) => setSlotReflow(event.target.checked)} />
+                V3A Slot Reflow (exp)
               </label>
             )}
             <select
@@ -762,7 +776,14 @@ export default function OrderQueuePage() {
 
           {v2Preview.benchmark && <SpacingBenchmarkPanel sheet={v2Preview} benchmark={v2Preview.benchmark} />}
 
-          <MultiSheetPreview items={v2Preview.items} groups={v2Preview.groups} sheets={v2Preview.sheets} />
+          {v2Preview.slotReflow && <SlotReflowPanel diagnostics={v2Preview.slotReflow} />}
+
+          <MultiSheetPreview
+            items={v2Preview.items}
+            groups={v2Preview.groups}
+            sheets={v2Preview.sheets}
+            slots={slotOverlaysOf(v2Preview.slotReflow)}
+          />
         </div>
       )}
 

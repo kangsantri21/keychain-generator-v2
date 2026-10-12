@@ -63,6 +63,8 @@ export interface OrderLayoutCandidate<T> {
   orderId: number | null;
   /** Which Phase 2C attempt produced this layout (e.g. "unbounded", "landscape w1.25") — dev diagnostics only. */
   strategy: string;
+  /** V3A — "SLOT_REFLOW" when the layout was packed to fit a free slot (slot-reflow.ts); absent = a normal V2 candidate. */
+  source?: "NORMAL" | "SLOT_REFLOW";
   /** Tight bounding box of this candidate's own packed items (already normalized to a (0,0) origin) — NOT the sheet size. */
   width: number;
   height: number;

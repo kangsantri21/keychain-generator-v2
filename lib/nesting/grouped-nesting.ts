@@ -72,7 +72,7 @@ export interface GroupedNestingConfig {
 
 export type GroupedNestingConfigOverrides = Partial<GroupedNestingConfig>;
 
-function resolveConfig(overrides: GroupedNestingConfigOverrides): GroupedNestingConfig {
+export function resolveConfig(overrides: GroupedNestingConfigOverrides): GroupedNestingConfig {
   return {
     sheetWidth: overrides.sheetWidth ?? SHEET_WIDTH_MM,
     sheetHeight: overrides.sheetHeight ?? SHEET_HEIGHT_MM,

@@ -9,6 +9,7 @@ import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { runGroupedNesting, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
 import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
 import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
+import { isSlotReflowRequest, runGroupedNestingV3 } from "@/lib/nesting/grouped-nesting-v3";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
 
@@ -137,7 +138,11 @@ export async function POST(request: NextRequest) {
 
     // Dev diagnostic only — measured here, outside the deterministic result.
     const startedAt = performance.now();
-    const result = runGroupedNesting(groupedItems);
+    // V3A-1 (EXPERIMENTAL): only for an explicit `slotReflow: true`. It runs
+    // V2 first and returns the V2 result unless a relocation is strictly
+    // better. Without the flag this is exactly the V2 call.
+    const v3Run = isSlotReflowRequest(body) ? runGroupedNestingV3(groupedItems, {}, undefined, { clock: () => performance.now() }) : null;
+    const result = v3Run ? v3Run.result : runGroupedNesting(groupedItems);
     const elapsedMs = performance.now() - startedAt;
 
     // Stable per-request item id (its index in groupedItems) so the client can
@@ -273,6 +278,9 @@ export async function POST(request: NextRequest) {
       warnings: result.warnings,
       unfitCount: result.unfit.length,
       benchmark,
+      slotReflow: v3Run
+        ? { ...v3Run.diagnostics, moves: v3Run.diagnostics.moves.map((move) => ({ ...move, receiptCode: labelFor(move.orderId) })) }
+        : null,
     });
   }
 

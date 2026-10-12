@@ -29,12 +29,23 @@ function colorForGroupIndex(index: number): string {
   return GROUP_COLORS[index % GROUP_COLORS.length];
 }
 
+/** V3A-1 DEV overlay: a free slot a relocation used (preview only, never exported). */
+export interface PreviewSlotOverlay {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+}
+
 export function GroupedV2PreviewCanvas({
   items,
   groups,
+  slots = [],
 }: {
   items: GroupedV2PreviewItem[];
   groups: GroupedV2CanvasGroup[];
+  slots?: PreviewSlotOverlay[];
 }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -76,6 +87,27 @@ export function GroupedV2PreviewCanvas({
             </g>
           );
         })}
+
+        {/* V3A-1 DEV: used free slots, drawn under the group boundaries. */}
+        {slots.map((slot, index) => (
+          <g key={`slot-${index}`}>
+            <rect
+              x={slot.x}
+              y={slot.y}
+              width={slot.width}
+              height={slot.height}
+              fill="#f59e0b"
+              fillOpacity={0.06}
+              stroke="#d97706"
+              strokeWidth={0.5}
+              strokeDasharray="1.5 1.5"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text x={slot.x + 1} y={slot.y + slot.height - 1.5} fontSize={2.8} fill="#b45309">
+              {slot.label}
+            </text>
+          </g>
+        ))}
 
         {/* Group boundaries + one label each — preview-only visual aid, never part of any export. */}
         {groups.map((group, index) => {

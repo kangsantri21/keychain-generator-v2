@@ -1,4 +1,4 @@
-import { GroupedV2PreviewCanvas } from "@/components/order-queue/GroupedV2PreviewCanvas";
+import { GroupedV2PreviewCanvas, type PreviewSlotOverlay } from "@/components/order-queue/GroupedV2PreviewCanvas";
 import {
   partitionBySheet,
   type GroupedV2CanvasGroup,
@@ -16,15 +16,18 @@ export function MultiSheetPreview({
   items,
   groups,
   sheets,
+  slots = [],
 }: {
   items: GroupedV2PreviewItem[];
   groups: (GroupedV2CanvasGroup & { sheetIndex: number })[];
   sheets: GroupedV2SheetMetrics[];
+  /** V3A-1 DEV overlay, per sheet. */
+  slots?: (PreviewSlotOverlay & { sheetIndex: number })[];
 }) {
   const partitions = partitionBySheet(items, groups, sheets);
 
   if (partitions.length <= 1) {
-    return <GroupedV2PreviewCanvas items={items} groups={groups} />;
+    return <GroupedV2PreviewCanvas items={items} groups={groups} slots={slots} />;
   }
 
   return (
@@ -48,7 +51,11 @@ export function MultiSheetPreview({
                 <span>Waste: {m.wastePercent.toFixed(1)}%</span>
               </div>
             )}
-            <GroupedV2PreviewCanvas items={partition.items} groups={partition.groups} />
+            <GroupedV2PreviewCanvas
+              items={partition.items}
+              groups={partition.groups}
+              slots={slots.filter((slot) => slot.sheetIndex === partition.sheetIndex)}
+            />
           </section>
         );
       })}

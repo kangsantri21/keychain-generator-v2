@@ -15,6 +15,10 @@
  */
 import type { KeychainRenderPayload } from "@/lib/staging-types";
 import type { OuterOptimizerStats } from "./grouped-nesting-outer";
+import type { SlotReflowDiagnostics, SlotReflowMove } from "./grouped-nesting-v3";
+
+/** V3A-1 diagnostics as the API sends them (each move labeled with its receipt code). */
+export type GroupedV2SlotReflow = Omit<SlotReflowDiagnostics, "moves"> & { moves: (SlotReflowMove & { receiptCode: string | null })[] };
 
 export interface GroupedV2PreviewItem {
   /** Per-request item id (PHASE 2F) — joins a benchmark scenario's positions to this item's render. */
@@ -181,6 +185,8 @@ export interface GroupedV2PreviewSheet {
   sheets: GroupedV2SheetMetrics[];
   summary: GroupedV2Summary | null;
   unfitGroups: GroupedV2UnfitGroup[];
+  /** V3A-1 EXPERIMENTAL — null/absent unless the request opted in (then the layout above is the V3A result or, on fallback, V2). */
+  slotReflow?: GroupedV2SlotReflow | null;
 }
 
 /** The exact shape `POST /api/staging/nest` returns when `mode: "grouped-v2"` (see app/api/staging/nest/route.ts). */
@@ -234,6 +240,7 @@ export interface GroupedV2ApiResponse {
   sheets?: GroupedV2SheetMetrics[];
   summary?: GroupedV2Summary;
   unfitGroups?: GroupedV2UnfitGroup[];
+  slotReflow?: GroupedV2SlotReflow | null;
 }
 
 /**
@@ -305,6 +312,7 @@ export function buildGroupedV2PreviewSheet(response: GroupedV2ApiResponse): Grou
     sheets: response.sheets ?? [],
     summary: response.summary ?? null,
     unfitGroups: response.unfitGroups ?? [],
+    slotReflow: response.slotReflow ?? null,
   };
 }
 
