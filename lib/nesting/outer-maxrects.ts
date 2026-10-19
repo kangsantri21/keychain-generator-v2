@@ -20,6 +20,17 @@
  * order groups are never rotated (see grouped-nesting-global.ts).
  */
 
+/**
+ * Inter-group clearance per axis: `x` between side-by-side groups (and the
+ * left/right packer border), `y` between stacked groups (and the top/bottom
+ * border). A plain number = the same on both axes — the original semantics.
+ */
+export type AxisGap = number | { x: number; y: number };
+
+export function axisGap(gap: AxisGap): { x: number; y: number } {
+  return typeof gap === "number" ? { x: gap, y: gap } : gap;
+}
+
 export type PlacementHeuristic = "BSSF" | "BLSF" | "BAF" | "BL";
 export type SortStrategy = "AREA_DESC" | "HEIGHT_DESC" | "WIDTH_DESC" | "MAX_SIDE_DESC" | "PERIMETER_DESC";
 
@@ -187,17 +198,19 @@ class OuterSheet {
   constructor(
     usableWidth: number,
     usableHeight: number,
-    border: number,
+    border: AxisGap,
     /** V3 only: drop a free rect the node covers exactly (see cutFreeRect). Off = the legacy/V2 behavior. */
     private readonly exactFitSafe = false
   ) {
-    this.freeRects = [{ x: border, y: border, width: usableWidth, height: usableHeight }];
+    const b = axisGap(border);
+    this.freeRects = [{ x: b.x, y: b.y, width: usableWidth, height: usableHeight }];
   }
 
   /** Best padded node for a width x height rect, WITHOUT touching this sheet's state. */
-  findBest(width: number, height: number, gap: number, heuristic: PlacementHeuristic): { node: Rect; score: number } | null {
-    const paddedWidth = width + gap;
-    const paddedHeight = height + gap;
+  findBest(width: number, height: number, gap: AxisGap, heuristic: PlacementHeuristic): { node: Rect; score: number } | null {
+    const g = axisGap(gap);
+    const paddedWidth = width + g.x;
+    const paddedHeight = height + g.y;
     let best: Rect | null = null;
     let bestScore = Infinity;
 
@@ -234,7 +247,7 @@ class OuterSheet {
     return { x: node.x, y: node.y, width, height };
   }
 
-  place(width: number, height: number, gap: number, heuristic: PlacementHeuristic): Rect | null {
+  place(width: number, height: number, gap: AxisGap, heuristic: PlacementHeuristic): Rect | null {
     const found = this.findBest(width, height, gap, heuristic);
     return found ? this.commit(found.node, width, height) : null;
   }
@@ -243,7 +256,9 @@ class OuterSheet {
 /**
  * Packs `rects` (never rotated) onto as many `sheetWidth x sheetHeight`
  * sheets as needed with `gap` as border and trailing clearance — identical
- * semantics to `packMaxRects(rects, w, h, gap, gap, false)`. Ties in the
+ * semantics to `packMaxRects(rects, w, h, gap, gap, false)` for a single
+ * number. With a per-axis gap, x and y each get their own border + trailing
+ * clearance. Ties in the
  * sort key keep input order (stable sort), exactly like the legacy sort.
  * A rect larger than the usable sheet is dropped, also like legacy; the
  * caller detects it by count.
@@ -252,7 +267,7 @@ export function packOuterRects<T>(
   rects: OuterRect<T>[],
   sheetWidth: number,
   sheetHeight: number,
-  gap: number,
+  gap: AxisGap,
   strategy: OuterPackingStrategy,
   options: {
     stats?: MultiSheetPackStats;
@@ -261,8 +276,9 @@ export function packOuterRects<T>(
     exactFitSafe?: boolean;
   } = {}
 ): OuterPlacement<T>[] {
-  const usableWidth = sheetWidth - 2 * gap;
-  const usableHeight = sheetHeight - 2 * gap;
+  const g = axisGap(gap);
+  const usableWidth = sheetWidth - 2 * g.x;
+  const usableHeight = sheetHeight - 2 * g.y;
   const key = SORT_KEYS[strategy.sort];
   const sorted = rects.slice().sort((a, b) => key(b) - key(a));
 
@@ -318,7 +334,7 @@ export function packOuterRects<T>(
 function placeOnBestExistingSheet(
   sheets: OuterSheet[],
   rect: { width: number; height: number },
-  gap: number,
+  gap: AxisGap,
   heuristic: PlacementHeuristic,
   trialsLeft: number,
   stats: MultiSheetPackStats
@@ -362,7 +378,7 @@ function compareKeys(a: number[], b: number[]): number {
   return 0;
 }
 
-/** A free rectangle of the packer's own state (padded space: a W x H rect fits iff W + gap <= width and H + gap <= height). */
+/** A free rectangle of the packer's own state (padded space: a W x H rect fits iff W + gap.x <= width and H + gap.y <= height). */
 export type FreeRect = Rect;
 
 /**
@@ -378,11 +394,12 @@ export function replayFreeRects(
   occupied: { x: number; y: number; width: number; height: number }[],
   sheetWidth: number,
   sheetHeight: number,
-  gap: number
+  gap: AxisGap
 ): FreeRect[] {
-  const sheet = new OuterSheet(sheetWidth - 2 * gap, sheetHeight - 2 * gap, gap, true);
+  const g = axisGap(gap);
+  const sheet = new OuterSheet(sheetWidth - 2 * g.x, sheetHeight - 2 * g.y, g, true);
   for (const rect of occupied) {
-    sheet.commit({ x: rect.x, y: rect.y, width: rect.width + gap, height: rect.height + gap }, rect.width, rect.height);
+    sheet.commit({ x: rect.x, y: rect.y, width: rect.width + g.x, height: rect.height + g.y }, rect.width, rect.height);
   }
   return sheet.freeRects.map((free) => ({ ...free }));
 }

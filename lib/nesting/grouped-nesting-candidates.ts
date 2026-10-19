@@ -25,6 +25,7 @@
  */
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import type { GroupedNestingItem, GroupItemPlacement, OrderGroup, OrderLayoutCandidate } from "./grouped-nesting-types";
+import { outerSpacing } from "./grouped-nesting-config";
 
 export interface InnerPackConfig {
   sheetWidth: number;
@@ -32,6 +33,8 @@ export interface InnerPackConfig {
   partGapMm: number;
   orderGapMm: number;
   sheetMarginMm: number;
+  orderGapXMm?: number;
+  sheetMarginXMm?: number;
 }
 
 /** "free" lets the packer rotate per item; "landscape"/"portrait" pre-rotate every item to one uniform orientation. */
@@ -54,12 +57,13 @@ export const MAX_INNER_CANDIDATE_ATTEMPTS = 1 + 3 * TARGET_WIDTH_MULTIPLIERS.len
  * Largest group width/height the OUTER pack (`packGroupsOntoSheet`) can
  * actually place: it shrinks the sheet by `sheetMarginMm` per side, then
  * `packMaxRects` reserves `orderGapMm` as a border on each side plus one
- * trailing `orderGapMm` after the group itself.
+ * trailing `orderGapMm` after the group itself (per axis, see outerSpacing).
  */
 export function maxGroupSize(config: InnerPackConfig): { width: number; height: number } {
+  const s = outerSpacing(config);
   return {
-    width: config.sheetWidth - 2 * config.sheetMarginMm - 3 * config.orderGapMm,
-    height: config.sheetHeight - 2 * config.sheetMarginMm - 3 * config.orderGapMm,
+    width: config.sheetWidth - 2 * s.marginX - 3 * s.gapX,
+    height: config.sheetHeight - 2 * s.marginY - 3 * s.gapY,
   };
 }
 

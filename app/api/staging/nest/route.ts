@@ -8,6 +8,8 @@ import type { KeychainRender } from "@/lib/render-types";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { runGroupedNesting, resolveConfig, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
 import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
+import { runProductionNesting } from "@/lib/nesting/production-nesting";
+import { STAGED_PRODUCTION } from "@/lib/staging-mode";
 import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
 import { isSlotReflowRequest, runGroupedNestingV3 } from "@/lib/nesting/grouped-nesting-v3";
 import { compoundStage, isCompoundRequest } from "@/lib/nesting/grouped-nesting-v3-compound";
@@ -72,14 +74,24 @@ export async function POST(request: NextRequest) {
   // items first (when the most contiguous room is still available) and
   // small items last (when only fragments remain).
   const pendingRects: NestableRect<PackData>[] = [];
+  // Selected names that could not become a nestable unit (missing template,
+  // asset or name, or an unrenderable glyph). Legacy keeps skipping them as
+  // before; Production Nesting refuses to stage a partial batch.
+  const unrenderedNames: string[] = [];
 
   for (const item of selectedItems) {
     // A completed order is done for good — never re-nest its items even if
     // a stale client selection still references them.
     if (orderStatusMap.get(item.orderId) === "completed") continue;
 
+    const requestedIndexes = selectionsByItem.get(item.id) ?? new Set<number>();
+    const describe = (nameIndex: number) => `${item.customerNames[nameIndex] ?? `#${nameIndex + 1}`} (item ${item.id})`;
+
     const template = templateMap.get(item.templateId);
-    if (!template) continue;
+    if (!template) {
+      for (const nameIndex of requestedIndexes) unrenderedNames.push(`${describe(nameIndex)}: template tidak ditemukan`);
+      continue;
+    }
 
     let assets = assetsCache.get(template.id);
     if (!assets) {
@@ -87,14 +99,17 @@ export async function POST(request: NextRequest) {
         assets = await loadTemplateAssets(template);
         assetsCache.set(template.id, assets);
       } catch {
+        for (const nameIndex of requestedIndexes) unrenderedNames.push(`${describe(nameIndex)}: aset template gagal dimuat`);
         continue;
       }
     }
 
-    const requestedIndexes = selectionsByItem.get(item.id) ?? new Set<number>();
     for (const nameIndex of requestedIndexes) {
       const name = item.customerNames[nameIndex];
-      if (!name) continue;
+      if (!name) {
+        unrenderedNames.push(`${describe(nameIndex)}: nama tidak ada`);
+        continue;
+      }
 
       try {
         const holeOverride = item.holeOverrides?.[nameIndex] ?? null;
@@ -109,9 +124,79 @@ export async function POST(request: NextRequest) {
         pendingRects.push({ width: rendered.width, height: rendered.height, data });
         successfulOrderIds.add(item.orderId);
       } catch {
+        unrenderedNames.push(`${describe(nameIndex)}: gagal dirender`);
         // Skip a single unrenderable name (e.g. a glyph the font can't shape) without failing the whole item.
       }
     }
+  }
+
+  // PRODUCTION NESTING (V2 -> V3 slot reflow -> compound -> region repack
+  // FAST, ORDER_GAP 8): all-or-nothing. Every selected name must render and
+  // be placed, and the production gate must pass, before anything is
+  // written; otherwise nothing is staged and the reasons are returned.
+  if (resolveNestingMode(body) === "production-v3") {
+    if (unrenderedNames.length > 0) {
+      return NextResponse.json(
+        { error: `${unrenderedNames.length} item tidak bisa diproses — tidak ada yang disimpan`, details: unrenderedNames.slice(0, 20) },
+        { status: 422 }
+      );
+    }
+    if (pendingRects.length === 0) {
+      return NextResponse.json({ error: "Tidak ada item yang bisa disusun dari pesanan terpilih" }, { status: 400 });
+    }
+
+    const productionItems: GroupedNestingItem<PackData>[] = pendingRects.map((rect, index) => ({
+      id: index,
+      orderId: rect.data.orderId,
+      width: rect.width,
+      height: rect.height,
+      originalWidth: rect.width,
+      originalHeight: rect.height,
+      allowRotation: true,
+      data: rect.data,
+    }));
+    const nesting = runProductionNesting(productionItems);
+    if (!nesting.ok) {
+      return NextResponse.json(
+        { error: "Production Nesting gagal validasi — tidak ada yang disimpan", details: nesting.errors.slice(0, 20) },
+        { status: 422 }
+      );
+    }
+
+    const [{ maxSheet: productionMaxSheet }] = await db
+      .select({ maxSheet: sql<number | null>`MAX(${stagingItems.sheetId})` })
+      .from(stagingItems);
+    const productionOffset = productionMaxSheet ?? 0;
+    const productionRows: NewStagingItem[] = nesting.placements.map((placement) => ({
+      orderId: placement.data.orderId,
+      templateId: placement.data.templateId,
+      customerName: placement.data.customerName,
+      sheetId: productionOffset + placement.sheetIndex + 1,
+      posX: placement.posX,
+      posY: placement.posY,
+      width: placement.width,
+      height: placement.height,
+      rotated: placement.rotated,
+      // Explicit mode marker (lib/staging-mode.ts): blocks legacy append/rerun on this sheet.
+      status: STAGED_PRODUCTION,
+      holeOverrideX: placement.data.holeOverride?.x ?? null,
+      holeOverrideY: placement.data.holeOverride?.y ?? null,
+    }));
+    const productionOrderIds = [...successfulOrderIds];
+    db.transaction((tx) => {
+      tx.insert(stagingItems).values(productionRows).run();
+      if (productionOrderIds.length > 0) tx.update(orders).set({ status: "processing" }).where(inArray(orders.id, productionOrderIds)).run();
+    });
+
+    return NextResponse.json({
+      engine: "production-v3",
+      sheets: nesting.sheetCount,
+      items: productionRows.length,
+      ordersProcessed: productionOrderIds.length,
+      sumUsedHeight: nesting.sumUsedHeight,
+      // Debug only: how far each receipt was compacted (left/up) after packing.
+      compaction: nesting.compaction.map((m) => ({ orderId: m.orderId, dx: m.dx, dy: m.dy, status: m.status })),
+    });
   }
 
   // GROUPED_V2 (Phase 2A, dry-run only; PHASE 2B added receiptCode + full

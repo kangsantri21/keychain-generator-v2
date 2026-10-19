@@ -14,8 +14,15 @@ import { SpacingBenchmarkPanel } from "@/components/order-queue/SpacingBenchmark
 import { SlotReflowPanel, slotOverlaysOf } from "@/components/order-queue/SlotReflowPanel";
 import { buildGroupedV2PreviewSheet, buildHeaderMetrics, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
 import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
+import { invalidateStagingCache } from "@/lib/staging-cache";
+import { rememberCompaction } from "@/lib/staging-overlay";
 
-type NestingMode = "legacy" | "grouped-v2-preview";
+type NestingMode = "production" | "legacy" | "grouped-v2-preview";
+
+/** "Tambahkan ke Batch Aktif" uses the legacy append packer, so only legacy sheets may receive it. */
+function isAppendableSheet(sheet: StagingSheet): boolean {
+  return (sheet.summary?.profile ?? "legacy") === "legacy";
+}
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -151,7 +158,8 @@ export default function OrderQueuePage() {
   // PURE CLIENT STATE, never written anywhere else — switching back to
   // "legacy" just stops rendering it; nothing about the order/DB/Staging
   // Area was ever touched by having it set.
-  const [nestingMode, setNestingMode] = useState<NestingMode>("legacy");
+  // Production Nesting (V3 FAST, ORDER_GAP 8) is the default; Legacy Flat stays as a fallback.
+  const [nestingMode, setNestingMode] = useState<NestingMode>("production");
   const [v2Preview, setV2Preview] = useState<GroupedV2PreviewSheet | null>(null);
   // PHASE 2F — opt-in DEV spacing benchmark (ORDER GAP 8/6/4) on the same dry-run request.
   const [benchmarkSpacing, setBenchmarkSpacing] = useState(false);
@@ -175,9 +183,11 @@ export default function OrderQueuePage() {
     if (!res.ok) throw new Error(data.error ?? "Gagal memuat lembar kerja aktif");
     const sheets = data.sheets as StagingSheet[];
     setActiveSheets(sheets);
+    // Only legacy sheets accept "Tambahkan ke Batch Aktif" (Production Nesting sheets are blocked server-side too).
+    const appendable = sheets.filter((sheet) => isAppendableSheet(sheet));
     setTargetSheetId((current) => {
-      if (current !== "" && sheets.some((sheet) => sheet.sheetId === current)) return current;
-      return sheets[0]?.sheetId ?? "";
+      if (current !== "" && appendable.some((sheet) => sheet.sheetId === current)) return current;
+      return appendable[0]?.sheetId ?? "";
     });
   }
 
@@ -246,6 +256,7 @@ export default function OrderQueuePage() {
       const res = await fetch(`/api/orders/${orderId}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menghapus resi");
+      invalidateStagingCache(); // the order's staged units are deleted with it
 
       toast.success(`Resi ${confirmDeleteGroup.receiptCode} berhasil dihapus`);
       const deletedRowIds = new Set(confirmDeleteGroup.rows.map((row) => row.rowId));
@@ -329,11 +340,16 @@ export default function OrderQueuePage() {
                 ...(slotReflow && slotReflowCompound ? { slotReflowCompound: true } : {}),
                 ...(slotReflow && slotReflowRegion ? { slotReflowRegion: true } : {}),
               }
-            : { selections: selectedRows.map((row) => row.rowId) }
+            : nestingMode === "production"
+              ? { selections: selectedRows.map((row) => row.rowId), mode: "production-v3" }
+              : { selections: selectedRows.map((row) => row.rowId) }
         ),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Gagal mengirim ke mesin nesting");
+      if (!res.ok) {
+        const details: string[] = Array.isArray(data.details) ? data.details : [];
+        throw new Error([data.error ?? "Gagal mengirim ke mesin nesting", ...details.slice(0, 5)].join("\n"));
+      }
 
       if (nestingMode === "grouped-v2-preview") {
         // Dry-run only (app/api/staging/nest/route.ts's grouped-v2 branch
@@ -349,6 +365,8 @@ export default function OrderQueuePage() {
         return;
       }
 
+      invalidateStagingCache();
+      if (Array.isArray(data.compaction)) rememberCompaction(data.compaction);
       toast.success(`${data.items} pesanan berhasil disusun di ${data.sheets} lembar`);
       router.push("/staging-area");
     } catch (error) {
@@ -368,7 +386,11 @@ export default function OrderQueuePage() {
       return;
     }
     if (targetSheetId === "") {
-      toast.error("Belum ada Lembar Kerja aktif — jalankan Nesting terlebih dahulu untuk membuatnya");
+      toast.error(
+        activeSheets.length > 0
+          ? "Lembar Kerja Production Nesting tidak bisa ditambah — bongkar lalu kirim ulang semua pesanannya dengan Production Nesting"
+          : "Belum ada Lembar Kerja aktif — jalankan Nesting terlebih dahulu untuk membuatnya"
+      );
       return;
     }
 
@@ -382,6 +404,7 @@ export default function OrderQueuePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menambahkan ke batch aktif");
 
+      invalidateStagingCache();
       toast.success(`${data.items} pesanan ditambahkan ke Lembar Kerja #${targetSheetId}`);
       setSelected(new Set());
       await Promise.all([loadOrders(), loadActiveSheets()]);
@@ -418,8 +441,21 @@ export default function OrderQueuePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* PHASE 2B dev/engineering toggle — defaults to Legacy Flat; switching here never touches the DB by itself, only what happens when the button below is next clicked. */}
+            {/* Nesting engine — Production Nesting by default; Legacy Flat is the fallback; Grouped V2 Preview is a dev dry-run. Switching never touches the DB by itself. */}
             <div className="flex items-center overflow-hidden rounded-md border border-slate-300 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => {
+                  setNestingMode("production");
+                  setV2Preview(null);
+                }}
+                title="Mesin nesting produksi: satu resi = satu grup, jarak antar resi 8 mm"
+                className={`px-2.5 py-2 transition-colors ${
+                  nestingMode === "production" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                Production Nesting
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -430,7 +466,7 @@ export default function OrderQueuePage() {
                   nestingMode === "legacy" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
                 }`}
               >
-                Legacy Flat
+                Legacy Flat (fallback)
               </button>
               <button
                 type="button"
@@ -476,11 +512,15 @@ export default function OrderQueuePage() {
               {activeSheets.length === 0 ? (
                 <option value="">Belum ada Lembar Kerja aktif</option>
               ) : (
-                activeSheets.map((sheet) => (
-                  <option key={sheet.sheetId} value={sheet.sheetId}>
-                    Lembar Kerja #{sheet.sheetId} ({sheet.items.length} item)
-                  </option>
-                ))
+                <>
+                  {!activeSheets.some((sheet) => isAppendableSheet(sheet)) && <option value="">Tidak ada Lembar Kerja Legacy aktif</option>}
+                  {activeSheets.map((sheet) => (
+                    <option key={sheet.sheetId} value={sheet.sheetId} disabled={!isAppendableSheet(sheet)}>
+                      Lembar Kerja #{sheet.sheetId} ({sheet.items.length} item)
+                      {isAppendableSheet(sheet) ? "" : " — Production, tidak bisa ditambah"}
+                    </option>
+                  ))}
+                </>
               )}
             </select>
             <button

@@ -34,7 +34,7 @@ import { generateOrderCandidates } from "./grouped-nesting-candidates";
 import { DEFAULT_GLOBAL_SEARCH_LIMITS, type GlobalSearchLimits } from "./grouped-nesting-global";
 import { optimizeOuterLayout, DEFAULT_OUTER_PACKING_LIMITS, type OuterPackingLimits } from "./grouped-nesting-outer";
 import { packOuterRects, LEGACY_OUTER_STRATEGY, type OuterPackingStrategy } from "./outer-maxrects";
-import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM } from "./grouped-nesting-config";
+import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, outerSpacing } from "./grouped-nesting-config";
 import type {
   GroupedNestingItem,
   OrderGroup,
@@ -68,6 +68,10 @@ export interface GroupedNestingConfig {
   partGapMm: number;
   orderGapMm: number;
   sheetMarginMm: number;
+  /** Horizontal inter-group gap; omitted = orderGapMm (see outerSpacing in grouped-nesting-config.ts). */
+  orderGapXMm?: number;
+  /** Horizontal frame inset; omitted = sheetMarginMm. */
+  sheetMarginXMm?: number;
 }
 
 export type GroupedNestingConfigOverrides = Partial<GroupedNestingConfig>;
@@ -79,6 +83,8 @@ export function resolveConfig(overrides: GroupedNestingConfigOverrides): Grouped
     partGapMm: overrides.partGapMm ?? PART_GAP_MM,
     orderGapMm: overrides.orderGapMm ?? ORDER_GAP_MM,
     sheetMarginMm: overrides.sheetMarginMm ?? SHEET_MARGIN_MM,
+    ...(overrides.orderGapXMm !== undefined ? { orderGapXMm: overrides.orderGapXMm } : {}),
+    ...(overrides.sheetMarginXMm !== undefined ? { sheetMarginXMm: overrides.sheetMarginXMm } : {}),
   };
 }
 
@@ -205,8 +211,9 @@ export function packGroupsOntoSheet<T>(
     return { groups: [], unfitCandidates: [] };
   }
 
-  const usableWidth = config.sheetWidth - 2 * config.sheetMarginMm;
-  const usableHeight = config.sheetHeight - 2 * config.sheetMarginMm;
+  const spacing = outerSpacing(config);
+  const usableWidth = config.sheetWidth - 2 * spacing.marginX;
+  const usableHeight = config.sheetHeight - 2 * spacing.marginY;
 
   const rects: NestableRect<OrderLayoutCandidate<T>>[] = candidates.map((candidate) => ({
     width: candidate.width,
@@ -217,10 +224,12 @@ export function packGroupsOntoSheet<T>(
   // Legacy strategy -> the untouched legacy packer, byte-for-byte the Phase
   // 2A-2D behavior. Any other Phase 2E strategy -> the V2 packer, which has
   // identical placement semantics (no rotation, so `rotated` is always false).
+  // packMaxRects has a single border, so per-axis gaps always use the V2
+  // packer (which reproduces packMaxRects exactly when the gaps are equal).
   const packed =
-    strategy.id === LEGACY_OUTER_STRATEGY.id
+    strategy.id === LEGACY_OUTER_STRATEGY.id && spacing.gapX === spacing.gapY
       ? packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false)
-      : packOuterRects(rects, usableWidth, usableHeight, config.orderGapMm, strategy, { maxExistingSheetTrials }).map((p) => ({
+      : packOuterRects(rects, usableWidth, usableHeight, { x: spacing.gapX, y: spacing.gapY }, strategy, { maxExistingSheetTrials }).map((p) => ({
           ...p,
           rotated: false,
         }));
@@ -229,8 +238,8 @@ export function packGroupsOntoSheet<T>(
   const unfitCandidates = candidates.filter((c) => !placedCandidateIds.has(c.candidateId));
 
   const groups: GroupPlacement<T>[] = packed.map((p) => {
-    const groupX = p.x + config.sheetMarginMm;
-    const groupY = p.y + config.sheetMarginMm;
+    const groupX = p.x + spacing.marginX;
+    const groupY = p.y + spacing.marginY;
     const candidate = p.data;
 
     const items: GroupedPackedRect<T>[] = candidate.placements.map((placement) => ({

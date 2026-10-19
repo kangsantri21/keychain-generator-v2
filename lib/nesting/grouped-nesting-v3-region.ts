@@ -35,6 +35,7 @@ import {
   type RegionReflowStage,
 } from "./grouped-nesting-v3";
 import type { GroupedNestingConfig } from "./grouped-nesting";
+import { outerSpacing } from "./grouped-nesting-config";
 import type { GroupPlacement, OrderLayoutCandidate } from "./grouped-nesting-types";
 
 export interface RegionLimits {
@@ -151,6 +152,7 @@ const FRONTIER_MM = 20;
 /** Objective of a set of placed rects (usable coordinates). */
 export function regionObjective(rects: Rect[], config: Config): RegionObjective {
   const m = config.sheetMarginMm;
+  const mX = outerSpacing(config).marginX;
   const bySheet = new Map<number, { maxX: number; maxY: number }>();
   for (const r of rects) {
     const b = bySheet.get(r.sheetIndex) ?? { maxX: 0, maxY: 0 };
@@ -163,7 +165,7 @@ export function regionObjective(rects: Rect[], config: Config): RegionObjective 
     sheets: sheets.length,
     sumHeight: sheets.reduce((sum, b) => sum + b.maxY + m, 0),
     maxRemainder: Math.max(0, ...sheets.map((b) => config.sheetHeight - (b.maxY + m))),
-    sideFragments: sheets.reduce((sum, b) => sum + config.sheetWidth - (b.maxX + m), 0),
+    sideFragments: sheets.reduce((sum, b) => sum + config.sheetWidth - (b.maxX + mX), 0),
     boundingArea: sheets.reduce((sum, b) => sum + b.maxX * b.maxY, 0),
   };
 }
@@ -224,10 +226,10 @@ export function improveWithRegionRepack<T>(
   limits: RegionLimits = FAST_REGION_LIMITS,
   rule: RotationRule = V2_ROTATION_RULE
 ): { groups: GroupPlacement<T>[]; diagnostics: Omit<RegionDiagnostics, "runtimeMs"> } {
-  const margin = config.sheetMarginMm;
-  const gap = config.orderGapMm;
-  const packW = config.sheetWidth - 2 * margin;
-  const packH = config.sheetHeight - 2 * margin;
+  const { marginX, marginY, gapX, gapY } = outerSpacing(config);
+  const margin = { x: marginX, y: marginY };
+  const packW = config.sheetWidth - 2 * marginX;
+  const packH = config.sheetHeight - 2 * marginY;
 
   const d = {
     passes: 0,
@@ -259,10 +261,10 @@ export function improveWithRegionRepack<T>(
       rects.filter((r) => r.sheetIndex === sheetIndex),
       packW,
       packH,
-      gap
+      { x: gapX, y: gapY }
     );
   const touchesNode = (f: FreeRect, r: Rect) =>
-    f.x < r.x + r.width + gap && f.x + f.width > r.x && f.y < r.y + r.height + gap && f.y + f.height > r.y;
+    f.x < r.x + r.width + gapX && f.x + f.width > r.x && f.y < r.y + r.height + gapY && f.y + f.height > r.y;
 
   let current = baseline;
   /** Shapes per (receipt, target size), reset every pass (receipt indices refer to that pass's layout). */
@@ -286,16 +288,16 @@ export function improveWithRegionRepack<T>(
       if (a.sheetIndex !== b.sheetIndex) return false;
       const dx = Math.max(b.x - (a.x + a.width), a.x - (b.x + b.width));
       const dy = Math.max(b.y - (a.y + a.height), a.y - (b.y + b.height));
-      return (dx <= gap + 1 && dy < 0) || (dy <= gap + 1 && dx < 0);
+      return (dx <= gapX + 1 && dy < 0) || (dy <= gapY + 1 && dx < 0);
     };
     const neighbours = rects.map((a, i) => rects.map((b, j) => (i !== j && adjacent(a, b) ? j : -1)).filter((j) => j >= 0));
     const seedScore = rects.map((r, i) => {
       const fragments = freeBySheet
         .get(r.sheetIndex)!
-        .filter((f) => Math.min(f.width - gap, f.height - gap) < FRAGMENT_MM)
+        .filter((f) => Math.min(f.width - gapX, f.height - gapY) < FRAGMENT_MM)
         .filter((f) => {
-          const nr = r.x + r.width + gap;
-          const nb = r.y + r.height + gap;
+          const nr = r.x + r.width + gapX;
+          const nb = r.y + r.height + gapY;
           const overlapY = f.y < nb && f.y + f.height > r.y;
           const overlapX = f.x < nr && f.x + f.width > r.x;
           return (overlapY && (Math.abs(f.x - nr) < EPS || Math.abs(f.x + f.width - r.x) < EPS)) || (overlapX && (Math.abs(f.y - nb) < EPS || Math.abs(f.y + f.height - r.y) < EPS));
@@ -380,8 +382,8 @@ export function improveWithRegionRepack<T>(
             for (const sheet of sheets) {
               for (const f of freeOf(state.rects, sheet)) {
                 if (d.budgetExhausted) break;
-                const W = f.width - gap;
-                const H = f.height - gap;
+                const W = f.width - gapX;
+                const H = f.height - gapY;
                 if (!slotCanPossiblyHold(items, W, H, config.partGapMm, rule)) continue;
                 for (const candidate of shapesFor(g, gi, W, H)) {
                   spend(1);
@@ -528,13 +530,13 @@ export function improveWithRegionRepack<T>(
 }
 
 /** Applies `placed` (usable coordinates) to `groups`, keeping every other receipt as is, then normalizes sheets. */
-function buildGroups<T>(groups: GroupPlacement<T>[], placed: Placed<T>[], margin: number): GroupPlacement<T>[] {
+function buildGroups<T>(groups: GroupPlacement<T>[], placed: Placed<T>[], margin: { x: number; y: number }): GroupPlacement<T>[] {
   const byIndex = new Map(placed.map((p) => [p.gi, p]));
   return normalizeSheets(
     groups.map((g, i) => {
       const p = byIndex.get(i);
       return p
-        ? placeGroup(p.candidate, p.rect.x + margin, p.rect.y + margin, p.rect.sheetIndex, { alternatives: g.alternatives, localCandidate: g.localCandidate })
+        ? placeGroup(p.candidate, p.rect.x + margin.x, p.rect.y + margin.y, p.rect.sheetIndex, { alternatives: g.alternatives, localCandidate: g.localCandidate })
         : g;
     })
   ).groups;

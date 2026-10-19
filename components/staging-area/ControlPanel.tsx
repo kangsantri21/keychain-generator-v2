@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Lock, Trash2, CheckCircle2, History, Layers } from "lucide-react";
+import Link from "next/link";
+import { ListOrdered, Lock, Trash2, CheckCircle2, History, Layers } from "lucide-react";
 import type { StagingSheet } from "@/lib/staging-types";
 import { HppCalculator } from "./HppCalculator";
 
@@ -9,10 +10,10 @@ export function ControlPanel({
   sheets,
   activeSheetId,
   onSelectSheet,
-  onRunNesting,
   onLockBatch,
-  isRunningNesting,
   isLocking,
+  canLock = true,
+  isVerifying = false,
   viewMode,
   onViewModeChange,
   isLoadingHistory,
@@ -23,10 +24,12 @@ export function ControlPanel({
   sheets: StagingSheet[];
   activeSheetId: number | null;
   onSelectSheet: (sheetId: number) => void;
-  onRunNesting: () => void;
   onLockBatch: (batchCode: string) => void;
-  isRunningNesting: boolean;
   isLocking: boolean;
+  /** False when the active sheet fails the production validation gate — locking is blocked (the server enforces it too). */
+  canLock?: boolean;
+  /** True while the shown sheets come from the client cache and are being re-checked with the server — locking waits. */
+  isVerifying?: boolean;
   viewMode: "active" | "history";
   onViewModeChange: (mode: "active" | "history") => void;
   isLoadingHistory: boolean;
@@ -42,15 +45,18 @@ export function ControlPanel({
     <div className="flex flex-col gap-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold text-slate-800">Nesting</h2>
-        <button
-          type="button"
-          onClick={onRunNesting}
-          disabled={isRunningNesting}
-          className="flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        {/* Nesting always starts from the Order Queue (selected orders + Production Nesting). The old
+            "Run Nesting" button sent no selection and could only fail; it never re-ran a sheet. */}
+        <Link
+          href="/order-queue"
+          className="flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
         >
-          <Play size={16} />
-          {isRunningNesting ? "Menyusun..." : "Mulai Susun Lembar Kerja (Run Nesting)"}
-        </button>
+          <ListOrdered size={16} />
+          Susun Pesanan di Antrean (Production Nesting)
+        </Link>
+        <p className="text-xs text-slate-400">
+          Pilih pesanan di Antrean Pesanan lalu Kirim ke Mesin Nesting. Untuk menyusun ulang lembar kerja, bongkar dulu lalu kirim ulang pesanannya.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -154,12 +160,18 @@ export function ControlPanel({
         <button
           type="button"
           onClick={() => onLockBatch(batchCode)}
-          disabled={!activeSheet || isLocking}
+          disabled={!activeSheet || isLocking || !canLock || isVerifying}
           className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Lock size={16} />
           {isLocking ? "Mengunci Batch..." : "Kunci & Simpan Batch Produksi"}
         </button>
+        {activeSheet && isVerifying && (
+          <p className="text-xs text-slate-400">Memeriksa data terbaru dari server sebelum bisa dikunci...</p>
+        )}
+        {activeSheet && !canLock && (
+          <p className="text-xs font-medium text-red-600">Lembar kerja ini INVALID — perbaiki atau bongkar sebelum dikunci.</p>
+        )}
         <p className="text-xs text-slate-400">
           Mengarsipkan lembar kerja yang aktif sebagai batch produksi permanen di File Siap
           Cetak (untuk download DXF/print), lalu mengosongkan lembar kerja ini dari Staging Area.

@@ -5,7 +5,7 @@
  * a test can assert directly, without needing to invoke the Next.js route
  * handler itself (this project has no HTTP-route test infrastructure).
  */
-export type NestingMode = "legacy" | "grouped-v2";
+export type NestingMode = "legacy" | "grouped-v2" | "production-v3";
 
 /**
  * Resolves the requested mode from a parsed JSON request body. Anything
@@ -17,5 +17,6 @@ export type NestingMode = "legacy" | "grouped-v2";
  */
 export function resolveNestingMode(body: unknown): NestingMode {
   const mode = (body as { mode?: unknown } | null)?.mode;
+  if (mode === "production-v3") return "production-v3";
   return mode === "grouped-v2" ? "grouped-v2" : "legacy";
 }

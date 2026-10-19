@@ -30,12 +30,17 @@
  */
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import type { OrderLayoutCandidate } from "./grouped-nesting-types";
+import { outerSpacing } from "./grouped-nesting-config";
+import { LEGACY_OUTER_STRATEGY, packOuterRects } from "./outer-maxrects";
 
 export interface OuterPackConfig {
   sheetWidth: number;
   sheetHeight: number;
   orderGapMm: number;
   sheetMarginMm: number;
+  /** Per-axis overrides (grouped-nesting-config.ts outerSpacing); omitted = same as y. */
+  orderGapXMm?: number;
+  sheetMarginXMm?: number;
 }
 
 export interface GlobalSearchLimits {
@@ -105,10 +110,15 @@ export function compareScores(a: GlobalLayoutScore, b: GlobalLayoutScore): numbe
  * constant shift and does not change the score's comparisons.
  */
 export function evaluateOuterLayout<T>(candidates: OrderLayoutCandidate<T>[], config: OuterPackConfig): OuterLayoutEvaluation {
-  const usableWidth = config.sheetWidth - 2 * config.sheetMarginMm;
-  const usableHeight = config.sheetHeight - 2 * config.sheetMarginMm;
+  const spacing = outerSpacing(config);
+  const usableWidth = config.sheetWidth - 2 * spacing.marginX;
+  const usableHeight = config.sheetHeight - 2 * spacing.marginY;
   const rects: NestableRect<null>[] = candidates.map((c) => ({ width: c.width, height: c.height, data: null }));
-  const packed = packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false);
+  // packMaxRects has a single border; per-axis gaps use the V2 packer's identical legacy strategy.
+  const packed =
+    spacing.gapX === spacing.gapY
+      ? packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false)
+      : packOuterRects(rects, usableWidth, usableHeight, { x: spacing.gapX, y: spacing.gapY }, LEGACY_OUTER_STRATEGY);
   return { score: scoreOuterPlacements(packed, candidates.length, usableWidth) };
 }
 

@@ -42,6 +42,7 @@ import {
 import { scoreOuterPlacements, DEFAULT_GLOBAL_SEARCH_LIMITS, compareScores, type GlobalLayoutScore, type GlobalSearchLimits } from "./grouped-nesting-global";
 import { DEFAULT_OUTER_PACKING_LIMITS, type OuterPackingLimits } from "./grouped-nesting-outer";
 import { replayFreeRects, type FreeRect } from "./outer-maxrects";
+import { outerSpacing } from "./grouped-nesting-config";
 import { reflowOrderIntoSlot, slotCanPossiblyHold, V2_ROTATION_RULE, type RotationRule } from "./slot-reflow";
 import { geometryPruneReason, summarizeFunnel, type SlotFunnel, type SlotOutcome, type SlotRecord } from "./grouped-nesting-v3-funnel";
 import type { CompoundDiagnostics } from "./grouped-nesting-v3-compound";
@@ -245,7 +246,7 @@ export function placeGroup<T>(
 
 export function usableRects<T>(groups: GroupPlacement<T>[], config: Config) {
   return groups.map((g) => ({
-    x: g.x - config.sheetMarginMm,
+    x: g.x - outerSpacing(config).marginX,
     y: g.y - config.sheetMarginMm,
     width: g.width,
     height: g.height,
@@ -254,7 +255,7 @@ export function usableRects<T>(groups: GroupPlacement<T>[], config: Config) {
 }
 
 export function scoreRects(rects: { x: number; y: number; width: number; height: number; sheetIndex: number }[], config: Config): GlobalLayoutScore {
-  return scoreOuterPlacements(rects, rects.length, config.sheetWidth - 2 * config.sheetMarginMm);
+  return scoreOuterPlacements(rects, rects.length, config.sheetWidth - 2 * outerSpacing(config).marginX);
 }
 
 export const sheetHeightOf = (score: GlobalLayoutScore, config: Config) => score.usedHeight + score.sheetCount * config.sheetMarginMm;
@@ -316,17 +317,19 @@ export function normalizeSheets<T>(groups: GroupPlacement<T>[]): { groups: Group
 const separated = (
   a: { x: number; y: number; width: number; height: number },
   b: { x: number; y: number; width: number; height: number },
-  gap: number
+  gapX: number,
+  gapY: number = gapX
 ) =>
-  a.x + a.width + gap <= b.x + GEOMETRY_EPSILON ||
-  b.x + b.width + gap <= a.x + GEOMETRY_EPSILON ||
-  a.y + a.height + gap <= b.y + GEOMETRY_EPSILON ||
-  b.y + b.height + gap <= a.y + GEOMETRY_EPSILON;
+  a.x + a.width + gapX <= b.x + GEOMETRY_EPSILON ||
+  b.x + b.width + gapX <= a.x + GEOMETRY_EPSILON ||
+  a.y + a.height + gapY <= b.y + GEOMETRY_EPSILON ||
+  b.y + b.height + gapY <= a.y + GEOMETRY_EPSILON;
 
 /**
  * Independent geometric + integrity check of a finished layout (does not
  * trust any packer): group bounds as the outer packer reserves them (margin
- * + ORDER_GAP border), ORDER_GAP between groups on the same sheet, items
+ * + ORDER_GAP border, per axis — see outerSpacing), the per-axis ORDER_GAP
+ * between groups on the same sheet (x gap side by side, y gap stacked), items
  * inside their group with PART_GAP between them, artwork size unchanged
  * (only a 90° swap when rotated), every item of an order in that order's
  * single group, and (when `expectedItemIds` is given) every input item
@@ -338,14 +341,14 @@ export function validateLayout<T>(
   expectedItemIds?: (string | number)[]
 ): string[] {
   const violations: string[] = [];
-  const { sheetWidth, sheetHeight, sheetMarginMm: margin, orderGapMm: gap, partGapMm: partGap } = config;
-  const minEdge = margin + gap - GEOMETRY_EPSILON;
+  const { sheetWidth, sheetHeight, partGapMm: partGap } = config;
+  const { marginX, marginY, gapX, gapY } = outerSpacing(config);
 
   groups.forEach((g, gi) => {
     const name = `group ${gi} (order ${g.orderId ?? "-"})`;
-    if (g.x < minEdge || g.y < minEdge) violations.push(`${name}: closer than margin+gap to the top/left edge`);
-    if (g.x + g.width + gap > sheetWidth - margin - gap + GEOMETRY_EPSILON) violations.push(`${name}: exceeds the right usable edge`);
-    if (g.y + g.height + gap > sheetHeight - margin - gap + GEOMETRY_EPSILON) violations.push(`${name}: exceeds the bottom usable edge`);
+    if (g.x < marginX + gapX - GEOMETRY_EPSILON || g.y < marginY + gapY - GEOMETRY_EPSILON) violations.push(`${name}: closer than margin+gap to the top/left edge`);
+    if (g.x + g.width + gapX > sheetWidth - marginX - gapX + GEOMETRY_EPSILON) violations.push(`${name}: exceeds the right usable edge`);
+    if (g.y + g.height + gapY > sheetHeight - marginY - gapY + GEOMETRY_EPSILON) violations.push(`${name}: exceeds the bottom usable edge`);
     if (g.width !== g.candidate.width || g.height !== g.candidate.height) violations.push(`${name}: box differs from its candidate`);
 
     g.items.forEach((item, ii) => {
@@ -374,7 +377,7 @@ export function validateLayout<T>(
 
     for (let gj = gi + 1; gj < groups.length; gj++) {
       const other = groups[gj];
-      if (other.sheetIndex === g.sheetIndex && !separated(g, other, gap)) {
+      if (other.sheetIndex === g.sheetIndex && !separated(g, other, gapX, gapY)) {
         violations.push(`${name} and group ${gj} (order ${other.orderId ?? "-"}): closer than ORDER_GAP on sheet ${g.sheetIndex}`);
       }
     }
@@ -443,10 +446,10 @@ export function improveWithSlotReflow<T>(
   /** V3A-2B: record the DEV search funnel. Bookkeeping only — never changes a decision. */
   trace = true
 ): { groups: GroupPlacement<T>[]; stats: SlotReflowSearchStats; funnel: SlotFunnel | null } {
-  const margin = config.sheetMarginMm;
-  const gap = config.orderGapMm;
-  const packSheetWidth = config.sheetWidth - 2 * margin;
-  const packSheetHeight = config.sheetHeight - 2 * margin;
+  const { marginX, marginY, gapX, gapY } = outerSpacing(config);
+  const gap = { x: gapX, y: gapY };
+  const packSheetWidth = config.sheetWidth - 2 * marginX;
+  const packSheetHeight = config.sheetHeight - 2 * marginY;
 
   const stats = emptySearchStats(limits);
   const remaining = () => limits.maxTotalEvaluations - stats.budgetUsed;
@@ -487,8 +490,8 @@ export function improveWithSlotReflow<T>(
       for (const sheetIndex of sheetIndices) {
         const occupied = restRects.filter((r) => r.sheetIndex === sheetIndex);
         for (const free of replayFreeRects(occupied, packSheetWidth, packSheetHeight, gap)) {
-          const region = classifyRelocation(group, { sheetIndex, x: free.x + margin, y: free.y + margin });
-          slots.push({ sheetIndex, free, width: free.width - gap, height: free.height - gap, region });
+          const region = classifyRelocation(group, { sheetIndex, x: free.x + marginX, y: free.y + marginY });
+          slots.push({ sheetIndex, free, width: free.width - gapX, height: free.height - gapY, region });
         }
       }
       return slots;
@@ -512,7 +515,7 @@ export function improveWithSlotReflow<T>(
         orderWidth: group.width,
         orderHeight: group.height,
         sheetIndex: slot.sheetIndex,
-        slot: { x: slot.free.x + margin, y: slot.free.y + margin, width: slot.width, height: slot.height },
+        slot: { x: slot.free.x + marginX, y: slot.free.y + marginY, width: slot.width, height: slot.height },
         outcome,
         orderSearched,
         areaRatio: slotArea > 0 ? padded / slotArea : Infinity,
@@ -634,8 +637,8 @@ export function improveWithSlotReflow<T>(
             interrupted = true;
             break;
           }
-          const x = slot.free.x + margin;
-          const y = slot.free.y + margin;
+          const x = slot.free.x + marginX;
+          const y = slot.free.y + marginY;
           if (
             slot.region === "SELF_REFLOW" &&
             Math.abs(x - group.x) < POSITION_EPSILON &&

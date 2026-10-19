@@ -34,3 +34,74 @@ export const ORDER_GAP_MM = 8;
 
 /** Clearance kept between the sheet's own physical edge and the nearest group's bounding box — independent of ORDER_GAP_MM so the two can be tuned separately (e.g. a tighter sheet border than inter-group gap, or vice versa). */
 export const SHEET_MARGIN_MM = 5;
+
+/**
+ * Per-axis outer spacing. The outer pack gives every group box a border +
+ * trailing clearance of the inter-group gap, inside a frame inset by the
+ * sheet margin, so per axis:
+ *   gap between two groups          = gap
+ *   first group from the left/top   = margin + gap
+ *   last group from the right/bottom >= margin + 2 * gap
+ * `orderGapMm`/`sheetMarginMm` are the vertical (y) values and the default
+ * for x; `orderGapXMm`/`sheetMarginXMm` override x only. Without overrides
+ * both axes are identical — the original single-gap behavior.
+ */
+export interface OuterSpacingConfig {
+  orderGapMm: number;
+  sheetMarginMm: number;
+  orderGapXMm?: number;
+  sheetMarginXMm?: number;
+}
+
+export interface OuterSpacing {
+  marginX: number;
+  marginY: number;
+  gapX: number;
+  gapY: number;
+}
+
+export function outerSpacing(config: OuterSpacingConfig): OuterSpacing {
+  return {
+    marginX: config.sheetMarginXMm ?? config.sheetMarginMm,
+    marginY: config.sheetMarginMm,
+    gapX: config.orderGapXMm ?? config.orderGapMm,
+    gapY: config.orderGapMm,
+  };
+}
+
+/**
+ * Production receipt-group spacing (Production Nesting only — ORDER_GAP_MM
+ * above stays the V2/legacy/experimental default). Receipts keep only
+ * PART_GAP between their boxes on BOTH axes — the same physical cut
+ * clearance as two parts of one receipt, so artwork of different receipts
+ * never touches. The receipt outlines drawn PRODUCTION_GROUP_GAP_X_MM / 2
+ * outside each box then touch.
+ */
+export const PRODUCTION_GROUP_GAP_X_MM = PART_GAP_MM;
+export const PRODUCTION_GROUP_GAP_Y_MM = PART_GAP_MM;
+
+/**
+ * Production frame insets (outer pack: first group at margin + gap, last
+ * ends >= margin + 2 * gap from the far edge):
+ *   x: left edge SHEET_MARGIN_MM (3 + 2 = 5), right >= 7
+ *   y: top edge stays 13 mm as before (11 + 2), bottom >= 15
+ */
+export const PRODUCTION_SHEET_MARGIN_X_MM = SHEET_MARGIN_MM - PRODUCTION_GROUP_GAP_X_MM;
+export const PRODUCTION_TOP_EDGE_MM = SHEET_MARGIN_MM + ORDER_GAP_MM;
+export const PRODUCTION_SHEET_MARGIN_Y_MM = PRODUCTION_TOP_EDGE_MM - PRODUCTION_GROUP_GAP_Y_MM;
+
+/** Production spacing as engine config overrides — the single source for nesting, compaction, gate and debug. */
+export const PRODUCTION_SPACING = {
+  orderGapMm: PRODUCTION_GROUP_GAP_Y_MM,
+  sheetMarginMm: PRODUCTION_SHEET_MARGIN_Y_MM,
+  orderGapXMm: PRODUCTION_GROUP_GAP_X_MM,
+  sheetMarginXMm: PRODUCTION_SHEET_MARGIN_X_MM,
+} as const;
+
+/**
+ * Camera fiducials (lib/keychain-geometry.ts FIDUCIAL_*, centered
+ * FIDUCIAL_RADIUS_MM in from each corner) are keep-out areas: no artwork
+ * within FIDUCIAL_CLEARANCE_MM of a fiducial circle. Checked by the
+ * production gate (lib/production-gate.ts).
+ */
+export const FIDUCIAL_CLEARANCE_MM = PART_GAP_MM;

@@ -42,6 +42,7 @@ import {
   type OuterPackingStrategy,
 } from "./outer-maxrects";
 import type { OrderLayoutCandidate } from "./grouped-nesting-types";
+import { outerSpacing } from "./grouped-nesting-config";
 
 export interface OuterPackingLimits {
   /** How many placement heuristics (from PLACEMENT_HEURISTICS, in order) may be used. */
@@ -141,11 +142,12 @@ export function packSelection<T>(
   strategy: OuterPackingStrategy,
   options: { stats?: MultiSheetPackStats; maxExistingSheetTrials?: number } = {}
 ) {
+  const spacing = outerSpacing(config);
   return packOuterRects(
     selection.map((c) => ({ width: c.width, height: c.height, data: c })),
-    config.sheetWidth - 2 * config.sheetMarginMm,
-    config.sheetHeight - 2 * config.sheetMarginMm,
-    config.orderGapMm,
+    config.sheetWidth - 2 * spacing.marginX,
+    config.sheetHeight - 2 * spacing.marginY,
+    { x: spacing.gapX, y: spacing.gapY },
     strategy,
     options
   );
@@ -171,7 +173,7 @@ class MultiStrategyEvaluator<T> implements OuterLayoutEvaluator<T> {
       // The first strategy always runs so every state gets a real score.
       if (i > 0 && this.exhausted()) break;
       const strategy = tries[i];
-      const usableWidth = this.config.sheetWidth - 2 * this.config.sheetMarginMm;
+      const usableWidth = this.config.sheetWidth - 2 * outerSpacing(this.config).marginX;
       const score = scoreOuterPlacements(packSelection(selection, this.config, strategy), selection.length, usableWidth);
       this.packs++;
       if (!best || compareScores(score, best.score) < 0) best = { score, strategyId: strategy.id };
@@ -233,7 +235,7 @@ export function optimizeOuterLayout<T>(
   const budget = outerLimits.maxBestExistingPackEvaluations;
   const trialsOption = { maxExistingSheetTrials: outerLimits.maxExistingSheetTrials };
   const strategies = allowedOuterStrategies(outerLimits);
-  const usableWidth = config.sheetWidth - 2 * config.sheetMarginMm;
+  const usableWidth = config.sheetWidth - 2 * outerSpacing(config).marginX;
   const runStage2 = before.sheetCount > 1 && budget > 0;
   let packs = 0;
   let extraStates = 0;

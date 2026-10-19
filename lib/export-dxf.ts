@@ -1,8 +1,4 @@
-import {
-  SHEET_WIDTH_MM,
-  SHEET_HEIGHT_MM,
-  FIDUCIAL_RADIUS_MM,
-} from "@/lib/keychain-geometry";
+import { activeProductionFrame, type ActiveProductionFrame } from "@/lib/active-frame";
 import { flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
 import type { StagingItemPayload, StagingSheet } from "@/lib/staging-types";
 import { sanitizeFileName } from "@/lib/utils";
@@ -29,9 +25,15 @@ function applyItemTransform(
  * while every point coming out of the render pipeline is in SVG's Y-down
  * space — without this flip the whole sheet would cut upside-down relative
  * to how it looks in the Live Preview / Staging Area canvas.
+ *
+ * The flip is anchored at the physical frame height (lib/active-frame.ts):
+ * 470 mm for legacy sheets (unchanged), the active height for an adaptive
+ * Production frame — so the DXF really spans 0..310 x 0..activeHeight. Every
+ * cut, fiducial and border point gets the same flip, so their relative
+ * geometry is identical to the 470 mm version (only a uniform Y shift).
  */
-function toDxfY(svgY: number): number {
-  return SHEET_HEIGHT_MM - svgY;
+function toDxfY(svgY: number, frameHeightMm: number): number {
+  return frameHeightMm - svgY;
 }
 
 function polylineEntity(points: FlatPoint[], layer: string): string {
@@ -53,24 +55,24 @@ function circleEntity(cx: number, cy: number, r: number, layer: string): string 
  * (lib/export-print-svg.ts), so the print and the cut can be physically
  * pinned together. These are sheet-absolute (no per-item transform), but
  * still need the same Y-up flip as every other coordinate in this file.
+ * Border and fiducials come from the active production frame (full
+ * 310 x 470 for legacy sheets).
  */
-function sheetReferenceEntities(): string[] {
+function sheetReferenceEntities(frame: ActiveProductionFrame): string[] {
   const corners: FlatPoint[] = [
     { x: 0, y: 0 },
-    { x: SHEET_WIDTH_MM, y: 0 },
-    { x: SHEET_WIDTH_MM, y: SHEET_HEIGHT_MM },
-    { x: 0, y: SHEET_HEIGHT_MM },
+    { x: frame.widthMm, y: 0 },
+    { x: frame.widthMm, y: frame.heightMm },
+    { x: 0, y: frame.heightMm },
   ];
   const border = polylineEntity(
-    corners.map((p) => ({ x: p.x, y: toDxfY(p.y) })),
+    corners.map((p) => ({ x: p.x, y: toDxfY(p.y, frame.heightMm) })),
     "CUT_BORDER"
   );
 
-  const fiducialXs = [FIDUCIAL_RADIUS_MM, SHEET_WIDTH_MM - FIDUCIAL_RADIUS_MM];
-  const fiducialYs = [FIDUCIAL_RADIUS_MM, SHEET_HEIGHT_MM - FIDUCIAL_RADIUS_MM];
-  const fiducials = fiducialXs.flatMap((cx) =>
-    fiducialYs.map((cy) => circleEntity(cx, toDxfY(cy), FIDUCIAL_RADIUS_MM, "CUT_FIDUCIAL"))
-  );
+  const fiducials = [...frame.fiducials]
+    .sort((a, b) => a.x - b.x || a.y - b.y)
+    .map((f) => circleEntity(f.x, toDxfY(f.y, frame.heightMm), f.r, "CUT_FIDUCIAL"));
 
   return [border, ...fiducials];
 }
@@ -89,12 +91,13 @@ function sheetReferenceEntities(): string[] {
 function pathToDxfEntities(
   d: string,
   item: Pick<StagingItemPayload, "posX" | "posY" | "width" | "rotated">,
-  layer: string
+  layer: string,
+  frameHeightMm: number
 ): string[] {
   return flattenPathToPolygons(d).map((polygon) => {
     const points = polygon.map((p) => {
       const onSheet = applyItemTransform(item, p);
-      return { x: onSheet.x, y: toDxfY(onSheet.y) };
+      return { x: onSheet.x, y: toDxfY(onSheet.y, frameHeightMm) };
     });
     return polylineEntity(points, layer);
   });
@@ -114,15 +117,17 @@ function layerDefinition(name: string): string[] {
  * lib/export-print-svg.ts).
  */
 export function buildSheetDxfDocument(sheet: StagingSheet): string {
-  const entities: string[] = [...sheetReferenceEntities()];
+  const frame = activeProductionFrame(sheet);
+  if (frame.errors.length > 0) throw new Error(frame.errors.join("; "));
+  const entities: string[] = [...sheetReferenceEntities(frame)];
 
   for (const item of sheet.items) {
     if (!item.render) continue;
     if (item.render.outlinePath) {
-      entities.push(...pathToDxfEntities(item.render.outlinePath, item, "CUT_OUTLINE"));
+      entities.push(...pathToDxfEntities(item.render.outlinePath, item, "CUT_OUTLINE", frame.heightMm));
     }
     if (item.render.holePath) {
-      entities.push(...pathToDxfEntities(item.render.holePath, item, "CUT_HOLE"));
+      entities.push(...pathToDxfEntities(item.render.holePath, item, "CUT_HOLE", frame.heightMm));
     }
   }
 

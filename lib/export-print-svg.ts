@@ -1,10 +1,13 @@
+import { RECEIPT_LABEL_FONT_SIZE_MM } from "@/lib/keychain-geometry";
 import {
-  SHEET_WIDTH_MM,
-  SHEET_HEIGHT_MM,
-  FIDUCIAL_RADIUS_MM,
-  RECEIPT_LABEL_FONT_SIZE_MM,
-} from "@/lib/keychain-geometry";
+  activeProductionFrame,
+  placeBatchLabel,
+  SHEET_LABEL_BASELINE_FROM_BOTTOM_MM,
+  SHEET_LABEL_FONT_SIZE_MM,
+  type BatchLabelPlacement,
+} from "@/lib/active-frame";
 import { getItemTransform, getReceiptLabelPosition } from "@/lib/staging-transform";
+import { internalLabelsOf } from "@/lib/receipt-labels";
 import type { StagingSheet } from "@/lib/staging-types";
 import { sanitizeFileName } from "@/lib/utils";
 
@@ -24,6 +27,18 @@ function escapeXml(value: string): string {
  * from the laser-cutting export (`lib/export-dxf.ts`), which is unchanged.
  */
 export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): string {
+  // Physical frame: full 310 x 470 for legacy; for Production the adaptive
+  // active height (lib/active-frame.ts — the same frame the Staging preview
+  // and the DXF use). Cropping the height only: the mirror is horizontal and
+  // the width is unchanged, so every artwork x/y and size stays identical.
+  const frame = activeProductionFrame(sheet);
+  if (frame.errors.length > 0) throw new Error(frame.errors.join("; "));
+  const W = frame.widthMm;
+  const H = frame.heightMm;
+  // Production Nesting sheets get internal receipt labels (placed after the
+  // layout is final, only in free space inside each receipt box); legacy
+  // sheets keep the per-item label exactly as before.
+  const internalLabels = internalLabelsOf(sheet);
   const printLayer = sheet.items
     .map((item) => {
       if (!item.render) return "";
@@ -34,41 +49,68 @@ export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): 
         .map((segment) => `<path d="${segment.d}" fill="${segment.color}" />`)
         .join("");
       const labelPos = getReceiptLabelPosition(item);
-      const label = item.order
+      const label = item.order && !internalLabels
         ? `<text x="${labelPos.x}" y="${labelPos.y}" font-size="${RECEIPT_LABEL_FONT_SIZE_MM}" fill="#334155">${escapeXml(item.order.receiptCode)}</text>`
         : "";
       return `  <g transform="${getItemTransform(item)}">${image}${text}${label}</g>`;
     })
     .join("\n");
+  const receiptLabels = (internalLabels ?? [])
+    .filter((label) => label.status === "PLACED")
+    .map(
+      (label) =>
+        `  <text transform="${label.transform}" x="0" y="0" font-size="${label.fontSize}" textLength="${label.textLength}" lengthAdjust="spacingAndGlyphs" fill="#334155">${escapeXml(label.text)}</text>`
+    )
+    .join("\n");
 
   // Rendered inside the same mirrored group as the artwork, on purpose — it
   // isn't counter-mirrored to stay "readable", it flips along with
   // everything else since it's part of the same back-printed sheet.
+  // Legacy: bottom-center as always. Adaptive Production frame: only in
+  // existing safe whitespace (batchLabelOf) — never printed otherwise.
   const trimmedLabel = labelText?.trim();
-  const customLabel = trimmedLabel
-    ? `<text x="${SHEET_WIDTH_MM / 2}" y="${SHEET_HEIGHT_MM - 4}" text-anchor="middle" font-size="6" fill="#000000">${escapeXml(trimmedLabel)}</text>`
-    : "";
+  const batchLabel = frame.adaptive && trimmedLabel ? placeBatchLabel(sheet, frame, trimmedLabel) : null;
+  const customLabel = !trimmedLabel
+    ? ""
+    : !frame.adaptive
+      ? `<text x="${W / 2}" y="${H - SHEET_LABEL_BASELINE_FROM_BOTTOM_MM}" text-anchor="middle" font-size="${SHEET_LABEL_FONT_SIZE_MM}" fill="#000000">${escapeXml(trimmedLabel)}</text>`
+      : batchLabel?.status === "PLACED_INTERNAL"
+        ? `<text transform="${batchLabel.transform}" x="0" y="0" font-size="${batchLabel.fontSize}" textLength="${batchLabel.textLength}" lengthAdjust="spacingAndGlyphs" fill="#000000">${escapeXml(trimmedLabel)}</text>`
+        : "";
 
   // Registration marks sit in absolute (unmirrored) sheet coordinates — a
   // fixed physical reference frame for aligning the print against the cut,
   // independent of whatever content happens to be mirrored inside it.
-  const fiducialXs = [FIDUCIAL_RADIUS_MM, SHEET_WIDTH_MM - FIDUCIAL_RADIUS_MM];
-  const fiducialYs = [FIDUCIAL_RADIUS_MM, SHEET_HEIGHT_MM - FIDUCIAL_RADIUS_MM];
-  const fiducials = fiducialXs
-    .flatMap((cx) => fiducialYs.map((cy) => `  <circle cx="${cx}" cy="${cy}" r="${FIDUCIAL_RADIUS_MM}" fill="#000000" />`))
+  // (Top fiducials fixed; the bottom two follow the active height.)
+  const fiducials = [...frame.fiducials]
+    .sort((a, b) => a.x - b.x || a.y - b.y)
+    .map((f) => `  <circle cx="${f.x}" cy="${f.y}" r="${f.r}" fill="#000000" />`)
     .join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${SHEET_WIDTH_MM}mm" height="${SHEET_HEIGHT_MM}mm" viewBox="0 0 ${SHEET_WIDTH_MM} ${SHEET_HEIGHT_MM}">
-  <rect width="${SHEET_WIDTH_MM}" height="${SHEET_HEIGHT_MM}" fill="#ffffff" />
-  <g id="print-layer-mirrored" transform="translate(${SHEET_WIDTH_MM}, 0) scale(-1, 1)">
+<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
+  <rect width="${W}" height="${H}" fill="#ffffff" />
+  <g id="print-layer-mirrored" transform="translate(${W}, 0) scale(-1, 1)">
 ${printLayer}
+${receiptLabels}
 ${customLabel}
   </g>
-  <rect x="0" y="0" width="${SHEET_WIDTH_MM}" height="${SHEET_HEIGHT_MM}" fill="none" stroke="#000000" stroke-width="${BORDER_STROKE_MM}" />
+  <rect x="0" y="0" width="${W}" height="${H}" fill="none" stroke="#000000" stroke-width="${BORDER_STROKE_MM}" />
 ${fiducials}
 </svg>
 `;
+}
+
+/**
+ * Where the print JPG puts the batch code: legacy sheets keep it bottom-center
+ * (null here); adaptive Production frames get a whitespace placement or
+ * NO_SAFE_POSITION (the code then stays only in the filename / UI).
+ */
+export function batchLabelOf(sheet: StagingSheet, labelText?: string): BatchLabelPlacement | null {
+  const text = labelText?.trim();
+  if (!text) return null;
+  const frame = activeProductionFrame(sheet);
+  return frame.adaptive && frame.errors.length === 0 ? placeBatchLabel(sheet, frame, text) : null;
 }
 
 const PRINT_DPI = 300;
@@ -76,6 +118,11 @@ const MM_PER_INCH = 25.4;
 
 function mmToPx(mm: number, dpi: number): number {
   return Math.round((mm / MM_PER_INCH) * dpi);
+}
+
+/** Print raster size (px) of a frame side at the fixed print DPI. */
+export function printPixelsOf(mm: number): number {
+  return mmToPx(mm, PRINT_DPI);
 }
 
 /**
@@ -88,6 +135,7 @@ function mmToPx(mm: number, dpi: number): number {
  */
 export async function downloadPrintSheetJpg(sheet: StagingSheet, labelText?: string): Promise<void> {
   const svg = buildPrintSvgDocument(sheet, labelText);
+  const frame = activeProductionFrame(sheet);
   const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
   const svgUrl = URL.createObjectURL(svgBlob);
 
@@ -99,8 +147,9 @@ export async function downloadPrintSheetJpg(sheet: StagingSheet, labelText?: str
       image.src = svgUrl;
     });
 
-    const widthPx = mmToPx(SHEET_WIDTH_MM, PRINT_DPI);
-    const heightPx = mmToPx(SHEET_HEIGHT_MM, PRINT_DPI);
+    // Same 300 DPI as always: a shorter frame gives proportionally fewer pixels, never a scaled image.
+    const widthPx = printPixelsOf(frame.widthMm);
+    const heightPx = printPixelsOf(frame.heightMm);
 
     const canvas = document.createElement("canvas");
     canvas.width = widthPx;

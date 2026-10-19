@@ -39,6 +39,7 @@ import {
   type SlotReflowStage,
 } from "./grouped-nesting-v3";
 import type { GroupedNestingConfig } from "./grouped-nesting";
+import { outerSpacing } from "./grouped-nesting-config";
 import type { GroupPlacement, OrderLayoutCandidate } from "./grouped-nesting-types";
 
 export interface CompoundLimits {
@@ -185,10 +186,9 @@ export function improveWithCompoundMoves<T>(
   limits: CompoundLimits = DEFAULT_COMPOUND_LIMITS,
   rule: RotationRule = V2_ROTATION_RULE
 ): { groups: GroupPlacement<T>[]; diagnostics: Omit<CompoundDiagnostics, "runtimeMs"> } {
-  const margin = config.sheetMarginMm;
-  const gap = config.orderGapMm;
-  const packW = config.sheetWidth - 2 * margin;
-  const packH = config.sheetHeight - 2 * margin;
+  const { marginX, marginY, gapX, gapY } = outerSpacing(config);
+  const packW = config.sheetWidth - 2 * marginX;
+  const packH = config.sheetHeight - 2 * marginY;
 
   const d = {
     passes: 0,
@@ -221,8 +221,8 @@ export function improveWithCompoundMoves<T>(
         rects.filter((r) => r.sheetIndex === sheetIndex),
         packW,
         packH,
-        gap
-      ).map((free) => ({ sheetIndex, free, width: free.width - gap, height: free.height - gap }))
+        { x: gapX, y: gapY }
+      ).map((free) => ({ sheetIndex, free, width: free.width - gapX, height: free.height - gapY }))
     );
   const summarize = (slots: Slot[]): SlotSummary => {
     const usable = slots.filter((s) => s.width > 0 && s.height > 0);
@@ -246,12 +246,12 @@ export function improveWithCompoundMoves<T>(
   };
   const isNoOp = (group: GroupPlacement<T>, slot: Slot, c: OrderLayoutCandidate<T>) =>
     slot.sheetIndex === group.sheetIndex &&
-    Math.abs(slot.free.x + margin - group.x) < POSITION_EPSILON &&
-    Math.abs(slot.free.y + margin - group.y) < POSITION_EPSILON &&
+    Math.abs(slot.free.x + marginX - group.x) < POSITION_EPSILON &&
+    Math.abs(slot.free.y + marginY - group.y) < POSITION_EPSILON &&
     Math.abs(c.width - group.width) < POSITION_EPSILON &&
     Math.abs(c.height - group.height) < POSITION_EPSILON;
   const moveOf = (group: GroupPlacement<T>, slot: Slot, shape: Shape<T>): CompoundGroupMove => ({
-    type: classifyRelocation(group, { sheetIndex: slot.sheetIndex, x: slot.free.x + margin, y: slot.free.y + margin }),
+    type: classifyRelocation(group, { sheetIndex: slot.sheetIndex, x: slot.free.x + marginX, y: slot.free.y + marginY }),
     orderId: group.orderId,
     source: shape.source,
     strategy: shape.candidate.strategy,
@@ -261,14 +261,14 @@ export function improveWithCompoundMoves<T>(
     beforeWidth: group.width,
     beforeHeight: group.height,
     toSheetIndex: slot.sheetIndex,
-    toX: slot.free.x + margin,
-    toY: slot.free.y + margin,
+    toX: slot.free.x + marginX,
+    toY: slot.free.y + marginY,
     afterWidth: shape.candidate.width,
     afterHeight: shape.candidate.height,
   });
   const withMoved = (groups: GroupPlacement<T>[], index: number, slot: Slot, c: OrderLayoutCandidate<T>) => {
     const g = groups[index];
-    const moved = placeGroup(c, slot.free.x + margin, slot.free.y + margin, slot.sheetIndex, { alternatives: g.alternatives, localCandidate: g.localCandidate });
+    const moved = placeGroup(c, slot.free.x + marginX, slot.free.y + marginY, slot.sheetIndex, { alternatives: g.alternatives, localCandidate: g.localCandidate });
     return normalizeSheets(groups.map((other, i) => (i === index ? moved : other)));
   };
 
@@ -291,8 +291,8 @@ export function improveWithCompoundMoves<T>(
     const touches = (r: Rect, free: FreeRect) => {
       const nx = r.x;
       const ny = r.y;
-      const nr = r.x + r.width + gap;
-      const nb = r.y + r.height + gap;
+      const nr = r.x + r.width + gapX;
+      const nb = r.y + r.height + gapY;
       const overlapY = free.y < nb && free.y + free.height > ny;
       const overlapX = free.x < nr && free.x + free.width > nx;
       return (

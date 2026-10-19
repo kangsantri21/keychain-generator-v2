@@ -6,6 +6,7 @@ import { Eye, Pencil, Trash2, X, Palette, Type, LayoutGrid } from "lucide-react"
 import { useTemplateStore, type OrderStatus, type OrderQueueEntry } from "@/lib/store/useTemplateStore";
 import { KeychainRenderSvg } from "@/components/shared/KeychainRenderSvg";
 import type { OrderItemPreviewPayload } from "@/lib/order-preview-types";
+import { invalidateStagingCache } from "@/lib/staging-cache";
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -57,6 +58,7 @@ export function RecentOrdersList() {
       const res = await fetch(`/api/orders/${order.id}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menghapus pesanan");
+      invalidateStagingCache(); // the order's staged units are deleted with it
 
       removeFromQueue(order.id);
       toast.success("Pesanan berhasil dihapus");
