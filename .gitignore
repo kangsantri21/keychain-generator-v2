@@ -48,3 +48,10 @@ next-env.d.ts
 
 # uploaded template files
 /public/uploads
+
+# secrets / API keys
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
