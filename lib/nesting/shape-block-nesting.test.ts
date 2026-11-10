@@ -101,7 +101,7 @@ describe("Shape-block nesting", () => {
     assert.deepEqual(gate.errors, []);
   });
 
-  test("eight long names stand in one column", () => {
+  test("long names lie down when that uses less sheet than a column", () => {
     const pieces = Array.from({ length: 8 }, (_, id) =>
       item({
         id,
@@ -110,18 +110,16 @@ describe("Shape-block nesting", () => {
         height: 14,
         allowRotation: true,
         outline: rectOutline(48, 14),
-        receiptCode: "KOLOM-8",
+        receiptCode: "NAMA-8",
         data: id,
       })
     );
     const run = runShapeBlockNesting(pieces);
     assert.equal(run.ok, true, run.errors.join("; "));
     assert.equal(run.sheetCount, 1);
-    assert.ok(run.placements.every((p) => p.rotationDeg === 90 || p.rotationDeg === 270));
-    const xs = run.placements.map((p) => p.posX);
-    assert.ok(Math.max(...xs) - Math.min(...xs) < 1, `not one column: x ${xs.join(",")}`);
-    const contentW = Math.max(...run.placements.map((p) => p.posX + p.width)) - Math.min(...xs);
-    assert.ok(contentW < 20, `column is ${contentW} mm wide`);
+    // Eight names standing in one column would be about 400 mm tall. Lying in rows is far shorter.
+    assert.ok(run.sumUsedHeight < 90, `used height ${run.sumUsedHeight}`);
+    assert.ok(run.placements.some((p) => p.rotationDeg === 0 || p.rotationDeg === 180));
   });
 
   test("a wide block is turned 90° when that keeps the batch on one sheet", () => {

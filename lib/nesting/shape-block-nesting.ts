@@ -202,12 +202,29 @@ function sizeOf(pieces: LocalPiece<unknown>[]): { w: number; h: number; area: nu
   return { w, h, area: w * h };
 }
 
-function betterLayout(a: LocalPiece<unknown>[], b: LocalPiece<unknown>[]): boolean {
+/**
+ * How short this block can sit on the sheet. A wide row that fits across
+ * the width beats a tall column of the same pieces: the sheet is trimmed to
+ * the used height, so height is the material. Area is only the last tie-break.
+ * Nothing here forces a long name to stand up.
+ */
+function materialRank(w: number, h: number, maxW: number, maxH: number): [number, number, number] | null {
+  const fits: [number, number][] = [];
+  if (w <= maxW + 0.2 && h <= maxH + 0.2) fits.push([h, w]);
+  if (h <= maxW + 0.2 && w <= maxH + 0.2) fits.push([w, h]);
+  if (fits.length === 0) return null;
+  fits.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return [fits[0][0], fits[0][1], w * h];
+}
+
+function betterLayout(a: LocalPiece<unknown>[], b: LocalPiece<unknown>[], maxW: number, maxH: number): boolean {
   const sa = sizeOf(a);
   const sb = sizeOf(b);
-  if (Math.abs(sa.area - sb.area) > 0.5) return sa.area < sb.area;
-  if (Math.abs(sa.h - sb.h) > 0.05) return sa.h < sb.h;
-  if (Math.abs(sa.w - sb.w) > 0.05) return sa.w < sb.w;
+  const ra = materialRank(sa.w, sa.h, maxW, maxH);
+  const rb = materialRank(sb.w, sb.h, maxW, maxH);
+  if (ra && !rb) return true;
+  if (!ra || !rb) return false;
+  for (let i = 0; i < ra.length; i++) if (Math.abs(ra[i] - rb[i]) > 0.5) return ra[i] < rb[i];
   return false;
 }
 
@@ -332,7 +349,7 @@ function flipPass<T>(pieces: LocalPiece<T>[], clearance: number): LocalPiece<T>[
   trials.push(pieces.map((p, index) => (index % 2 === 1 && p.item.allowRotation ? flipped(p) : p)));
   for (const trial of trials) {
     const slid = slidePieces(trial, clearance);
-    if (betterLayout(slid, best)) best = slid;
+    if (sizeOf(slid).area + 0.5 < sizeOf(best).area) best = slid;
   }
   return best;
 }
@@ -343,24 +360,82 @@ function flipped<T>(piece: LocalPiece<T>): LocalPiece<T> {
   return next;
 }
 
-function layoutReceipt<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[] | null {
+/** Fill a row left to right, then the next row. Rotation is whatever `rotOf` picks. */
+function rowShelf<T>(
+  items: ShapeBlockItem<T>[],
+  rotOf: (item: ShapeBlockItem<T>, index: number) => QuarterTurn,
+  maxW: number,
+  gap: number
+): LocalPiece<T>[] | null {
+  const placed: LocalPiece<T>[] = [];
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const rot = item.allowRotation ? rotOf(item, i) : 0;
+    let piece = pieceAt(item, rot, 0, 0);
+    if (piece.w > maxW + EPS) {
+      if (!item.allowRotation) return null;
+      const turned = pieceAt(item, addTurns(rot, 90), 0, 0);
+      if (turned.w > maxW + EPS) return null;
+      piece = turned;
+    }
+    if (x > 0 && x + piece.w > maxW + EPS) {
+      y += rowH + gap;
+      x = 0;
+      rowH = 0;
+    }
+    piece.x = x;
+    piece.y = y;
+    placed.push(piece);
+    x += piece.w + gap;
+    rowH = Math.max(rowH, piece.h);
+  }
+  return placed;
+}
+
+/**
+ * Several honest shapes for one receipt. The shortest one is not always the
+ * best once other receipts share the sheet, so the outer search keeps a
+ * few that are not strictly larger in both directions.
+ */
+function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[][] {
   const gap = clearance;
-  const candidates: (LocalPiece<T>[] | null)[] = [
-    stackLayout(items, (item) => baseRot(item), maxH, maxW, gap),
-    stackLayout(items, (item, index) => addTurns(baseRot(item), oddTurn(index)), maxH, maxW, gap),
-    stackLayout(items, () => 0, maxH, maxW, gap),
-    stackLayout(items, (_item, index) => oddTurn(index), maxH, maxW, gap),
+  const heights = [maxH, maxH * 0.62, maxH * 0.4];
+  const raw: (LocalPiece<T>[] | null)[] = [
+    rowShelf(items, () => 0, maxW, gap),
+    rowShelf(items, (_item, index) => oddTurn(index), maxW, gap),
+    rowShelf(items, (item) => baseRot(item), maxW, gap),
+    rowShelf(items, (item, index) => addTurns(baseRot(item), oddTurn(index)), maxW, gap),
     anchorPack(items, maxW, maxH, gap),
   ];
-  let best: LocalPiece<T>[] | null = null;
-  for (const candidate of candidates) {
+  for (const limit of heights) {
+    raw.push(stackLayout(items, () => 0, limit, maxW, gap));
+    raw.push(stackLayout(items, (item) => baseRot(item), limit, maxW, gap));
+  }
+  const finished: LocalPiece<T>[][] = [];
+  for (const candidate of raw) {
     const done = finish(candidate, clearance);
     if (!done) continue;
     const size = sizeOf(done);
-    if (size.w > maxW + 0.05 || size.h > maxH + 0.05) continue;
-    if (!best || betterLayout(done, best)) best = done;
+    if (!materialRank(size.w, size.h, maxW, maxH)) continue;
+    finished.push(done);
   }
-  return best;
+  const pareto = finished.filter((layout, index) => {
+    const a = sizeOf(layout);
+    return !finished.some((other, j) => {
+      if (j === index) return false;
+      const b = sizeOf(other);
+      return b.w <= a.w + 1 && b.h <= a.h + 1 && (b.w < a.w - 1 || b.h < a.h - 1);
+    });
+  });
+  pareto.sort((a, b) => {
+    const ra = materialRank(sizeOf(a).w, sizeOf(a).h, maxW, maxH)!;
+    const rb = materialRank(sizeOf(b).w, sizeOf(b).h, maxW, maxH)!;
+    return ra[0] - rb[0] || ra[1] - rb[1];
+  });
+  return pareto.slice(0, 4);
 }
 
 function optionFrom<T>(pieces: LocalPiece<T>[], blockRot: 0 | 90, config: ShapeBlockConfig): FootprintOption<T> {
@@ -486,7 +561,7 @@ function packBlocks<T>(blocks: BuiltBlock<T>[], config: ShapeBlockConfig): Choic
       }
     }
     next.sort((a, b) => compareChoices(a.choices, b.choices));
-    beam = next.slice(0, 8);
+    beam = next.slice(0, 12);
     if (beam.length === 0) return null;
   }
   return beam[0]?.choices ?? null;
@@ -582,18 +657,31 @@ export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Pa
   const blocks: BuiltBlock<T>[] = [];
 
   for (const group of groupOf(items)) {
-    const laid = layoutReceipt(group.items, maxW, maxH, config.cutClearanceMm);
-    if (!laid) {
+    const layouts = layoutCandidates(group.items, maxW, maxH, config.cutClearanceMm);
+    if (layouts.length === 0) {
       errors.push(
         `Resi ${group.code || group.orderId || "(tanpa nomor)"} tidak muat dalam satu lembar ${config.sheetWidthMm}×${config.sheetHeightMm} mm. Resi tidak dipecah.`
       );
       continue;
     }
-    const portrait = optionFrom(laid, 0, config);
-    const landscape = optionFrom(laid, 90, config);
-    const options = [portrait];
-    if (landscape.footW <= config.sheetWidthMm - 2 * config.sheetMarginMm + EPS && landscape.footH <= config.sheetHeightMm - 2 * config.sheetMarginMm + EPS) {
-      options.push(landscape);
+    const options: FootprintOption<T>[] = [];
+    const seen = new Set<string>();
+    for (const laid of layouts) {
+      for (const rot of [0, 90] as const) {
+        const option = optionFrom(laid, rot, config);
+        if (option.footW > config.sheetWidthMm - 2 * config.sheetMarginMm + EPS) continue;
+        if (option.footH > config.sheetHeightMm - 2 * config.sheetMarginMm + EPS) continue;
+        const key = `${option.footW.toFixed(0)}x${option.footH.toFixed(0)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        options.push(option);
+      }
+    }
+    if (options.length === 0) {
+      errors.push(
+        `Resi ${group.code || group.orderId || "(tanpa nomor)"} tidak muat dalam satu lembar ${config.sheetWidthMm}×${config.sheetHeightMm} mm. Resi tidak dipecah.`
+      );
+      continue;
     }
     blocks.push({
       orderId: group.orderId,

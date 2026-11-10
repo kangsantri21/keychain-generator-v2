@@ -50,7 +50,7 @@ Selesai bila, pada batch uji yang polanya sama dengan contoh manual:
 
 ### P0.5 Rotasi 90 derajat dan 180 derajat — selesai di sesi susunan blok, belum di `main`
 
-270° dipakai hanya kalau itu membuat blok lebih pendek. Contoh manual tidak butuh sudut selain kelipatan 90°. Itu dicatat di PRD.
+270° dipakai hanya kalau itu membuat blok lebih pendek. Rofiq kemudian memutuskan nama panjang tidak wajib tegak: arah dipilih hanya untuk menghemat bahan. Contoh manual tidak butuh sudut selain kelipatan 90°.
 
 Sekarang keping hanya bisa 0 derajat atau 90 derajat, karena packer hanya menukar lebar dan tinggi. Putaran 180 derajat tidak mengubah kotak, jadi tidak pernah dipilih. Contoh manual memakai keduanya: nama panjang menjadi kolom (90 derajat) dan banyak nama terbaca terbalik atas-bawah (180 derajat).
 
