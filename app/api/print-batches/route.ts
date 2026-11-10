@@ -5,6 +5,7 @@ import { printBatches, orderItems, orders, stagingItems, templates } from "@/lib
 import { isUniqueConstraintError } from "@/lib/template-files";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
+import { shapeGateFields } from "@/lib/nesting/shape-placed";
 import { matchSubmittedToStaged, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
 import type { StagingItemPayload } from "@/lib/staging-types";
 import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
@@ -83,6 +84,7 @@ export async function POST(request: NextRequest) {
   const placed: PlacedItem[] = [];
   for (const row of dbRows) {
     let expected = { width: NaN, height: NaN };
+    let rendered: { width: number; height: number; outlinePath: string | null } | null = null;
     const template = templateMap.get(row.templateId);
     if (template) {
       let assets = assetsCache.get(template.id);
@@ -95,6 +97,7 @@ export async function POST(request: NextRequest) {
           const holeOverride = row.holeOverrideX !== null && row.holeOverrideY !== null ? { x: row.holeOverrideX, y: row.holeOverrideY } : null;
           const render = renderTemplateItem(assets, template, row.customerName, holeOverride);
           expected = { width: render.width, height: render.height };
+          rendered = { width: render.width, height: render.height, outlinePath: render.outlinePath };
         } catch {
           // leaves NaN -> reported as an artwork mismatch below
         }
@@ -111,6 +114,7 @@ export async function POST(request: NextRequest) {
       rotated: row.rotated,
       expectedWidth: expected.width,
       expectedHeight: expected.height,
+      ...shapeGateFields(row, rendered),
     });
   }
   // Mode comes from the explicit staging marker (lib/staging-mode.ts), not from geometry.

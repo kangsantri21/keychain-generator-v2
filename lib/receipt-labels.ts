@@ -18,6 +18,7 @@
  */
 import { RECEIPT_LABEL_FONT_SIZE_MM } from "@/lib/keychain-geometry";
 import { FIDUCIAL_CLEARANCE_MM } from "@/lib/nesting/grouped-nesting-config";
+import { shapeLabelsOf, type SideLabel } from "@/lib/nesting/shape-block-marks";
 import { fiducialDistance, receiptBoxes } from "@/lib/production-gate";
 import { sheetModeOf } from "@/lib/staging-mode";
 
@@ -134,6 +135,21 @@ export function internalLabelsOf(sheet: {
   items: (Footprint & { status: string; order: { receiptCode: string } | null })[];
 }): InternalLabel[] | null {
   if (sheetModeOf(sheet.items).mode === "legacy") return null;
+  const side = shapeLabelsOf(sheet.items);
+  if (side) return side.map(sideLabelAsInternal);
   const codes = new Map(sheet.items.map((item) => [item.orderId, item.order?.receiptCode ?? `#${item.orderId}`]));
   return placeInternalReceiptLabels(sheet.items, (orderId) => codes.get(orderId) ?? `#${orderId}`);
+}
+
+function sideLabelAsInternal(label: SideLabel): InternalLabel {
+  return {
+    orderId: label.orderId,
+    text: label.text,
+    status: "PLACED",
+    rect: label.rect,
+    rotation: label.rotation,
+    fontSize: label.fontSize,
+    transform: label.transform,
+    textLength: label.textLength,
+  };
 }
