@@ -1,5 +1,6 @@
 import { activeProductionFrame, type ActiveProductionFrame } from "@/lib/active-frame";
-import { flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
+import { CURVE_TOLERANCE_MM } from "@/lib/keychain-geometry";
+import { circleFromPathData, flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
 import type { StagingItemPayload, StagingSheet } from "@/lib/staging-types";
 import { sanitizeFileName } from "@/lib/utils";
 
@@ -78,15 +79,13 @@ function sheetReferenceEntities(frame: ActiveProductionFrame): string[] {
 }
 
 /**
- * Flattens a path (outline or hole) and emits one closed LWPOLYLINE per
- * resulting polygon, in final on-sheet DXF coordinates. Both `outlinePath`
- * and `holePath` are read back through the same curve-flattening paper.js
- * pipeline the rest of the render engine already uses (lib/laser-outline.ts)
- * rather than a hand-rolled parser assuming a specific path grammar —
- * `holePath` in particular is NOT the raw two-arc circle string
- * `circlePathData()` first builds: it passes through `normalizePath()` on
- * its way out of `renderKeychainText`, which re-serializes it via paper.js
- * as a handful of cubic Bezier curves approximating the circle, not arcs.
+ * Emits one closed LWPOLYLINE per polygon, in final on-sheet DXF coordinates.
+ * Curves are flattened at CURVE_TOLERANCE_MM (0.01 mm), not the old 0.05 mm
+ * that turned a 1.9 mm hole into about 16 sides.
+ *
+ * A path that is actually a circle — the ring hole, after paper.js has
+ * rewritten its arcs as cubic curves — is emitted as a CIRCLE entity instead.
+ * That stays round in the laser file and costs one entity, not a polygon.
  */
 function pathToDxfEntities(
   d: string,
@@ -94,7 +93,15 @@ function pathToDxfEntities(
   layer: string,
   frameHeightMm: number
 ): string[] {
-  return flattenPathToPolygons(d).map((polygon) => {
+  if (layer === "CUT_HOLE") {
+    const circle = circleFromPathData(d);
+    if (circle) {
+      const center = applyItemTransform(item, { x: circle.x, y: circle.y });
+      return [circleEntity(center.x, toDxfY(center.y, frameHeightMm), circle.r, layer)];
+    }
+  }
+
+  return flattenPathToPolygons(d, CURVE_TOLERANCE_MM).map((polygon) => {
     const points = polygon.map((p) => {
       const onSheet = applyItemTransform(item, p);
       return { x: onSheet.x, y: toDxfY(onSheet.y, frameHeightMm) };

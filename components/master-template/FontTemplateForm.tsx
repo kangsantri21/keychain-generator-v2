@@ -4,12 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import * as opentype from "opentype.js";
 import { renderColoredGlyphsAtHeight, type ColoredTextRender } from "@/lib/font-preview";
-import { DILATE_PX, ERODE_PX } from "@/lib/laser-outline";
-import { computeLaserOutlineClipper } from "@/lib/clipper-outline";
+import { computeProductionOutline } from "@/lib/clipper-outline";
 import {
   PX_PER_MM,
   RING_HOLE_DIAMETER_PX,
-  CLOSING_GROWTH_MM,
+  OUTLINE_GROWTH_MM,
   toGlyphShapes,
   computeRingHoleAnchor,
   weldRingHoleWasher,
@@ -34,7 +33,7 @@ const SLIDER_DEBOUNCE_MS = 400;
 // (template.textTargetHeight has no UI here, same as production's
 // app/api/templates/route.ts which never lets a "font" category row
 // customize it) — the preview mirrors that fixed value exactly.
-const TEXT_RAW_HEIGHT_PX = Math.max((DEFAULT_TEXT_TARGET_HEIGHT_MM - CLOSING_GROWTH_MM) * PX_PER_MM, 1);
+const TEXT_RAW_HEIGHT_PX = Math.max((DEFAULT_TEXT_TARGET_HEIGHT_MM - OUTLINE_GROWTH_MM) * PX_PER_MM, 1);
 // Text-only templates always render "Nama" as their sample (app/api/
 // templates/route.ts hardcodes defaultText to "Nama" for category "font").
 const SAMPLE_TEXT = "Nama";
@@ -173,18 +172,17 @@ export function FontTemplateForm({
 
   // Mirrors lib/keychain-render.ts's text-only ring-hole pipeline exactly
   // (lib/text-ring-hole-preview.ts's own doc comment has the full 5-step
-  // breakdown): glyphs -> path, contour = a plain dilate/erode over every
-  // glyph (NOT the raw glyph bbox), bounding box read FROM that contour, X
+  // breakdown): glyphs -> path, contour = gap close then the 0.25 mm
+  // offset (NOT the raw glyph bbox), bounding box read FROM that contour, X
   // anchored to the contour's own leftmost point minus "Jarak Lubang", Y
-  // following the vertical midpoint of the FIRST LETTER's own
-  // separately-dilated contour.
+  // following the vertical midpoint of the FIRST LETTER's own contour.
   const glyphShapes = useMemo(
     () => toGlyphShapes(textPreview, textTranslateX, textTranslateY),
     [textPreview, textTranslateX, textTranslateY]
   );
 
   const textContour = useMemo(
-    () => (glyphShapes.length > 0 ? computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX }) : null),
+    () => (glyphShapes.length > 0 ? computeProductionOutline(glyphShapes, { unitPerMm: PX_PER_MM }) : null),
     [glyphShapes]
   );
 

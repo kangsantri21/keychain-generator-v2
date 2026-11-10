@@ -13,7 +13,7 @@ import {
   circlePathData,
   type PathBounds,
 } from "@/lib/laser-outline";
-import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
+import { computeProductionOutline, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg-server";
 import type { Template, HoleOverride } from "@/lib/db/schema";
 import type { KeychainRender } from "@/lib/render-types";
@@ -22,23 +22,11 @@ import {
   RING_HOLE_OFFSET_MM,
   RING_HOLE_DIAMETER_MM,
   RING_HOLE_WASHER_DIAMETER_MM,
-  DILATE_MM,
-  ERODE_MM,
-  SEAM_CLOSE_MM,
+  GAP_CLOSE_MM,
+  OUTLINE_OFFSET_MM,
+  OUTLINE_GROWTH_MM,
   MAX_ITEM_WIDTH_MM,
 } from "@/lib/keychain-geometry";
-
-/**
- * Net outward growth a dilate(DILATE_MM)-then-erode(ERODE_MM) closing pass
- * adds to a locally-flat edge's dimension (both sides combined) - a raw,
- * pre-clipper shape must be rendered this much *smaller* than its finished
- * target height so the shape that comes out the other end of the clipper
- * pipeline lands exactly on target. Applies to any node whose path actually
- * goes through that closing pass; the character's own auto-computed outline
- * does not (see `renderKeychainTextScaled`'s character-sizing branch below),
- * so it needs no such compensation.
- */
-const CLOSING_GROWTH_MM = 2 * (DILATE_MM - ERODE_MM);
 
 export interface TemplateAssets {
   font: opentype.Font;
@@ -128,9 +116,10 @@ interface ScaledRenderResult {
  * bug. Defaults to 1 (no squeeze) for a normal, unconstrained render.
  *
  * Kept fixed regardless of either target height (physical/hardware
- * constants, not design proportions): DILATE_MM/ERODE_MM/SEAM_CLOSE_MM
- * (laser kerf & seam-closing are properties of the cutting process, not the
- * drawn size), RING_HOLE_DIAMETER_MM (a fixed hardware-fit spec), and
+ * constants, not design proportions): OUTLINE_OFFSET_MM and GAP_CLOSE_MM
+ * (how far the cut sits from the design, and which letter gaps are bridged
+ * — properties of the cutting process, not the drawn size),
+ * RING_HOLE_DIAMETER_MM (a fixed hardware-fit spec), and
  * MARGIN_MM/RING_HOLE_OFFSET_MM/holeOffsetX/Y (fixed real-world layout
  * spacing, not tied to either node's own size). template.dynamicGapX/
  * dynamicOffsetY are the one exception to "fixed" here - a per-template,
@@ -152,14 +141,14 @@ function renderKeychainTextScaled(
   const holeOffsetX = template.holeOffsetX;
   const holeOffsetY = template.holeOffsetY;
 
-  // The name text always passes through a DILATE_MM/ERODE_MM closing pass
-  // (dilated on its own then welded to a designer cut-line, or dilated
-  // together with a plain character box - see the two outline branches
-  // below), so its raw glyphs must be rendered CLOSING_GROWTH_MM shorter
-  // than template.textTargetHeight for the *finished* cut line to land on
-  // target exactly, regardless of font metrics. Entirely independent of the
+  // The name text always receives the final OUTLINE_OFFSET_MM clearance
+  // (on its own, then welded to a designer cut-line, or together with a
+  // plain character box - see the two outline branches below). The gap
+  // closing does not change a straight edge, so the raw glyphs only need
+  // to be OUTLINE_GROWTH_MM shorter than template.textTargetHeight for the
+  // finished cut line to land on target. Entirely independent of the
   // character's own sizing.
-  const textRawHeightMm = Math.max(template.textTargetHeight - CLOSING_GROWTH_MM, 1);
+  const textRawHeightMm = Math.max(template.textTargetHeight - OUTLINE_GROWTH_MM, 1);
   const { segments, bbox } = renderColoredGlyphsAtHeight(assets.font, sampleText, textRawHeightMm, template.colors);
   const rawTextWidthMm = Math.max(bbox.x2 - bbox.x1, 1e-6);
 
@@ -185,7 +174,7 @@ function renderKeychainTextScaled(
   // `shapesForOutline` below), so like the text it needs the same
   // closing-pass compensation to land its *finished* height on
   // template.charTargetHeight exactly.
-  const charBoxMm = Math.max(template.charTargetHeight - CLOSING_GROWTH_MM, 1);
+  const charBoxMm = Math.max(template.charTargetHeight - OUTLINE_GROWTH_MM, 1);
 
   // Reference shapes for the character's contribution to the outline, and as
   // a bounds fallback if outline computation fails entirely. Computed before
@@ -233,11 +222,11 @@ function renderKeychainTextScaled(
     // Position the text relative to the character's *actual* auto-computed
     // outline (not a nominal box edge, which real artwork rarely fills).
     // template.dynamicGapX is an admin-tunable horizontal gap (default
-    // WELD_CLEARANCE_MM, a value verified small enough to stay under the
-    // text's net dilation growth - DILATE_MM - ERODE_MM - so the *dilated*
-    // cutting outline still reaches the character and Clipper welds the two
-    // into one contour) - an admin can widen it to separate them, or shrink
-    // it further, and the union below re-welds (or un-welds) live.
+    // WELD_CLEARANCE_MM). It must stay under GAP_CLOSE_MM so the closing
+    // pass still bridges the character and the text into one contour. The
+    // 0.25 mm offset is only clearance; it is not what welds them. An admin
+    // can widen the gap to separate them, or shrink it, and the union below
+    // re-welds (or un-welds) live.
     const nominalTextOriginX = marginMm + charBoxMm + template.dynamicGapX;
     const textOriginX =
       hasCharacterOutline && characterBounds
@@ -279,23 +268,27 @@ function renderKeychainTextScaled(
     // contour - dilate only the (already-squeezed) text, then union the two
     // as-is instead of re-dilating (and thereby distorting) the character's
     // own geometry.
-    const textOutline = computeLaserOutlineClipper(textSegments.map((s) => s.d), {
-      dilateMm: DILATE_MM,
-      erodeMm: ERODE_MM,
+    const textOutline = computeProductionOutline(textSegments.map((s) => s.d), {
+      gapClose: GAP_CLOSE_MM,
+      offset: OUTLINE_OFFSET_MM,
     });
     const welded = unionOutlines(
       textOutline ? [textOutline, ...positionedCharacterOutline] : positionedCharacterOutline
     );
     // A plain union of two shapes that only just touch leaves a sharp,
     // narrow concave notch right at the seam - a fragile neck once laser-cut
-    // from acrylic, even though it's already topologically one piece. An
-    // extra closing pass fills that notch into a smooth, rounded bridge
-    // without changing the overall outer size.
+    // from acrylic, even though it's already topologically one piece. Close
+    // that notch with the same gap threshold, and do not add a second
+    // offset: the text is already OUTLINE_OFFSET_MM outside its glyphs, and
+    // the character silhouette stays on the artwork.
     outlinePath = welded
-      ? (computeLaserOutlineClipper([welded], { dilateMm: SEAM_CLOSE_MM, erodeMm: SEAM_CLOSE_MM }) ?? welded)
+      ? (computeProductionOutline([welded], { gapClose: GAP_CLOSE_MM, offset: 0 }) ?? welded)
       : null;
   } else {
-    outlinePath = computeLaserOutlineClipper(shapesForOutline, { dilateMm: DILATE_MM, erodeMm: ERODE_MM });
+    outlinePath = computeProductionOutline(shapesForOutline, {
+      gapClose: GAP_CLOSE_MM,
+      offset: OUTLINE_OFFSET_MM,
+    });
   }
 
   // Character templates: the ring hole sits at a fixed offset from the
@@ -363,7 +356,7 @@ function renderKeychainTextScaled(
     //      the washer's protrusion, the same way the character branch's own
     //      weld above does for its text.
     const firstGlyphContour = textSegments[0]
-      ? computeLaserOutlineClipper([textSegments[0].d], { dilateMm: DILATE_MM, erodeMm: ERODE_MM })
+      ? computeProductionOutline([textSegments[0].d], { gapClose: GAP_CLOSE_MM, offset: OUTLINE_OFFSET_MM })
       : null;
     const firstGlyphBounds = firstGlyphContour ? getPathBounds(firstGlyphContour) : null;
     const outlineBounds = outlinePath ? getPathBounds(outlinePath) : null;
@@ -397,7 +390,7 @@ function renderKeychainTextScaled(
     // leaves a sharp, narrow concave notch at the seam - a fragile neck once
     // laser-cut, even though it's already topologically one piece.
     outlinePath = welded
-      ? (computeLaserOutlineClipper([welded], { dilateMm: SEAM_CLOSE_MM, erodeMm: SEAM_CLOSE_MM }) ?? welded)
+      ? (computeProductionOutline([welded], { gapClose: GAP_CLOSE_MM, offset: 0 }) ?? welded)
       : outlinePath;
 
     holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);
@@ -474,7 +467,7 @@ const MIN_TEXT_SQUEEZE_X = 0.05;
  * character/artwork is never resized or distorted to make room - see
  * `renderKeychainTextScaled`'s docs.
  *
- * The fixed-mm dilate/erode "closing" pass adds a roughly constant absolute
+ * The fixed-mm outline offset adds a roughly constant absolute
  * amount to the finished width no matter how much the text is squeezed, so a
  * single closed-form solve for `textSqueezeX` can slightly overshoot
  * MAX_ITEM_WIDTH_MM for very long names. Each loop iteration below

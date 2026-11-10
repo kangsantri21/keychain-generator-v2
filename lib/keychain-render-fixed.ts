@@ -32,17 +32,16 @@ import { MAX_ITEM_WIDTH_MM, RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@
  * artwork's true outer boundary - the same Clipper union the dynamic
  * engine's own designer-cut-line path uses to weld shapes together.
  *
- * Deliberately NOT run through the dynamic engine's DILATE_MM/ERODE_MM
- * closing pass, though: that pass exists purely to grow a bit of extra
- * white-border clearance around auto-laid-out text/character boxes (see
- * lib/keychain-geometry.ts's own docs on DILATE_MM/ERODE_MM). A fixed-mode
- * master SVG is the opposite case - the designer has already drawn its own
- * finished white border and black outer line directly into the artwork -
- * so ANY extra padding here would double up on that and push the red
- * cut-line further out than the file's own outer edge. The union above is a
- * plain boolean union (zero offset), so the red line sits tight against
- * whatever the master SVG's outermost boundary actually is, no padding
- * added or removed.
+ * Deliberately NOT run through the dynamic engine's gap-close and
+ * OUTLINE_OFFSET_MM pass, though: that pass grows a little clearance around
+ * auto-laid-out text and bridges letter gaps (see lib/keychain-geometry.ts).
+ * A fixed-mode master SVG is the opposite case - the designer has already
+ * drawn its own finished white border and black outer line directly into
+ * the artwork - so ANY extra padding here would double up on that and push
+ * the red cut-line further out than the file's own outer edge. The union
+ * above is a plain boolean union (zero offset), so the red line sits tight
+ * against whatever the master SVG's outermost boundary actually is, no
+ * padding added or removed.
  *
  * `template.customZones` (lib/db/schema.ts) mark invisible placement zones
  * inside that same master SVG. This pass only handles `type: "text"` zones:

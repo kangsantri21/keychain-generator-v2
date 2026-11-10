@@ -79,13 +79,39 @@ export const RING_HOLE_WASHER_DIAMETER_MM = 5;
 export const MAX_LAYOUT_OFFSET_MM = 15;
 
 /**
- * Laser-cutting clearance: dilate outward then erode back (a "closing" pass)
- * to merge nearby letters into one silhouette and round off concavities.
- * Net growth is DILATE_MM - ERODE_MM. These are real mm values for the
- * clipper-lib-based outline engine (lib/clipper-outline.ts).
+ * How far the laser cut sits outside the design edge, in mm.
+ * Decided by Rofiq on 10 Nov 2026: 0.25 mm. This is applied AFTER the gap
+ * closing below, so the clearance and the bridge between letters are not
+ * the same number. Change this constant to retune production; the preview
+ * and the renderer both read it.
  */
-export const DILATE_MM = 4.0;
-export const ERODE_MM = 1.5;
+export const OUTLINE_OFFSET_MM = 0.25;
+
+/**
+ * Gaps narrower than this (mm) are closed before the final offset, so
+ * nearby letters stay one strong acrylic piece. The closing radius is half
+ * of this width. 6 mm covers the widest letter-to-letter gap measured on
+ * the sample names at the default 20 mm text height (about 4.8 mm) and
+ * still leaves a normal word space (about 10 mm) open. A straight edge does
+ * not move during this step — only the final OUTLINE_OFFSET_MM does.
+ */
+export const GAP_CLOSE_MM = 6;
+
+/**
+ * Finished-size growth along one dimension (both sides) caused by
+ * OUTLINE_OFFSET_MM. The gap closing does not add to it. Raw glyphs and the
+ * plain character box are drawn this much shorter than their target height
+ * so the cut line lands on the target.
+ */
+export const OUTLINE_GROWTH_MM = OUTLINE_OFFSET_MM * 2;
+
+/**
+ * Largest distance allowed between a true curve and the straight segments
+ * that replace it, in mm. Also the round-join tolerance of the offset.
+ * 0.01 mm is far below a laser kerf, so the cut looks smooth, while a full
+ * circle stays under a couple of hundred points instead of tens of thousands.
+ */
+export const CURVE_TOLERANCE_MM = 0.01;
 
 /**
  * Default *finished* (post-clipper) cutting heights, in mm, for a "dynamic"
@@ -113,29 +139,12 @@ export const MAX_ITEM_WIDTH_MM = 80;
 
 /**
  * Visual gap (mm) kept between a character's *actual* cut-line silhouette and
- * the raw (pre-dilation) text glyphs next to it — guarantees the letters
- * never visually overlap the character artwork. Must stay comfortably below
- * the text's net dilation growth (DILATE_MM - ERODE_MM ≈ 2.5mm) so the
- * *dilated* text outline still reaches the character's cut-line and Clipper
- * welds them into one contour; verified empirically against real CorelDraw
- * artwork that a bare hair's-width beyond ~2.0-2.25mm stops welding.
+ * the raw text glyphs next to it — guarantees the letters never visually
+ * overlap the character artwork. Must stay below GAP_CLOSE_MM so the closing
+ * pass still bridges that gap into one contour. The final cut then sits
+ * OUTLINE_OFFSET_MM outside the design; it is not what welds the seam.
  */
 export const WELD_CLEARANCE_MM = 1.0;
-
-/**
- * Extra morphological closing (dilate then erode by this same amount, round
- * joins) applied to the *final* character+text union — plain unioning two
- * shapes that only just touch leaves a sharp, narrow concave "armpit" right
- * at the seam (a fragile neck in laser-cut acrylic, even though the contour
- * is already topologically a single welded piece). Dilating first makes the
- * two banks of that notch touch and merge; eroding back by the identical
- * amount restores the overall outer size everywhere else (verified this
- * keeps the locked TEXT_CUT_HEIGHT_MM exact), while the notch itself stays
- * filled in as a smooth, rounded bridge. Empirically, 2mm was already enough
- * to fully close the seam void on real CorelDraw character artwork; this
- * keeps a safety margin above that measured minimum.
- */
-export const SEAM_CLOSE_MM = 3.0;
 
 /**
  * Corner registration/fiducial marks shared by both sheet-level exports —

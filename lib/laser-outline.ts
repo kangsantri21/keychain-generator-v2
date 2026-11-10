@@ -1,11 +1,5 @@
 import paper from "paper";
 
-// Tuned to match the server-side DILATE_MM/ERODE_MM (lib/keychain-geometry.ts)
-// scaled to the live-preview canvas's px-per-mm ratio, so the preview's
-// clipper-lib offsetting visually matches the final laser-cut output.
-export const DILATE_PX = 15;
-export const ERODE_PX = 5.6;
-
 let scopeReady = false;
 
 /**
@@ -119,6 +113,56 @@ export function unionBounds(a: PathBounds, b: PathBounds): PathBounds {
 /** SVG path `d` for a circle of radius `r` centered at (cx, cy), as two arcs. */
 export function circlePathData(cx: number, cy: number, r: number): string {
   return `M ${cx - r},${cy} A ${r},${r} 0 1,0 ${cx + r},${cy} A ${r},${r} 0 1,0 ${cx - r},${cy} Z`;
+}
+
+export interface CircleGeometry {
+  x: number;
+  y: number;
+  r: number;
+}
+
+/**
+ * Recovers a true circle from path data. The ring hole is built as arcs, then
+ * paper.js re-serializes it as cubic curves when the path is translated, so
+ * a later flatten would turn a 1.9 mm hole into a coarse polygon. DXF export
+ * uses this to emit a CIRCLE entity instead. Returns null when the path is
+ * not a full circle within `tolerance` (path units).
+ */
+export function circleFromPathData(d: string, tolerance = 0.03): CircleGeometry | null {
+  if (!ensureScope()) return null;
+
+  try {
+    const item = paper.PathItem.create(d);
+    if (!item) return null;
+
+    const paths: paper.Path[] =
+      item instanceof paper.CompoundPath ? (item.children as paper.Path[]) : [item as paper.Path];
+    if (paths.length !== 1) return null;
+    const path = paths[0];
+    if (!path || !path.closed || !(path.length > 0)) return null;
+
+    const bounds = path.bounds;
+    if (!(bounds.width > 0) || !(bounds.height > 0)) return null;
+    const roundness = Math.abs(bounds.width - bounds.height) / Math.max(bounds.width, bounds.height);
+    if (roundness > 0.04) return null;
+
+    const r = (bounds.width + bounds.height) / 4;
+    const center = bounds.center;
+    const samples = 48;
+    for (let i = 0; i < samples; i++) {
+      const point = path.getPointAt((path.length * i) / samples);
+      if (!point) return null;
+      if (Math.abs(point.getDistance(center) - r) > tolerance) return null;
+    }
+
+    const circumference = 2 * Math.PI * r;
+    if (Math.abs(path.length - circumference) > Math.max(0.2, circumference * 0.08)) return null;
+    return { x: center.x, y: center.y, r };
+  } catch {
+    return null;
+  } finally {
+    paper.project?.activeLayer.removeChildren();
+  }
 }
 
 /**

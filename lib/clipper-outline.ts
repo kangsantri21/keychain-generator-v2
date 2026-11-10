@@ -1,19 +1,18 @@
 import ClipperLib from "clipper-lib";
 import { flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
+import { CURVE_TOLERANCE_MM, GAP_CLOSE_MM, OUTLINE_OFFSET_MM } from "@/lib/keychain-geometry";
 
-/** Clipper works in integers; this preserves ~3 decimal places of mm precision. */
+/** Clipper works in integers; this preserves ~3 decimal places of a path unit (mm in production). */
 const SCALE = 1000;
-/** Curve-flattening tolerance, in mm — dense enough to look smooth at keychain scale. */
-const FLATTEN_TOLERANCE_MM = 0.05;
 
 function toClipperPath(points: FlatPoint[]): ClipperLib.IntPoint[] {
   return points.map((p) => ({ X: Math.round(p.x * SCALE), Y: Math.round(p.y * SCALE) }));
 }
 
-function shapesToClipperPaths(shapes: string[]): ClipperLib.Path[] {
+function shapesToClipperPaths(shapes: string[], curveTolerance: number): ClipperLib.Path[] {
   const paths: ClipperLib.Path[] = [];
   for (const d of shapes) {
-    for (const polygon of flattenPathToPolygons(d, FLATTEN_TOLERANCE_MM)) {
+    for (const polygon of flattenPathToPolygons(d, curveTolerance)) {
       paths.push(toClipperPath(polygon));
     }
   }
@@ -68,42 +67,129 @@ function clipperPathsToSvgD(paths: ClipperLib.Paths): string | null {
   return d.trim() || null;
 }
 
+/**
+ * Offsets closed paths by `delta` path-units (positive = outward).
+ * `arcTolerance` is the maximum distance between a true round join and the
+ * straight segments that replace it, in the same units as the path — not
+ * Clipper's raw integer units. Round joins stay smooth without storing a
+ * point every fraction of a micron.
+ */
+function offsetPaths(paths: ClipperLib.Paths, delta: number, arcTolerance: number): ClipperLib.Paths {
+  if (paths.length === 0 || Math.abs(delta) < 1e-9) return paths;
+  const clipperArc = Math.max(arcTolerance, 1e-6) * SCALE;
+  const offset = new ClipperLib.ClipperOffset(2, clipperArc);
+  offset.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+  const result: ClipperLib.Paths = [];
+  offset.Execute(result, delta * SCALE);
+  return result;
+}
+
 export interface ClipperOutlineOptions {
   dilateMm: number;
   erodeMm: number;
+  /**
+   * Max distance between a curve and its straight-segment stand-in.
+   * Same units as the path. Defaults to the production curve tolerance.
+   */
+  curveTolerance?: number;
+  /** Round-join tolerance. Defaults to `curveTolerance`. */
+  arcTolerance?: number;
 }
 
 /**
- * Computes the outer laser-cutting silhouette for the given SVG path shapes
- * using clipper-lib's real polygon offsetting (a dilate -> erode "closing"
- * pass with round joins), instead of paper.js's shifted-copy-union
- * approximation. Curves (glyph outlines) are flattened to dense polygons
- * first, since Clipper only understands straight-edged paths.
+ * Dilate then erode, in path units. Production cut lines do not call this
+ * directly — they use `computeProductionOutline`, which closes small gaps
+ * first and only then applies the small final offset. This lower-level pass
+ * remains so a measurement can still reproduce the old fat contour
+ * (dilate 4 mm, erode 1.5 mm) and so a pure closing (dilate = erode) stays
+ * available.
  */
 export function computeLaserOutlineClipper(
   shapes: string[],
-  { dilateMm, erodeMm }: ClipperOutlineOptions
+  { dilateMm, erodeMm, curveTolerance = CURVE_TOLERANCE_MM, arcTolerance }: ClipperOutlineOptions
 ): string | null {
-  const subjectPaths = shapesToClipperPaths(shapes);
+  const tolerance = curveTolerance;
+  const arc = arcTolerance ?? tolerance;
+  const subjectPaths = shapesToClipperPaths(shapes, tolerance);
   if (subjectPaths.length === 0) return null;
 
   try {
     const unionPaths = unionClipperPaths(subjectPaths);
     if (unionPaths.length === 0) return null;
 
-    const dilateOffset = new ClipperLib.ClipperOffset();
-    dilateOffset.AddPaths(unionPaths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-    const dilatedPaths: ClipperLib.Paths = [];
-    dilateOffset.Execute(dilatedPaths, dilateMm * SCALE);
+    const dilatedPaths = offsetPaths(keepOuterOrientation(unionPaths), dilateMm, arc);
     if (dilatedPaths.length === 0) return null;
 
-    const erodeOffset = new ClipperLib.ClipperOffset();
-    erodeOffset.AddPaths(dilatedPaths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-    const erodedPaths: ClipperLib.Paths = [];
-    erodeOffset.Execute(erodedPaths, -erodeMm * SCALE);
+    const erodedPaths = offsetPaths(dilatedPaths, -erodeMm, arc);
     if (erodedPaths.length === 0) return null;
 
     return clipperPathsToSvgD(keepOuterOrientation(erodedPaths));
+  } catch {
+    return null;
+  }
+}
+
+export interface ProductionOutlineOptions {
+  /**
+   * How many path-units correspond to one millimetre. Production geometry is
+   * already in mm, so this stays 1. The live preview passes its px-per-mm
+   * scale so the same millimetre defaults land on the right pixel size.
+   */
+  unitPerMm?: number;
+  /**
+   * Gaps narrower than this are closed. Same units as the path. Omit to use
+   * `GAP_CLOSE_MM * unitPerMm`.
+   */
+  gapClose?: number;
+  /**
+   * Final outward offset after the gap is closed. Same units as the path.
+   * Omit to use `OUTLINE_OFFSET_MM * unitPerMm`.
+   */
+  offset?: number;
+  /** Curve and round-join tolerance. Omit to use `CURVE_TOLERANCE_MM * unitPerMm`. */
+  curveTolerance?: number;
+}
+
+/**
+ * Laser silhouette used by dynamic keychains.
+ *
+ * 1. Union the design shapes and drop interior holes (the middle of "O"
+ *    stays solid acrylic; the laser does not cut it).
+ * 2. Morphological closing — dilate then erode by the same radius — fills
+ *    gaps narrower than `gapClose` without moving a straight edge. That is
+ *    what welds nearby letters into one strong piece.
+ * 3. A separate outward offset of `offset` (default 0.25 mm) is the only
+ *    step that grows the cut line away from the design.
+ *
+ * Closing and offset used to be one dilate(4 mm)/erode(1.5 mm) pass, which
+ * left the cut about 2.5 mm outside the letters and closed gaps up to 8 mm.
+ */
+export function computeProductionOutline(shapes: string[], options: ProductionOutlineOptions = {}): string | null {
+  const unit = options.unitPerMm ?? 1;
+  const gapClose = options.gapClose ?? GAP_CLOSE_MM * unit;
+  const offset = options.offset ?? OUTLINE_OFFSET_MM * unit;
+  const curveTolerance = options.curveTolerance ?? CURVE_TOLERANCE_MM * unit;
+  const subjectPaths = shapesToClipperPaths(shapes, curveTolerance);
+  if (subjectPaths.length === 0) return null;
+
+  try {
+    let paths = keepOuterOrientation(unionClipperPaths(subjectPaths));
+    if (paths.length === 0) return null;
+
+    if (gapClose > 1e-9) {
+      const radius = gapClose / 2;
+      const grown = offsetPaths(paths, radius, curveTolerance);
+      const shrunk = offsetPaths(grown, -radius, curveTolerance);
+      if (shrunk.length > 0) paths = keepOuterOrientation(shrunk);
+    }
+
+    if (offset > 1e-9) {
+      const grown = offsetPaths(paths, offset, curveTolerance);
+      if (grown.length === 0) return null;
+      paths = keepOuterOrientation(grown);
+    }
+
+    return clipperPathsToSvgD(paths);
   } catch {
     return null;
   }
@@ -118,8 +204,8 @@ export function computeLaserOutlineClipper(
  * artifact from an off-center weld seam, or a genuine hole in the designer's
  * own artwork), since stroking it would cut straight through solid material.
  */
-export function unionOutlines(shapes: string[]): string | null {
-  const subjectPaths = shapesToClipperPaths(shapes);
+export function unionOutlines(shapes: string[], curveTolerance = CURVE_TOLERANCE_MM): string | null {
+  const subjectPaths = shapesToClipperPaths(shapes, curveTolerance);
   if (subjectPaths.length === 0) return null;
 
   try {
