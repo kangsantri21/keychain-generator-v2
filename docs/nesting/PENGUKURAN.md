@@ -1,46 +1,48 @@
-# Pengukuran susunan lembar — sebelum dan sesudah
+# Pengukuran susunan lembar
 
 Tanggal: 10 November 2026. Mesin baru ada di atas kontur 2,5 mm. Belum digabung ke `main`.
 
-Patokan gambar: [contoh penataan manual](../reference/contoh-nesting-manual.jpg).
+Patokan: foto lembar manual Rofiq, [contoh penataan manual](../reference/contoh-nesting-manual.jpg). Bukan susunan tangan buatan mesin.
 
-Sampel meniru isi gambar itu: 10 resi nama (3–10 huruf) ditambah 1 resi tokoh (6 keping). Jumlah keping 52. Ukuran nama: tinggi 20 mm, lebar 6 mm + 7 mm per huruf, paling lebar 80 mm. Tiap nama punya takik kecil di tepi, supaya rapatan garis potong terukur, bukan hanya kotak.
+## Keputusan Rofiq (10 November 2026)
 
-Lembar 310 × 470 mm. Jarak aman antar garis potong bawaan **1 mm** (`CUT_CLEARANCE_MM` di `lib/nesting/shape-block-config.ts`). Bingkai 0,8 mm di luar keping. Kode resi di selokan 2,6 mm di kiri bingkai. Tanda registrasi tetap di empat sudut.
+1. Jarak antar potongan tetap **1 mm** untuk sementara (`CUT_CLEARANCE_MM`).
+2. Nama panjang tidak wajib tegak. Arah 0°, 90°, 180°, atau 270° dipilih per keping hanya kalau itu menghemat bahan.
+3. Luas cetak **31 × 47 cm** (310 × 470 mm).
+
+## Sampel nama sungguhan
+
+63 keping dari 7 resi yang terbaca di foto. Nama lewat kontur aplikasi: tinggi jadi 20 mm, tokoh 26 mm, offset 2,5 mm, tutup takik 2 mm. Font pesanan tidak ada di repo. Yang dipakai Noto Sans Display Bold. Gelas karakter digambar sebagai satu pelat bundar (nama tercetak di atasnya, bukan garis potong kedua). Tokoh plus nama (Mezza, Rasya, dan sejenisnya) adalah lingkaran 26 mm yang disambung ke teks.
+
+Ejaan yang paling dekat dari font gelembung: Rasqa, Hagan, Cleona. Beberapa label gelas di foto terbalik; tetap dihitung satu keping.
 
 ## Angka
 
-Tinggi adalah batas bawah isi (bingkai dan kode ikut terhitung pada mesin baru dan pada susunan tangan). Persen panjang = tinggi ÷ 470. Persen isi = luas kotak keping ÷ (310 × tinggi). Persen isi yang lebih besar berarti lebih rapat. Tinggi yang lebih kecil berarti akrilik yang terpakai lebih pendek.
+Manual mengisi satu lembar sampai sekitar 6 mm dari keempat tepi. Praktis satu lembar penuh, tinggi 470 mm.
 
-| Susunan | Lembar | Tinggi | Panjang lembar | Isi |
+Aplikasi menaruh keping yang sama di satu lembar dan berhenti pada 382 mm. Sisa di bawah bisa dipotong.
+
+| Susunan | Lembar | Tinggi isi | Panjang lembar | Isi di dalam tinggi itu |
 | --- | --- | --- | --- | --- |
-| Sebelum (kotak, mesin lama) | 1 | 205,0 mm | 43,6% | 69,4% |
-| Sesudah (garis potong + bingkai) | 1 | 195,8 mm | 41,7% | 72,7% |
-| Tangan (kolom nama, seperti contoh) | 1 | 223,6 mm | 47,6% | 63,7% |
+| Foto manual | 1 | 470 mm | 100% | lembar penuh |
+| Aplikasi (garis potong) | 1 | 382,0 mm | 81,3% | 68,5% |
 
-Mesin baru memakai **195,8 mm**, yaitu **12,4% lebih pendek** dari susunan tangan (223,6 mm). Batasnya paling boros 10% di atas tangan. Tidak ada resi yang tercampur atau terpecah.
+Aplikasi **18,7% lebih pendek** dari lembar manual. Tidak lebih boros dari batas 10%.
 
-Dibanding kotak lama, tinggi turun dari 205,0 mm ke 195,8 mm (sekitar 4,5%), padahal bingkai dan kode resi sekarang ikut memakan tempat.
+Kalau sisa lembar tidak dipotong dan akrilik selalu dibeli 470 mm, keduanya tetap satu lembar. Hematnya baru terasa saat sisa 88 mm di bawah dipotong.
 
-Gambar:
+Gambar berdampingan (kiri foto manual, kanan aplikasi): [images/manual-vs-aplikasi.png](images/manual-vs-aplikasi.png)
 
-- Sebelum: [images/sebelum-kotak.png](images/sebelum-kotak.png)
-- Sesudah: [images/sesudah-bentuk.png](images/sesudah-bentuk.png)
-- Tangan: [images/susunan-tangan.png](images/susunan-tangan.png)
+Hasil aplikasi saja: [images/manual-real-aplikasi.png](images/manual-real-aplikasi.png)
 
-![Sesudah](images/sesudah-bentuk.png)
+![Manual dan aplikasi](images/manual-vs-aplikasi.png)
 
-## Cara mengubah jarak aman
+## Yang membuat perbandingan ini belum setara penuh
 
-Di `lib/nesting/shape-block-config.ts`:
+Gambar tokoh di foto lebih besar dan lebih rumit daripada pelat bundar di hitungan ini. Kalau file SVG tokoh asli dipakai, blok ungu dan biru bisa lebih gemuk, dan selisih 88 mm bisa menyusut. Font gelembung pesanan juga lebih lebar dari Noto Sans Display Bold pada beberapa nama.
 
-- `CUT_CLEARANCE_MM` — jarak minimum antar garis potong. Bawaan 1. Naikkan jika hasil potong nyaris bersinggungan.
-- `FRAME_PAD_MM` — udara antara keping dan bingkai. Bawaan 0,8.
-- `BLOCK_GAP_MM` — jarak antar blok resi. Bawaan 1.
-- `LABEL_GUTTER_MM` — tebal selokan kode resi. Bawaan 2,6.
+## Cara mengulang
 
-Gambar ulang sampel: `npx tsx scripts/render-nesting-compare.ts`.
+`npx tsx scripts/measure-manual-real.ts`
 
-## Yang belum dicek di akrilik
-
-Angka di atas dari hitungan, bukan dari lembar yang sudah dipotong. Ukuran lembar tetap 310 × 470 mm. Resi yang lebih besar dari satu lembar tetap ditolak, tidak dipecah.
+Jarak aman tetap di `lib/nesting/shape-block-config.ts`.

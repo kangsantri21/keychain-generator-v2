@@ -91,9 +91,17 @@ Rofiq sudah memutuskan aturan susun lembar. Empat butir ini mengalahkan kebiasaa
 1. Prioritas utama adalah hemat bahan.
 2. Item dari resi yang sama harus berdekatan dan menjadi satu kelompok di lembar. Keping resi lain tidak boleh masuk ke tengah kelompok itu.
 3. Di dalam dua aturan di atas, kerapatan harus maksimal.
-4. Item boleh diputar.
+4. Item boleh diputar. Arahnya (0°, 90°, 180°, 270°) dipilih per keping supaya bahan paling hemat. Nama panjang tidak wajib tegak.
 
 Hemat bahan tidak boleh dicapai dengan mencampur resi. Kelompok tetap utuh, lalu ruang di dalam dan di antara kelompok diisi sepadat mungkin.
+
+Rofiq mengunci tiga hal pada 10 November 2026, sesudah melihat susunan blok:
+
+1. Jarak antar garis potong tetap **1 mm** untuk sementara.
+2. Tidak ada aturan tetap “nama panjang harus tegak”.
+3. Luas cetak **31 × 47 cm** (310 × 470 mm).
+
+Pada nama yang terbaca di foto manual (63 keping, 7 resi, kontur 2,5 mm), mesin memakai satu lembar setinggi 382 mm. Foto manual mengisi satu lembar penuh (470 mm). Rinciannya di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 
 Patokan gambarnya ada di repo: [docs/reference/contoh-nesting-manual.jpg](reference/contoh-nesting-manual.jpg). Itu penataan manual tim Rofiq. Hasil mesin nanti dibandingkan dengan gambar ini, bukan dengan pratinjau lama.
 
@@ -101,7 +109,7 @@ Yang terlihat pada contoh, dan karena itu menjadi bagian dari keputusan:
 
 - Satu resi = satu blok berbingkai tipis. Di dalam bingkai hanya keping resi itu.
 - Kode resi tercetak sekali, kecil, di samping bingkai (sering tegak mengikuti tepi blok). Contoh yang terbaca di gambar: `260423FVP8THM6`. Bukan satu kode di bawah setiap keping.
-- Nama panjang disusun bertumpuk jadi kolom. Karakter yang se-resi disusun rapat di blok yang sama, termasuk bentuk yang beda (nama, tokoh, lencana).
+- Di foto, sebagian nama panjang bertumpuk dan sebagian berbaris. Itu bukan aturan tetap. Arah dipilih supaya bahan paling hemat. Karakter yang se-resi tetap di blok yang sama.
 - Keping diputar 90 derajat atau 180 derajat kalau itu membuat blok lebih rapat atau kolomnya sejajar.
 - Blok-blok resi disusun memenuhi lembar. Sisa bahan di tepi tipis.
 - Empat tanda registrasi (bulatan) ada di empat sudut lembar.
@@ -121,7 +129,7 @@ Yang terlihat pada contoh, dan karena itu menjadi bagian dari keputusan:
 
 Mode produksi sekarang memakai garis potong, bukan hanya kotak. Satu resi = satu blok berbingkai. Kode resi tercetak satu kali, kecil, di kiri bingkai. Keping bisa 0°, 90°, 180°, dan 270°. Bloknya sendiri bisa diputar 90° kalau itu memendekkan lembar. Jarak aman antar garis potong bawaan 1 mm, bisa diubah. Angka dan gambar ada di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 
-Pada sampel 11 resi (52 keping), mesin memakai 195,8 mm. Susunan tangan yang meniru kolom di contoh manual memakai 223,6 mm. Kotak lama memakai 205,0 mm. Mesin baru lebih pendek dari keduanya, dan tidak mencampur resi.
+Pada 63 keping yang namanya terbaca di foto manual, mesin memakai satu lembar setinggi 382 mm. Foto itu mengisi satu lembar penuh (470 mm). Ukuran lembar 310 × 470 mm sudah dikunci. Jarak 1 mm belum dicek di akrilik.
 
 Contoh manual tidak membutuhkan sudut selain kelipatan 90°. 180° dipakai kalau takik keping bisa saling masuk. 270° sama dengan 90° lalu dibalik, dan hanya dipilih kalau bloknya jadi lebih pendek.
 
@@ -129,7 +137,7 @@ Contoh manual tidak membutuhkan sudut selain kelipatan 90°. 180° dipakai kalau
 
 1. Di `main` keputusan kelompok belum terpenuhi sama sekali. Perbaikan kotak ada di branch nesting lama. Bingkai, label di samping, putaran 180°, dan rapatan garis potong ada di sesi susunan blok, belum di `main`.
 2. Resi yang lebih besar dari satu lembar tetap ditolak, tidak dipecah. Contoh manual yang terlihat muat dalam satu lembar. Belum ada keputusan untuk resi yang tidak muat.
-3. Jarak 1 mm dan ukuran lembar 310 × 470 mm belum dicek pada akrilik sungguhan.
+3. Jarak 1 mm belum dicek pada akrilik sungguhan. Ukuran lembar 310 × 470 mm sudah dikunci.
 
 ## Pertanyaan yang masih terbuka
 
@@ -137,8 +145,8 @@ Yang belum diputuskan ada di bagian nesting. Jawaban kontur sudah ditulis di baw
 
 ### Nesting
 
-1. Ukuran lembar di kode 310 mm × 470 mm. Apakah itu ukuran akrilik yang dipakai, atau contoh manual memakai ukuran lain? Sesi susunan blok tetap memakai angka ini.
-2. Jarak aman antar garis potong. Sesi susunan blok memakai **1 mm**, bisa diubah di `lib/nesting/shape-block-config.ts`. Belum dicek pada potongan sungguhan. Mesin kotak lama tetap 2 mm antar kotak.
+1. Ukuran lembar **310 × 470 mm** sudah dikonfirmasi Rofiq (31 × 47 cm).
+2. Jarak aman antar garis potong **1 mm** untuk sementara. Belum dicek pada potongan sungguhan. Mesin kotak lama tetap 2 mm antar kotak.
 3. Resi yang tidak muat dalam satu lembar: sesi ini tetap menolak, tidak memecah. Belum ada keputusan baru.
 4. Berapa lama operator masih mau menunggu untuk satu gelombang (misalnya 30 nama, atau batch sebesar PAT 228)?
 5. Label: satu kode per blok, di samping bingkai. Bukan satu kode di bawah setiap keping. Ini yang tergambar di contoh manual, dan yang sekarang dicetak.
