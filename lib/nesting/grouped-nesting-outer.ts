@@ -149,7 +149,7 @@ export function packSelection<T>(
     config.sheetHeight - 2 * spacing.marginY,
     { x: spacing.gapX, y: spacing.gapY },
     strategy,
-    options
+    { ...options, exactFitSafe: config.outerExactFitSafe ?? false }
   );
 }
 

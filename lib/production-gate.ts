@@ -305,3 +305,40 @@ export function matchSubmittedToStaged<S extends StagedPlacement>(
     });
   return { mismatched, layout };
 }
+
+/** A receipt that already has active (not completed) units on a Staging sheet. */
+export interface StagedReceiptConflict {
+  orderId: number;
+  sheetIds: number[];
+}
+
+/**
+ * One receipt = one group = one sheet. A Production run may only take
+ * receipts that have NO active staged units yet: staging any unit of a
+ * receipt that is already on a sheet would put that receipt on two sheets
+ * (or stage its units twice). Returns the conflicting receipts (empty = ok).
+ */
+export function stagedReceiptConflicts(
+  selectedOrderIds: number[],
+  activeStagedRows: { orderId: number; sheetId: number; status: string }[]
+): StagedReceiptConflict[] {
+  const selected = new Set(selectedOrderIds);
+  const sheetsByOrder = new Map<number, Set<number>>();
+  for (const row of activeStagedRows) {
+    if (row.status === "completed" || !selected.has(row.orderId)) continue;
+    sheetsByOrder.set(row.orderId, (sheetsByOrder.get(row.orderId) ?? new Set()).add(row.sheetId));
+  }
+  return [...sheetsByOrder.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([orderId, sheets]) => ({ orderId, sheetIds: [...sheets].sort((a, b) => a - b) }));
+}
+
+/** Receipts whose units sit on more than one sheet (the hard invariant: exactly one sheet per receipt). */
+export function receiptsOnSeveralSheets(units: { orderId: number | null; sheetIndex: number }[]): number[] {
+  const sheetsByOrder = new Map<number, Set<number>>();
+  for (const u of units) {
+    if (u.orderId === null) continue;
+    sheetsByOrder.set(u.orderId, (sheetsByOrder.get(u.orderId) ?? new Set()).add(u.sheetIndex));
+  }
+  return [...sheetsByOrder.entries()].filter(([, s]) => s.size > 1).map(([orderId]) => orderId).sort((a, b) => a - b);
+}

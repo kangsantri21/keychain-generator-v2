@@ -41,6 +41,13 @@ export interface OuterPackConfig {
   /** Per-axis overrides (grouped-nesting-config.ts outerSpacing); omitted = same as y. */
   orderGapXMm?: number;
   sheetMarginXMm?: number;
+  /**
+   * Exact-fit-safe free-rect carving in the OUTER pack (outer-maxrects.ts
+   * cutFreeRect): a group that exactly fills a free rect never leaves a
+   * phantom slot behind (the legacy packMaxRects bug that stacks identical
+   * groups on top of each other). Production only; omitted = legacy/V2.
+   */
+  outerExactFitSafe?: boolean;
 }
 
 export interface GlobalSearchLimits {
@@ -116,9 +123,11 @@ export function evaluateOuterLayout<T>(candidates: OrderLayoutCandidate<T>[], co
   const rects: NestableRect<null>[] = candidates.map((c) => ({ width: c.width, height: c.height, data: null }));
   // packMaxRects has a single border; per-axis gaps use the V2 packer's identical legacy strategy.
   const packed =
-    spacing.gapX === spacing.gapY
+    spacing.gapX === spacing.gapY && !config.outerExactFitSafe
       ? packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false)
-      : packOuterRects(rects, usableWidth, usableHeight, { x: spacing.gapX, y: spacing.gapY }, LEGACY_OUTER_STRATEGY);
+      : packOuterRects(rects, usableWidth, usableHeight, { x: spacing.gapX, y: spacing.gapY }, LEGACY_OUTER_STRATEGY, {
+          exactFitSafe: config.outerExactFitSafe ?? false,
+        });
   return { score: scoreOuterPlacements(packed, candidates.length, usableWidth) };
 }
 

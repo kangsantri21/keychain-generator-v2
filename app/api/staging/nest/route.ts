@@ -10,6 +10,7 @@ import { runGroupedNesting, resolveConfig, type GroupedNestingItem } from "@/lib
 import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
 import { runProductionNesting } from "@/lib/nesting/production-nesting";
 import { STAGED_PRODUCTION } from "@/lib/staging-mode";
+import { stagedReceiptConflicts } from "@/lib/production-gate";
 import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
 import { isSlotReflowRequest, runGroupedNestingV3 } from "@/lib/nesting/grouped-nesting-v3";
 import { compoundStage, isCompoundRequest } from "@/lib/nesting/grouped-nesting-v3-compound";
@@ -135,6 +136,24 @@ export async function POST(request: NextRequest) {
   // be placed, and the production gate must pass, before anything is
   // written; otherwise nothing is staged and the reasons are returned.
   if (resolveNestingMode(body) === "production-v3") {
+    // 1 receipt = 1 group = 1 sheet: refuse receipts that already have active
+    // units in Staging (re-sending them would stage units twice and put the
+    // receipt on two sheets). Nothing is written.
+    const activeRows = await db
+      .select({ orderId: stagingItems.orderId, sheetId: stagingItems.sheetId, status: stagingItems.status })
+      .from(stagingItems)
+      .where(inArray(stagingItems.orderId, orderIds));
+    const conflicts = stagedReceiptConflicts(orderIds, activeRows);
+    if (conflicts.length > 0) {
+      const codeOf = new Map(parentOrders.map((order) => [order.id, `${order.receiptCode}${order.manualCode ? ` (${order.manualCode})` : ""}`]));
+      return NextResponse.json(
+        {
+          error: `${conflicts.length} resi sudah ada di Lembar Kerja — tidak ada yang disimpan. Bongkar lembar kerjanya dulu, lalu kirim ulang seluruh resi.`,
+          details: conflicts.map((c) => `${codeOf.get(c.orderId) ?? `#${c.orderId}`} sudah di Lembar Kerja #${c.sheetIds.join(", #")}`).slice(0, 20),
+        },
+        { status: 409 }
+      );
+    }
     if (unrenderedNames.length > 0) {
       return NextResponse.json(
         { error: `${unrenderedNames.length} item tidak bisa diproses — tidak ada yang disimpan`, details: unrenderedNames.slice(0, 20) },
@@ -183,10 +202,25 @@ export async function POST(request: NextRequest) {
       holeOverrideY: placement.data.holeOverride?.y ?? null,
     }));
     const productionOrderIds = [...successfulOrderIds];
-    db.transaction((tx) => {
+    // Re-checked inside the write transaction (a second request may have staged the same receipts meanwhile).
+    const raced = db.transaction((tx) => {
+      const nowActive = tx
+        .select({ orderId: stagingItems.orderId, sheetId: stagingItems.sheetId, status: stagingItems.status })
+        .from(stagingItems)
+        .where(inArray(stagingItems.orderId, orderIds))
+        .all();
+      const late = stagedReceiptConflicts(orderIds, nowActive);
+      if (late.length > 0) return late;
       tx.insert(stagingItems).values(productionRows).run();
       if (productionOrderIds.length > 0) tx.update(orders).set({ status: "processing" }).where(inArray(orders.id, productionOrderIds)).run();
+      return [];
     });
+    if (raced.length > 0) {
+      return NextResponse.json(
+        { error: `${raced.length} resi baru saja masuk Lembar Kerja dari permintaan lain — tidak ada yang disimpan`, details: raced.map((c) => `#${c.orderId} di Lembar Kerja #${c.sheetIds.join(", #")}`) },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       engine: "production-v3",

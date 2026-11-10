@@ -31,7 +31,7 @@ import { placeGroup, resultFromGroups, runGroupedNestingV3, validateLayout } fro
 import { compactRigidRects, compactionBoundsOf, type CompactionMove } from "./group-compaction";
 import { compoundStage } from "./grouped-nesting-v3-compound";
 import { regionStage } from "./grouped-nesting-v3-region";
-import { validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
+import { receiptsOnSeveralSheets, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
 
 export const PRODUCTION_NESTING_RULES = {
   sheetWidthMm: SHEET_WIDTH_MM,
@@ -42,8 +42,12 @@ export const PRODUCTION_NESTING_RULES = {
   groupGapYMm: PRODUCTION_GROUP_GAP_Y_MM,
 } as const;
 
-/** Production spacing as engine overrides (grouped-nesting-config.ts PRODUCTION_SPACING). */
-export const PRODUCTION_SPACING_OVERRIDES = PRODUCTION_SPACING;
+/**
+ * Production engine overrides: the Production spacing (grouped-nesting-config.ts
+ * PRODUCTION_SPACING) + exact-fit-safe outer packing, so identical receipts
+ * can never be stacked onto the same spot by the legacy phantom-slot carve.
+ */
+export const PRODUCTION_SPACING_OVERRIDES = { ...PRODUCTION_SPACING, outerExactFitSafe: true } as const;
 
 export interface ProductionPlacement<T> {
   data: T;
@@ -102,6 +106,18 @@ export function runProductionNesting<T>(items: GroupedNestingItem<T>[]): Product
     blockedUpBy: blocker(move.blockedUpBy),
   }));
   const errors: string[] = [];
+
+  // Hard invariant after every major stage: every receipt on exactly ONE sheet.
+  const stageUnits = {
+    "V2 packing": run.v2.groups.flatMap((g) => g.items.map((i) => ({ orderId: i.orderId, sheetIndex: i.sheetIndex })).concat({ orderId: g.orderId, sheetIndex: g.sheetIndex })),
+    "V3 (reflow / compound / region)": packed.groups.flatMap((g) => g.items.map((i) => ({ orderId: i.orderId, sheetIndex: i.sheetIndex })).concat({ orderId: g.orderId, sheetIndex: g.sheetIndex })),
+    "group compaction": result.groups.flatMap((g) => g.items.map((i) => ({ orderId: i.orderId, sheetIndex: i.sheetIndex })).concat({ orderId: g.orderId, sheetIndex: g.sheetIndex })),
+    "final placements": result.items.map((i) => ({ orderId: i.orderId, sheetIndex: i.sheetIndex })),
+  };
+  for (const [stage, units] of Object.entries(stageUnits)) {
+    const split = receiptsOnSeveralSheets(units);
+    if (split.length > 0) errors.push(`Invarian resi dilanggar setelah ${stage}: resi ${split.join(", ")} berada di lebih dari satu lembar`);
+  }
 
   if (result.unfit.length > 0) {
     errors.push(`${result.unfit.length} item tidak muat di media ${SHEET_WIDTH_MM}x${SHEET_HEIGHT_MM} mm (resi terlalu besar untuk satu lembar).`);

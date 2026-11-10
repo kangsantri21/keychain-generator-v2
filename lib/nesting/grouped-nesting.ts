@@ -72,6 +72,8 @@ export interface GroupedNestingConfig {
   orderGapXMm?: number;
   /** Horizontal frame inset; omitted = sheetMarginMm. */
   sheetMarginXMm?: number;
+  /** Exact-fit-safe outer packing (see OuterPackConfig.outerExactFitSafe). Production only; omitted = legacy/V2. */
+  outerExactFitSafe?: boolean;
 }
 
 export type GroupedNestingConfigOverrides = Partial<GroupedNestingConfig>;
@@ -85,6 +87,7 @@ export function resolveConfig(overrides: GroupedNestingConfigOverrides): Grouped
     sheetMarginMm: overrides.sheetMarginMm ?? SHEET_MARGIN_MM,
     ...(overrides.orderGapXMm !== undefined ? { orderGapXMm: overrides.orderGapXMm } : {}),
     ...(overrides.sheetMarginXMm !== undefined ? { sheetMarginXMm: overrides.sheetMarginXMm } : {}),
+    ...(overrides.outerExactFitSafe !== undefined ? { outerExactFitSafe: overrides.outerExactFitSafe } : {}),
   };
 }
 
@@ -227,9 +230,12 @@ export function packGroupsOntoSheet<T>(
   // packMaxRects has a single border, so per-axis gaps always use the V2
   // packer (which reproduces packMaxRects exactly when the gaps are equal).
   const packed =
-    strategy.id === LEGACY_OUTER_STRATEGY.id && spacing.gapX === spacing.gapY
+    strategy.id === LEGACY_OUTER_STRATEGY.id && spacing.gapX === spacing.gapY && !config.outerExactFitSafe
       ? packMaxRects(rects, usableWidth, usableHeight, config.orderGapMm, config.orderGapMm, false)
-      : packOuterRects(rects, usableWidth, usableHeight, { x: spacing.gapX, y: spacing.gapY }, strategy, { maxExistingSheetTrials }).map((p) => ({
+      : packOuterRects(rects, usableWidth, usableHeight, { x: spacing.gapX, y: spacing.gapY }, strategy, {
+          maxExistingSheetTrials,
+          exactFitSafe: config.outerExactFitSafe ?? false,
+        }).map((p) => ({
           ...p,
           rotated: false,
         }));

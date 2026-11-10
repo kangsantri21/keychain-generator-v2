@@ -324,6 +324,16 @@ export default function OrderQueuePage() {
       toast.error("Pilih minimal satu pesanan terlebih dahulu");
       return;
     }
+    // Production: 1 receipt = 1 sheet — receipts already staged/processed are refused (the server enforces it too).
+    if (nestingMode === "production") {
+      const notPending = [...new Set(selectedRows.filter((row) => row.status !== "pending").map((row) => row.receiptCode))];
+      if (notPending.length > 0) {
+        toast.error(
+          `${notPending.length} resi bukan Pending (sudah di Lembar Kerja/diproses): ${notPending.slice(0, 5).join(", ")}${notPending.length > 5 ? ", …" : ""}. Hapus dari pilihan, atau bongkar lembarnya dulu.`
+        );
+        return;
+      }
+    }
 
     setSending(true);
     try {
