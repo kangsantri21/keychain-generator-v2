@@ -5,12 +5,11 @@ import toast from "react-hot-toast";
 import * as opentype from "opentype.js";
 import { X } from "lucide-react";
 import { renderColoredGlyphsAtHeight, type ColoredTextRender } from "@/lib/font-preview";
-import { DILATE_PX, ERODE_PX } from "@/lib/laser-outline";
-import { computeLaserOutlineClipper } from "@/lib/clipper-outline";
+import { computeProductionOutline } from "@/lib/clipper-outline";
 import {
   PX_PER_MM,
   RING_HOLE_DIAMETER_PX,
-  CLOSING_GROWTH_MM,
+  OUTLINE_GROWTH_MM,
   toGlyphShapes,
   computeRingHoleAnchor,
   weldRingHoleWasher,
@@ -21,7 +20,7 @@ import { OffsetSlider } from "@/components/master-template/OffsetSlider";
 
 const CANVAS_MARGIN = 24;
 const OUTLINE_DEBOUNCE_MS = 300;
-const TEXT_RAW_HEIGHT_PX = Math.max((DEFAULT_TEXT_TARGET_HEIGHT_MM - CLOSING_GROWTH_MM) * PX_PER_MM, 1);
+const TEXT_RAW_HEIGHT_PX = Math.max((DEFAULT_TEXT_TARGET_HEIGHT_MM - OUTLINE_GROWTH_MM) * PX_PER_MM, 1);
 
 /**
  * Per-name manual ring-hole nudge — "Edit Lubang" on an Order Queue row. Only
@@ -93,7 +92,7 @@ export function HoleOverrideModal({
     [textPreview, textTranslateX, textTranslateY]
   );
   const textContour = useMemo(
-    () => (glyphShapes.length > 0 ? computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX }) : null),
+    () => (glyphShapes.length > 0 ? computeProductionOutline(glyphShapes, { unitPerMm: PX_PER_MM }) : null),
     [glyphShapes]
   );
   const anchor = useMemo(

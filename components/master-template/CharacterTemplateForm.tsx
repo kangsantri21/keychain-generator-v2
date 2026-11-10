@@ -6,15 +6,13 @@ import * as opentype from "opentype.js";
 import { Plus, Trash2 } from "lucide-react";
 import { renderColoredGlyphsAtHeight, type ColoredTextRender } from "@/lib/font-preview";
 import {
-  DILATE_PX,
-  ERODE_PX,
   translatePathData,
   scaleAndTranslatePathData,
   getPathBounds,
   findHoleCenterInside,
   type PathBounds,
 } from "@/lib/laser-outline";
-import { computeLaserOutlineClipper, unionOutlines } from "@/lib/clipper-outline";
+import { computeProductionOutline, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useTemplateStore } from "@/lib/store/useTemplateStore";
@@ -22,9 +20,9 @@ import type { Template, CustomZone } from "@/lib/db/schema";
 import {
   CHAR_BOX_MM,
   WELD_CLEARANCE_MM,
-  SEAM_CLOSE_MM,
-  DILATE_MM,
-  ERODE_MM,
+  OUTLINE_GROWTH_MM,
+  SEAM_ROUND_MM,
+  CURVE_TOLERANCE_MM,
   DEFAULT_CHAR_TARGET_HEIGHT_MM,
   DEFAULT_TEXT_TARGET_HEIGHT_MM,
   MAX_ITEM_WIDTH_MM,
@@ -48,16 +46,10 @@ const SLIDER_DEBOUNCE_MS = 400;
 // as a fixed reference scale (production itself no longer ties the
 // character's size to CHAR_BOX_MM — see charTargetHeight below).
 const PX_PER_MM = 96 / CHAR_BOX_MM;
-// Net outward growth a dilate+erode closing pass adds to a dimension (both
-// edges combined) — mirrors production's CLOSING_GROWTH_MM
-// (lib/keychain-render.ts) so the preview's raw glyph/box size, rendered
-// this much smaller than its target, nets out to the real finished target
-// height after the preview's own dilate/erode pass below.
-const CLOSING_GROWTH_MM = 2 * (DILATE_MM - ERODE_MM);
-// Extra closing pass (mirrors the production SEAM_CLOSE_MM) applied to the
-// final character+text union so the preview's seam matches the real welded
-// bridge shape instead of showing a fragile-looking notch that isn't there.
-const SEAM_CLOSE_PX = SEAM_CLOSE_MM * PX_PER_MM;
+const CURVE_TOLERANCE_PX = CURVE_TOLERANCE_MM * PX_PER_MM;
+// Raw glyph/box shrink so the finished cut lands on the target height.
+// Mirrors production's OUTLINE_GROWTH_MM: only the final 2.5 mm offset
+// grows the silhouette; closing letter gaps does not.
 
 function isSvgFile(file: File): boolean {
   return file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
@@ -343,15 +335,15 @@ export function CharacterTemplateForm({
     setCustomZones((zones) => zones.map((zone) => (zone.id === id ? { ...zone, ...patch } : zone)));
   }
 
-  // Raw (pre-dilation) glyph height target in px, mirroring production's
-  // CLOSING_GROWTH_MM compensation (lib/keychain-render.ts) so the preview's
-  // finished cut line matches textTargetHeight exactly, regardless of font.
-  const textRawHeightPx = Math.max((textTargetHeight - CLOSING_GROWTH_MM) * PX_PER_MM, 1);
-  // Side length of the plain (no designer cut-line) character placeholder
-  // box — this box IS dilated in production, so it needs the same
-  // compensation as the text; a designer's own cut-line does not (see
+  // Raw glyph height in px, mirroring production's OUTLINE_GROWTH_MM
+  // compensation (lib/keychain-render.ts) so the preview's finished cut
+  // line matches textTargetHeight exactly, regardless of font.
+  const textRawHeightPx = Math.max((textTargetHeight - OUTLINE_GROWTH_MM) * PX_PER_MM, 1);
+  // Side length of the plain (no vector artwork) character placeholder
+  // box — this box goes through the same offset as the text, so it needs
+  // the same compensation; a designer's own silhouette does not (see
   // characterFit below).
-  const charBoxRawPx = Math.max((charTargetHeight - CLOSING_GROWTH_MM) * PX_PER_MM, 1);
+  const charBoxRawPx = Math.max((charTargetHeight - OUTLINE_GROWTH_MM) * PX_PER_MM, 1);
   // A designer's own cut-line is unioned verbatim (never itself dilated),
   // so it scales directly to the *finished* target height with no
   // compensation — see characterFit below.
@@ -503,8 +495,8 @@ export function CharacterTemplateForm({
   // plain Clipper union (zero offset — no dilate/erode padding) over EVERY
   // shape in the master SVG exactly — a fixed-mode master already has its
   // own finished white border and outer line drawn into the artwork, so
-  // (unlike the dynamic-mode preview above, which deliberately grows its
-  // outline via DILATE_PX/ERODE_PX) this stays tight against the file's own
+  // (unlike the dynamic-mode preview above, which offsets the cut by
+  // OUTLINE_OFFSET_MM after closing letter gaps) this stays tight against the file's own
   // outer edge with zero added padding. What the admin sees here is the
   // same silhouette that will actually get cut, never a "trust the file's
   // own tagged cut-line" guess a multi-layer designer export routinely got
@@ -515,7 +507,7 @@ export function CharacterTemplateForm({
     const tx = CANVAS_MARGIN - fixedOriginX * PX_PER_MM;
     const ty = CANVAS_MARGIN - fixedOriginY * PX_PER_MM;
     const scaledShapes = characterVector.allShapePaths.map((d) => scaleAndTranslatePathData(d, scale, tx, ty));
-    return unionOutlines(scaledShapes);
+    return unionOutlines(scaledShapes, CURVE_TOLERANCE_PX);
   }, [layoutMode, characterVector, fixedBaseScale, fixedOriginX, fixedOriginY]);
   // --- end "fixed" layoutMode preview ---
 
@@ -619,16 +611,19 @@ export function CharacterTemplateForm({
         // Union the auto-computed character outline with the text outline
         // as-is — no re-dilating a contour that's already the final
         // intended shape.
-        const textOutline = computeLaserOutlineClipper(glyphShapes, { dilateMm: DILATE_PX, erodeMm: ERODE_PX });
+        const textOutline = computeProductionOutline(glyphShapes, { unitPerMm: PX_PER_MM });
         const welded = unionOutlines(
-          textOutline ? [textOutline, ...characterFit.positionedOutline] : characterFit.positionedOutline
+          textOutline ? [textOutline, ...characterFit.positionedOutline] : characterFit.positionedOutline,
+          CURVE_TOLERANCE_PX
         );
-        // A plain union of two shapes that only just touch leaves a sharp,
-        // narrow concave notch at the seam — a fragile neck once laser-cut.
-        // An extra closing pass fills it into a smooth, rounded bridge
-        // without changing the overall outer size.
+        // Fillet only the character/text cusp. Same SEAM_ROUND_MM as production,
+        // not a second contour offset.
         const combined = welded
-          ? (computeLaserOutlineClipper([welded], { dilateMm: SEAM_CLOSE_PX, erodeMm: SEAM_CLOSE_PX }) ?? welded)
+          ? (computeProductionOutline([welded], {
+              unitPerMm: PX_PER_MM,
+              offset: 0,
+              gapClose: SEAM_ROUND_MM * 2 * PX_PER_MM,
+            }) ?? welded)
           : null;
         setOutlinePath(combined);
 
@@ -655,9 +650,7 @@ export function CharacterTemplateForm({
         setHoleCenter(nextHoleCenter);
       } else {
         const charBoxD = `M ${CANVAS_MARGIN} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + charBoxRawPx} ${CANVAS_MARGIN} L ${CANVAS_MARGIN + charBoxRawPx} ${CANVAS_MARGIN + charBoxRawPx} L ${CANVAS_MARGIN} ${CANVAS_MARGIN + charBoxRawPx} Z`;
-        setOutlinePath(
-          computeLaserOutlineClipper([charBoxD, ...glyphShapes], { dilateMm: DILATE_PX, erodeMm: ERODE_PX })
-        );
+        setOutlinePath(computeProductionOutline([charBoxD, ...glyphShapes], { unitPerMm: PX_PER_MM }));
         setHoleCenter(nominalHoleCenter);
       }
     }, OUTLINE_DEBOUNCE_MS);
@@ -1112,6 +1105,13 @@ export function CharacterTemplateForm({
               Kontur SVG dihitung otomatis
             </span>
           )}
+          {layoutMode === "dynamic" &&
+            characterPreviewUrl &&
+            !(characterVector && characterVector.allShapePaths.length > 0) && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                Bukan vektor: garis potong jadi kotak, tidak mengikuti tepi foto
+              </span>
+            )}
           {layoutMode === "fixed" && fixedBaseScale < 1 && masterSvgBounds && (
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
               Auto-scale: {masterSvgBounds.width.toFixed(0)}mm → {MAX_ITEM_WIDTH_MM}mm
