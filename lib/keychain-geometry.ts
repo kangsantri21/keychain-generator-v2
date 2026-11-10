@@ -80,22 +80,29 @@ export const MAX_LAYOUT_OFFSET_MM = 15;
 
 /**
  * How far the laser cut sits outside the design edge, in mm.
- * Decided by Rofiq on 10 Nov 2026: 0.25 mm. This is applied AFTER the gap
- * closing below, so the clearance and the bridge between letters are not
- * the same number. Change this constant to retune production; the preview
- * and the renderer both read it.
+ * Rofiq, 10 Nov 2026: this is CorelDRAW Contour, outward, 1 step, offset
+ * 0.25 cm. That is 2.5 mm, not 0.25 mm. One round-join offset. Gaps narrower
+ * than twice this distance (5 mm) close by themselves, the way Corel does,
+ * and a wide inner bay still follows the letter instead of being boxed in.
+ * Convex corners become circular arcs of this radius.
  */
-export const OUTLINE_OFFSET_MM = 0.25;
+export const OUTLINE_OFFSET_MM = 2.5;
 
 /**
- * Gaps narrower than this (mm) are closed before the final offset, so
- * nearby letters stay one strong acrylic piece. The closing radius is half
- * of this width. 6 mm covers the widest letter-to-letter gap measured on
- * the sample names at the default 20 mm text height (about 4.8 mm) and
- * still leaves a normal word space (about 10 mm) open. A straight edge does
- * not move during this step — only the final OUTLINE_OFFSET_MM does.
+ * Extra morphological closing, applied before the offset, in mm of gap
+ * width (the closing radius is half). Default 0: the 2.5 mm offset already
+ * closes the small gaps between letters, and a separate closing was flattening
+ * the bays the Corel sample still follows (between F and a, between z and a).
+ * Raise this only when a gap wider than 2 × OUTLINE_OFFSET_MM must still join.
  */
-export const GAP_CLOSE_MM = 6;
+export const GAP_CLOSE_MM = 0;
+
+/**
+ * Round-off used only where a ring-hole washer or a character silhouette
+ * meets the already-offset text. Radius in mm. It fillets that one cusp.
+ * It is not a second contour and it does not move a straight outer edge.
+ */
+export const SEAM_ROUND_MM = 0.6;
 
 /**
  * Finished-size growth along one dimension (both sides) caused by
@@ -140,9 +147,8 @@ export const MAX_ITEM_WIDTH_MM = 80;
 /**
  * Visual gap (mm) kept between a character's *actual* cut-line silhouette and
  * the raw text glyphs next to it — guarantees the letters never visually
- * overlap the character artwork. Must stay below GAP_CLOSE_MM so the closing
- * pass still bridges that gap into one contour. The final cut then sits
- * OUTLINE_OFFSET_MM outside the design; it is not what welds the seam.
+ * overlap the character artwork. Must stay below OUTLINE_OFFSET_MM so the
+ * text's round contour still reaches the character and the union is one piece.
  */
 export const WELD_CLEARANCE_MM = 1.0;
 

@@ -172,7 +172,7 @@ export function FontTemplateForm({
 
   // Mirrors lib/keychain-render.ts's text-only ring-hole pipeline exactly
   // (lib/text-ring-hole-preview.ts's own doc comment has the full 5-step
-  // breakdown): glyphs -> path, contour = gap close then the 0.25 mm
+  // breakdown): glyphs -> path, contour = one 2.5 mm round offset
   // offset (NOT the raw glyph bbox), bounding box read FROM that contour, X
   // anchored to the contour's own leftmost point minus "Jarak Lubang", Y
   // following the vertical midpoint of the FIRST LETTER's own contour.

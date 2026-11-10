@@ -141,12 +141,12 @@ Yang belum diputuskan ada di bagian nesting. Jawaban kontur sudah ditulis di baw
 
 Rofiq menjawab pada 10 November 2026. Angkanya ada di `lib/keychain-geometry.ts`. Ukurannya ada di [docs/contour/PENGUKURAN.md](contour/PENGUKURAN.md).
 
-1. Jarak garis potong dari tepi desain = **0,25 mm** (`OUTLINE_OFFSET_MM`). Pada sampel, median terukur 0,25 mm. Mesin lama 2,50 mm.
-2. Celah kecil di antara huruf tetap ditutup supaya akrilik tidak putus, tetapi penutupannya terpisah dari offset. Ambang bawaan **6 mm** (`GAP_CLOSE_MM`): celah yang lebih sempit dari itu disambung, lalu baru di-offset 0,25 mm. Enam milimeter dipilih karena pada tinggi teks 20 mm celah antar huruf sampel mencapai sekitar 4,8 mm, sedangkan spasi kata sekitar 10 mm harus tetap terbuka. Audit menulis “di bawah 3 mm”; pengukuran ulang menunjukkan mesin lama sebenarnya menutup celah sampai 8 mm. Ambang 3 mm akan memutus huruf pada sampel, jadi tidak dipakai. Kedua angka bisa diubah di file konstanta itu.
-3. Lubang dalam huruf (tengah O) dan mata gambar tetap tidak dipotong. Yang ditutup adalah celah di antara huruf, bukan lubang di dalam satu huruf.
-4. Foto PNG tanpa vektor tetap menjadi kotak. Layar template sekarang memperingatkan “bukan vektor”, supaya operator tidak mengira garis potong mengikuti tepi foto.
-5. Kurva diratakan dengan simpangan paling besar 0,01 mm. Lubang gantungan 1,9 mm di file DXF ditulis sebagai lingkaran, bukan segi 16.
-6. Sampel ukur: huruf O, BOBO, Ali, Siti, Qonita, dan Muhammad Al-Fatih, font DejaVu Sans, tinggi teks 20 mm. Belum ada potongan akrilik sungguhan dari font produksi. Itu yang perlu dicek Rofiq di mesin.
+1. Jarak garis potong dari tepi desain = **2,5 mm** (`OUTLINE_OFFSET_MM`). Itu Contour CorelDRAW ke luar, 1 langkah, offset **0,25 cm**. Angka 0,25 mm yang sempat ditulis adalah salah satuan. Pada sampel, median terukur 2,50 mm. Sudut cembung jadi busur bulat dengan jari-jari 2,5 mm (round join).
+2. Celah kecil antar huruf tertutup karena offset itu sendiri: celah lebih sempit dari 5 mm menyatu. Spasi kata sekitar 8–10 mm tetap terbuka. `GAP_CLOSE_MM` bawaan 0. Closing morfologi tambahan tidak dipakai, karena itu meratakan ceruk yang di sampel Corel masih mengikuti lekukan huruf (antara F dan a, antara z dan a).
+3. Lubang dalam huruf (tengah O) dan mata gambar tetap tidak dipotong. Lubang dalam yang kecil pada siluet luar tertutup oleh offset 2,5 mm. Yang ditutup adalah celah, bukan garis potong di dalam huruf.
+4. Foto PNG tanpa vektor tetap menjadi kotak. Layar template sekarang memperingatkan “bukan vektor”.
+5. Kurva diratakan dengan simpangan paling besar 0,01 mm supaya busur tidak terlihat patah saat diperbesar. Lubang gantungan 1,9 mm di file DXF ditulis sebagai lingkaran, bukan segi 16.
+6. Patokan visual: screenshot Corel Rofiq untuk kata “Faza”. Hasil aplikasi (font Noto Serif Display Bold Italic, karena Cooper/Bookman tidak ada di mesin) ada di [docs/contour/images/faza-aplikasi.png](contour/images/faza-aplikasi.png), perbesar sudut dan ceruk di [docs/contour/images/perbandingan-zoom.png](contour/images/perbandingan-zoom.png). Tabel angka di [docs/contour/PENGUKURAN.md](contour/PENGUKURAN.md).
 
 Pertanyaan nesting di atas belum dijawab. Patokan susunan lembar tetap file contoh manual.
 
@@ -155,7 +155,7 @@ Pertanyaan nesting di atas belum dijawab. Patokan susunan lembar tetap file cont
 Masalah yang masih mengganggu pekerjaan, baik di `main` maupun yang baru selesai di branch. Dua keluhan pemilik ada di urutan pertama. Rincian algoritmanya ada di `docs/AUDIT.md`.
 
 1. **Hasil nesting belum memenuhi keputusan pemilik.** Prioritasnya hemat bahan, kelompok per resi, kerapatan maksimal, dan item boleh diputar. `main` bisa memutar keping tetapi tidak mengelompokkan resi. Branch sudah mengelompokkan dan memutar 90 derajat, tetapi masih merapatkan kotak. Patokan akhirnya adalah file penataan manual yang belum dikirim.
-2. **Garis potong terlalu kasar — perbaikan ada di branch sesi kontur, belum di `main`.** Jarak potong sekarang 0,25 mm, celah antar huruf di bawah 6 mm tetap disambung tanpa menggemukan huruf, dan lubang gantungan di DXF berupa lingkaran. Belum dicek pada potongan akrilik sungguhan. `main` masih mesin lama (gemuk sekitar 2,5 mm, lubang segi 16).
+2. **Garis potong terlalu kasar — perbaikan ada di branch sesi kontur, belum di `main`.** Jarak potong 2,5 mm (Contour Corel 0,25 cm), sambungan bulat, celah antar huruf di bawah 5 mm tertutup oleh offset itu, kurva diratakan pada 0,01 mm, lubang gantungan di DXF berupa lingkaran. Belum dicek pada potongan akrilik sungguhan. `main` masih mesin lama (ratakan 0,05 mm, lubang segi 16).
 3. **Satu resi bisa masuk dua lembar** di `main`. Antrean masih bisa mengirim nama yang statusnya sudah “diproses”. Perbaikan ada di branch, belum di main.
 4. **Mengunci satu lembar menandai seluruh resi selesai.** Nama yang tidak ikut terpilih hilang dari antrean. Di mode produksi branch, resi yang sudah tidak pending tidak bisa dikirim lagi, jadi sisa nama itu tidak punya jalan kembali.
 5. **Tombol “Mulai Susun Lembar Kerja” di Staging Area tidak bisa jalan.** Ia memanggil API tanpa daftar nama. Penyusunan yang benar dimulai dari Antrean Pesanan.

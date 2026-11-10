@@ -151,18 +151,22 @@ export interface ProductionOutlineOptions {
 }
 
 /**
- * Laser silhouette used by dynamic keychains.
+ * Laser silhouette used by dynamic keychains. This is the CorelDRAW
+ * "Contour, outward, 1 step" operation:
  *
- * 1. Union the design shapes and drop interior holes (the middle of "O"
- *    stays solid acrylic; the laser does not cut it).
- * 2. Morphological closing — dilate then erode by the same radius — fills
- *    gaps narrower than `gapClose` without moving a straight edge. That is
- *    what welds nearby letters into one strong piece.
- * 3. A separate outward offset of `offset` (default 0.25 mm) is the only
- *    step that grows the cut line away from the design.
+ * 1. Union the design and drop interior holes, so the middle of "O" stays
+ *    solid acrylic and the laser sees one outer silhouette.
+ * 2. Optional closing (`gapClose`, default 0). Left off so inner bays keep
+ *    following the letter. A non-zero value fills gaps of that width first.
+ * 3. Offset outward by `offset` (default 2.5 mm) with round joins. The join
+ *    is a circular arc of that radius. Gaps narrower than twice the offset
+ *    close on their own. Curves are flattened only to `curveTolerance`
+ *    (0.01 mm), which is what keeps the line from looking like straight
+ *    chords when a corner is enlarged.
  *
- * Closing and offset used to be one dilate(4 mm)/erode(1.5 mm) pass, which
- * left the cut about 2.5 mm outside the letters and closed gaps up to 8 mm.
+ * The old dilate(4 mm)/erode(1.5 mm) pass is not this. It closed gaps up to
+ * 8 mm and then ate the bays back into flat bridges. `computeLaserOutlineClipper`
+ * still reproduces that pass for the before/after measurement.
  */
 export function computeProductionOutline(shapes: string[], options: ProductionOutlineOptions = {}): string | null {
   const unit = options.unitPerMm ?? 1;

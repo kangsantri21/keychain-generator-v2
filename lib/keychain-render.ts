@@ -25,6 +25,7 @@ import {
   GAP_CLOSE_MM,
   OUTLINE_OFFSET_MM,
   OUTLINE_GROWTH_MM,
+  SEAM_ROUND_MM,
   MAX_ITEM_WIDTH_MM,
 } from "@/lib/keychain-geometry";
 
@@ -116,9 +117,9 @@ interface ScaledRenderResult {
  * bug. Defaults to 1 (no squeeze) for a normal, unconstrained render.
  *
  * Kept fixed regardless of either target height (physical/hardware
- * constants, not design proportions): OUTLINE_OFFSET_MM and GAP_CLOSE_MM
- * (how far the cut sits from the design, and which letter gaps are bridged
- * — properties of the cutting process, not the drawn size),
+ * constants, not design proportions): OUTLINE_OFFSET_MM (Corel contour
+ * 0.25 cm = 2.5 mm, round join) and GAP_CLOSE_MM (extra closing, default
+ * off — the offset itself bridges letter gaps),
  * RING_HOLE_DIAMETER_MM (a fixed hardware-fit spec), and
  * MARGIN_MM/RING_HOLE_OFFSET_MM/holeOffsetX/Y (fixed real-world layout
  * spacing, not tied to either node's own size). template.dynamicGapX/
@@ -222,11 +223,10 @@ function renderKeychainTextScaled(
     // Position the text relative to the character's *actual* auto-computed
     // outline (not a nominal box edge, which real artwork rarely fills).
     // template.dynamicGapX is an admin-tunable horizontal gap (default
-    // WELD_CLEARANCE_MM). It must stay under GAP_CLOSE_MM so the closing
-    // pass still bridges the character and the text into one contour. The
-    // 0.25 mm offset is only clearance; it is not what welds them. An admin
-    // can widen the gap to separate them, or shrink it, and the union below
-    // re-welds (or un-welds) live.
+    // WELD_CLEARANCE_MM). It must stay under OUTLINE_OFFSET_MM so the text's
+    // round contour still reaches the character and the union is one piece.
+    // An admin can widen the gap to separate them, or shrink it, and the
+    // union below re-welds (or un-welds) live.
     const nominalTextOriginX = marginMm + charBoxMm + template.dynamicGapX;
     const textOriginX =
       hasCharacterOutline && characterBounds
@@ -275,14 +275,12 @@ function renderKeychainTextScaled(
     const welded = unionOutlines(
       textOutline ? [textOutline, ...positionedCharacterOutline] : positionedCharacterOutline
     );
-    // A plain union of two shapes that only just touch leaves a sharp,
-    // narrow concave notch right at the seam - a fragile neck once laser-cut
-    // from acrylic, even though it's already topologically one piece. Close
-    // that notch with the same gap threshold, and do not add a second
-    // offset: the text is already OUTLINE_OFFSET_MM outside its glyphs, and
-    // the character silhouette stays on the artwork.
+    // The text is already a 2.5 mm round contour. A plain union can leave a
+    // knife-edge cusp where it meets the character. SEAM_ROUND_MM fillets
+    // only that cusp. It does not add another offset and it does not run the
+    // letter-gap closing that would box in the bays.
     outlinePath = welded
-      ? (computeProductionOutline([welded], { gapClose: GAP_CLOSE_MM, offset: 0 }) ?? welded)
+      ? (computeProductionOutline([welded], { gapClose: SEAM_ROUND_MM * 2, offset: 0 }) ?? welded)
       : null;
   } else {
     outlinePath = computeProductionOutline(shapesForOutline, {
@@ -390,7 +388,7 @@ function renderKeychainTextScaled(
     // leaves a sharp, narrow concave notch at the seam - a fragile neck once
     // laser-cut, even though it's already topologically one piece.
     outlinePath = welded
-      ? (computeProductionOutline([welded], { gapClose: GAP_CLOSE_MM, offset: 0 }) ?? welded)
+      ? (computeProductionOutline([welded], { gapClose: SEAM_ROUND_MM * 2, offset: 0 }) ?? welded)
       : outlinePath;
 
     holePath = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_DIAMETER_MM / 2);

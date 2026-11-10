@@ -8,8 +8,9 @@
  *
  * Mirrors the production pipeline at preview (px) scale:
  *   1. Text -> path: the caller's own `ColoredTextRender` (font-preview.ts).
- *   2. Contour: close gaps narrower than GAP_CLOSE_MM, then offset by
- *      OUTLINE_OFFSET_MM. Not one big dilate/erode.
+ *   2. Contour: one outward round-join offset of OUTLINE_OFFSET_MM (2.5 mm,
+ *      Corel contour 0.25 cm). Letter gaps narrower than twice that close
+ *      by themselves. GAP_CLOSE_MM stays 0 unless an extra close is asked for.
  *   3. Bounding box FROM THE CONTOUR, not the raw glyph bbox.
  *   4. Hole anchor: X = contour's own leftmost point; Y = the vertical
  *      midpoint of the FIRST LETTER's own contour.
@@ -25,6 +26,7 @@ import {
   GAP_CLOSE_MM,
   OUTLINE_GROWTH_MM,
   OUTLINE_OFFSET_MM,
+  SEAM_ROUND_MM,
   RING_HOLE_DIAMETER_MM,
   RING_HOLE_WASHER_DIAMETER_MM,
 } from "@/lib/keychain-geometry";
@@ -71,6 +73,10 @@ export function weldRingHoleWasher(textContour: string | null, holeCenter: { x: 
   const washer = circlePathData(holeCenter.x, holeCenter.y, RING_HOLE_WASHER_DIAMETER_PX / 2);
   const welded = textContour ? unionOutlines([textContour, washer], CURVE_TOLERANCE_PX) : washer;
   return welded
-    ? (computeProductionOutline([welded], { unitPerMm: PX_PER_MM, offset: 0 }) ?? welded)
+    ? (computeProductionOutline([welded], {
+        unitPerMm: PX_PER_MM,
+        offset: 0,
+        gapClose: SEAM_ROUND_MM * 2 * PX_PER_MM,
+      }) ?? welded)
     : textContour;
 }

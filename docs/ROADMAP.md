@@ -18,11 +18,11 @@ Yang terukur pada mesin lama, sebelum angka diubah: offset 2,50 mm, celah antar 
 
 Yang dipakai sekarang:
 
-- `OUTLINE_OFFSET_MM` = 0,25. Pada enam sampel nama, median offset 0,25 mm (batas roadmap 0,3 mm terpenuhi).
-- `GAP_CLOSE_MM` = 6. Celah antar huruf pada sampel (sampai sekitar 4,8 mm) tetap satu keping. Spasi kata sekitar 10 mm tetap terbuka. Ambang 3 mm tidak dipakai karena memutus huruf.
+- `OUTLINE_OFFSET_MM` = 2,5. Itu 0,25 cm di CorelDRAW (Contour ke luar, 1 langkah). Pada enam sampel nama plus “Faza”, median offset 2,50 mm. Sudut cembung adalah busur jari-jari 2,5 mm.
+- Celah antar huruf lebih sempit dari 5 mm tertutup oleh offset itu. `GAP_CLOSE_MM` bawaan 0 supaya ceruk dalam (antara F dan a, antara z dan a) tetap mengikuti lekukan, tidak diratakan. Spasi kata tetap terbuka.
 - Lubang dalam huruf O tidak dipotong, sesuai keputusan.
 - PNG tanpa vektor memunculkan peringatan di layar template.
-- Lubang gantungan di DXF adalah lingkaran. Tes gagal jika offset kotak menyimpang lebih dari 0,03 mm dari 0,25, jika celah 4,9 mm tidak tersambung, atau jika lubang DXF bukan `CIRCLE`.
+- Lubang gantungan di DXF adalah lingkaran. Tes gagal jika offset kotak menyimpang lebih dari 0,03 mm dari 2,5, jika sudutnya bukan busur jari-jari 2,5 mm, jika celah 4 mm tidak tersambung, atau jika lubang DXF bukan `CIRCLE`.
 
 Belum selesai di dunia nyata: potong satu lembar akrilik dengan font produksi dan bandingkan dengan gambar di dokumen ukur. `main` masih mesin lama.
 

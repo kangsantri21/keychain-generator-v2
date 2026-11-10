@@ -102,7 +102,7 @@ function glyphPaths(text: string, targetHeight: number): string[] {
   });
 }
 
-function outlineOf(text: string, rawHeight = 19.5) {
+function outlineOf(text: string, rawHeight = 20 - OUTLINE_OFFSET_MM * 2) {
   const shapes = glyphPaths(text, rawHeight);
   const outline = computeProductionOutline(shapes);
   assert.ok(outline, text);
@@ -110,21 +110,40 @@ function outlineOf(text: string, rawHeight = 19.5) {
 }
 
 describe("production contour", () => {
-  test("a straight edge is offset by about 0.25 mm, and the corner stays a short arc", () => {
+  test("a straight edge is offset by 2.5 mm and the corner is a round arc of that radius", () => {
     const outline = computeProductionOutline([rect(0, 0, 30, 12)]);
     assert.ok(outline);
-    const b = boundsOf(pointsOf(outline));
+    const pts = pointsOf(outline);
+    const b = boundsOf(pts);
     assert.ok(Math.abs(-b.minX - OUTLINE_OFFSET_MM) < 0.03, `left ${-b.minX}`);
     assert.ok(Math.abs(b.maxX - 30 - OUTLINE_OFFSET_MM) < 0.03, `right ${b.maxX - 30}`);
     assert.ok(Math.abs(-b.minY - OUTLINE_OFFSET_MM) < 0.03, `top ${-b.minY}`);
     assert.ok(Math.abs(b.maxY - 12 - OUTLINE_OFFSET_MM) < 0.03, `bottom ${b.maxY - 12}`);
-    const n = pointsOf(outline).length;
-    assert.ok(n > 8 && n < 80, `rectangle point count ${n} should stay small`);
+    assert.ok(pts.length > 24 && pts.length < 200, `rectangle point count ${pts.length} should stay modest`);
+
+    // Interior of the quarter-arc only. The tangent points sit on the straight
+    // edges, and a chord between those edges cuts across the corner.
+    const corner = pts.filter((p) => p.x < -0.3 && p.y < -0.3);
+    assert.ok(corner.length >= 4, `round-join samples ${corner.length}`);
+    for (const p of corner) {
+      const radius = Math.hypot(p.x, p.y);
+      assert.ok(Math.abs(radius - OUTLINE_OFFSET_MM) < 0.04, `corner radius ${radius}`);
+    }
+    let worstChord = 0;
+    const ordered = [...corner].sort((a, c) => Math.atan2(a.y, a.x) - Math.atan2(c.y, c.x));
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const a = ordered[i];
+      const c = ordered[i + 1];
+      const mx = (a.x + c.x) / 2;
+      const my = (a.y + c.y) / 2;
+      worstChord = Math.max(worstChord, Math.abs(Math.hypot(mx, my) - OUTLINE_OFFSET_MM));
+    }
+    assert.ok(worstChord < 0.02, `corner chord error ${worstChord}`);
   });
 
-  test("offset and gap threshold are configurable, and the defaults match the decision", () => {
-    assert.equal(OUTLINE_OFFSET_MM, 0.25);
-    assert.equal(GAP_CLOSE_MM, 6);
+  test("offset and gap threshold are configurable, and the defaults match Corel 0.25 cm", () => {
+    assert.equal(OUTLINE_OFFSET_MM, 2.5);
+    assert.equal(GAP_CLOSE_MM, 0);
 
     const wide = computeProductionOutline([rect(0, 0, 20, 10)], { offset: 1, gapClose: 0 });
     assert.ok(wide);
@@ -137,11 +156,24 @@ describe("production contour", () => {
     assert.equal(subpaths(open), 2, "the same 4 mm gap stays open when the threshold is 3 mm");
   });
 
-  test("default closing bridges letter gaps up to 6 mm and leaves a wider gap open", () => {
-    const near = computeProductionOutline([rect(0, 0, 10, 16), rect(14.9, 0, 10, 16)], { offset: 0 });
-    const far = computeProductionOutline([rect(0, 0, 10, 16), rect(16.5, 0, 10, 16)], { offset: 0 });
-    assert.equal(subpaths(near), 1, "4.9 mm gap closes");
-    assert.equal(subpaths(far), 2, "6.5 mm gap stays open");
+  test("the 2.5 mm offset itself closes a 4 mm letter gap and leaves a 6 mm gap open", () => {
+    const near = computeProductionOutline([rect(0, 0, 10, 16), rect(14, 0, 10, 16)]);
+    const far = computeProductionOutline([rect(0, 0, 10, 16), rect(16, 0, 10, 16)]);
+    assert.equal(subpaths(near), 1, "4 mm gap closes because each side grows 2.5 mm");
+    assert.equal(subpaths(far), 2, "6 mm gap stays open");
+  });
+
+  test("a wide inner bay is not boxed flat by the offset", () => {
+    // 40 mm block with a 12 mm × 8 mm bay in the top edge.
+    const bay = "M 0 0 H 14 V 8 H 26 V 0 H 40 V 20 H 0 Z";
+    const outline = computeProductionOutline([bay], { gapClose: 0 });
+    assert.ok(outline);
+    const pts = pointsOf(outline);
+    const inBay = pts.filter((p) => p.x > 16 && p.x < 24);
+    assert.ok(inBay.length > 0, "the bay still has contour points");
+    const floor = Math.max(...inBay.map((p) => p.y));
+    const outerTop = Math.min(...pts.filter((p) => p.x < 4 || p.x > 36).map((p) => p.y));
+    assert.ok(floor - outerTop > 4, `bay depth ${floor - outerTop} should still follow the recess`);
   });
 
   test("the old dilate-4/erode-1.5 pass still measures about 2.5 mm outside the shape", () => {
@@ -170,7 +202,7 @@ describe("production contour", () => {
 describe("sample names", () => {
   const RAW_HEIGHT = 20 - OUTLINE_OFFSET_MM * 2;
 
-  test("five names: offset near 0.25 mm, small letter gaps closed, word space open, file stays modest", () => {
+  test("five names: offset near 2.5 mm, small letter gaps closed, word space open, file stays modest", () => {
     const joined = ["O", "BOBO", "Ali", "Siti", "Qonita"];
     for (const name of joined) {
       const { shapes, outline } = outlineOf(name, RAW_HEIGHT);
@@ -178,16 +210,16 @@ describe("sample names", () => {
       const src = shapes.flatMap((d) => polygons(d));
       const distances = pointsOf(outline).map((p) => distToPolygons(p, src));
       const mid = median(distances);
-      assert.ok(mid > 0.18 && mid < 0.45, `${name} median offset ${mid}`);
-      assert.ok(pointsOf(outline).length < 4000, `${name} point count ${pointsOf(outline).length}`);
+      assert.ok(Math.abs(mid - OUTLINE_OFFSET_MM) < 0.35, `${name} median offset ${mid}`);
+      assert.ok(pointsOf(outline).length < 8000, `${name} point count ${pointsOf(outline).length}`);
     }
 
     const long = outlineOf("Muhammad Al-Fatih", RAW_HEIGHT);
     assert.equal(subpaths(long.outline), 2, "the word space stays open; each word is one piece");
     const src = long.shapes.flatMap((d) => polygons(d));
     const mid = median(pointsOf(long.outline).map((p) => distToPolygons(p, src)));
-    assert.ok(mid > 0.18 && mid < 0.45, `long name median offset ${mid}`);
-    assert.ok(pointsOf(long.outline).length < 12000, `long name points ${pointsOf(long.outline).length}`);
+    assert.ok(Math.abs(mid - OUTLINE_OFFSET_MM) < 0.35, `long name median offset ${mid}`);
+    assert.ok(pointsOf(long.outline).length < 20000, `long name points ${pointsOf(long.outline).length}`);
 
     const round = outlineOf("O", RAW_HEIGHT);
     const srcB = boundsOf(round.shapes.flatMap((d) => pointsOf(d)));
@@ -199,18 +231,19 @@ describe("sample names", () => {
 
 describe("smooth curves and the ring hole", () => {
   test("an offset circle stays within 0.02 mm of a true circle and does not explode", () => {
-    const outline = computeProductionOutline([circlePathData(0, 0, 10)], { gapClose: 0, offset: 0.25 });
+    const outline = computeProductionOutline([circlePathData(0, 0, 10)], { gapClose: 0, offset: OUTLINE_OFFSET_MM });
     assert.ok(outline);
     const pts = pointsOf(outline);
-    assert.ok(pts.length > 40 && pts.length < 250, `circle points ${pts.length}`);
+    assert.ok(pts.length > 40 && pts.length < 400, `circle points ${pts.length}`);
+    const expected = 10 + OUTLINE_OFFSET_MM;
     let worst = 0;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
       const b = pts[(i + 1) % pts.length];
-      worst = Math.max(worst, Math.abs(Math.hypot(a.x, a.y) - 10.25));
+      worst = Math.max(worst, Math.abs(Math.hypot(a.x, a.y) - expected));
       const mx = (a.x + b.x) / 2;
       const my = (a.y + b.y) / 2;
-      worst = Math.max(worst, Math.abs(Math.hypot(mx, my) - 10.25));
+      worst = Math.max(worst, Math.abs(Math.hypot(mx, my) - expected));
     }
     assert.ok(worst < 0.02, `radial error ${worst}`);
   });

@@ -21,6 +21,7 @@ import {
   CHAR_BOX_MM,
   WELD_CLEARANCE_MM,
   OUTLINE_GROWTH_MM,
+  SEAM_ROUND_MM,
   CURVE_TOLERANCE_MM,
   DEFAULT_CHAR_TARGET_HEIGHT_MM,
   DEFAULT_TEXT_TARGET_HEIGHT_MM,
@@ -47,7 +48,7 @@ const SLIDER_DEBOUNCE_MS = 400;
 const PX_PER_MM = 96 / CHAR_BOX_MM;
 const CURVE_TOLERANCE_PX = CURVE_TOLERANCE_MM * PX_PER_MM;
 // Raw glyph/box shrink so the finished cut lands on the target height.
-// Mirrors production's OUTLINE_GROWTH_MM: only the final 0.25 mm offset
+// Mirrors production's OUTLINE_GROWTH_MM: only the final 2.5 mm offset
 // grows the silhouette; closing letter gaps does not.
 
 function isSvgFile(file: File): boolean {
@@ -615,11 +616,14 @@ export function CharacterTemplateForm({
           textOutline ? [textOutline, ...characterFit.positionedOutline] : characterFit.positionedOutline,
           CURVE_TOLERANCE_PX
         );
-        // A plain union of two shapes that only just touch leaves a sharp,
-        // narrow concave notch at the seam — a fragile neck once laser-cut.
-        // Close that notch the same way production does, without a second offset.
+        // Fillet only the character/text cusp. Same SEAM_ROUND_MM as production,
+        // not a second contour offset.
         const combined = welded
-          ? (computeProductionOutline([welded], { unitPerMm: PX_PER_MM, offset: 0 }) ?? welded)
+          ? (computeProductionOutline([welded], {
+              unitPerMm: PX_PER_MM,
+              offset: 0,
+              gapClose: SEAM_ROUND_MM * 2 * PX_PER_MM,
+            }) ?? welded)
           : null;
         setOutlinePath(combined);
 
