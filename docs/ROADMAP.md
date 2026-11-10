@@ -19,7 +19,7 @@ Yang terukur pada mesin lama, sebelum angka diubah: offset 2,50 mm, celah antar 
 Yang dipakai sekarang:
 
 - `OUTLINE_OFFSET_MM` = 2,5. Itu 0,25 cm di CorelDRAW (Contour ke luar, 1 langkah). Pada enam sampel nama plus “Faza”, median offset 2,50 mm. Sudut cembung adalah busur jari-jari 2,5 mm.
-- Celah antar huruf lebih sempit dari 5 mm tertutup oleh offset itu. `GAP_CLOSE_MM` = 4 mengisi ceruk yang lebih sempit dari 4 mm pada siluet yang sudah di-offset, dengan busur bundar. Pinggiran luar tetap 2,5 mm. Spasi kata tetap terbuka karena closing dijalankan per keping.
+- Celah antar huruf lebih sempit dari 5 mm tertutup oleh offset itu. `GAP_CLOSE_MM` = 2 hanya membulatkan takik yang lebih sempit dari 2 mm. Gelombang luar yang lebih lebar tetap seperti kontur 2,5 mm tanpa closing. Pinggiran luar tetap 2,5 mm. Spasi kata tetap terbuka.
 - Lubang dalam huruf O tidak dipotong, sesuai keputusan.
 - PNG tanpa vektor memunculkan peringatan di layar template.
 - Lubang gantungan di DXF adalah lingkaran. Tes gagal jika offset kotak menyimpang lebih dari 0,03 mm dari 2,5, jika sudutnya bukan busur jari-jari 2,5 mm, jika celah 4 mm tidak tersambung, atau jika lubang DXF bukan `CIRCLE`.

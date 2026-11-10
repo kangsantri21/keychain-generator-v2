@@ -89,14 +89,14 @@ export const MAX_LAYOUT_OFFSET_MM = 15;
 export const OUTLINE_OFFSET_MM = 2.5;
 
 /**
- * After the 2.5 mm offset, fill concave notches narrower than this (mm).
- * The closing radius is half of it. It runs on each already-offset piece
- * by itself, so a straight outer edge does not move and a word space that
- * is already a separate piece stays open. 4 mm rounds off the sharp
- * cusps between letters in "Faza" (and the other samples) into a smooth
- * arc without bridging the ~3 mm gap that remains between words.
+ * After the 2.5 mm offset, round off only concave notches narrower than
+ * this (mm). The radius is half. 2 mm turns the knife-edge cusp between
+ * letters (F–a, z–a) into a small arc and leaves the wider waves along
+ * the top and bottom, which a 4 mm close was swallowing. It runs on each
+ * piece alone, so a separate word is not pulled shut and a straight outer
+ * edge does not move.
  */
-export const GAP_CLOSE_MM = 4;
+export const GAP_CLOSE_MM = 2;
 
 /**
  * Round-off used only where a ring-hole washer or a character silhouette

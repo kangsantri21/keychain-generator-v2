@@ -178,9 +178,9 @@ export interface ProductionOutlineOptions {
  * 2. Offset outward by `offset` (default 2.5 mm) with round joins. The join
  *    is a circular arc of that radius. Gaps narrower than twice the offset
  *    close on their own. A straight edge moves by exactly this distance.
- * 3. Close each resulting piece by `gapClose` (default 4 mm). That fills
- *    the sharp cusps left between letters without moving the outer edge
- *    and without joining a separate word. Curves stay within
+ * 3. Close each resulting piece by `gapClose` (default 2 mm). That only
+ *    rounds a knife-edge cusp. Wider waves stay. The outer edge does not
+ *    move, and a separate word is not joined. Curves stay within
  *    `curveTolerance` (0.01 mm).
  *
  * The old dilate(4 mm)/erode(1.5 mm) pass is not this. It closed gaps up to

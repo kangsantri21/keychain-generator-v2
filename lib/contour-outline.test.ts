@@ -143,7 +143,7 @@ describe("production contour", () => {
 
   test("offset and gap threshold are configurable, and the defaults match Corel 0.25 cm", () => {
     assert.equal(OUTLINE_OFFSET_MM, 2.5);
-    assert.equal(GAP_CLOSE_MM, 4);
+    assert.equal(GAP_CLOSE_MM, 2);
 
     const wide = computeProductionOutline([rect(0, 0, 20, 10)], { offset: 1, gapClose: 0 });
     assert.ok(wide);
@@ -156,25 +156,25 @@ describe("production contour", () => {
     assert.equal(subpaths(separate), 2, "closing one piece at a time leaves a 4 mm gap as two pieces");
   });
 
-  test("notches narrower than the threshold are filled and the outer edge stays put", () => {
-    // 8 mm bay. A 2.5 mm offset leaves a channel about 3 mm wide, which the
-    // default 4 mm close then fills. A 14 mm bay stays open.
-    const narrow = "M 0 0 H 16 V 12 H 24 V 0 H 40 V 24 H 0 Z";
-    const wideBay = "M 0 0 H 13 V 12 H 27 V 0 H 40 V 24 H 0 Z";
-    const filled = computeProductionOutline([narrow]);
-    const open = computeProductionOutline([wideBay]);
-    const spared = computeProductionOutline([narrow], { gapClose: 0 });
-    assert.ok(filled && open && spared);
+  test("only a narrow sharp notch is filled; a wider bay and the outer edge stay", () => {
+    // 1.2 mm slot, no offset, so the width is exact. Default 2 mm close fills it.
+    // A 10 mm bay is wider than the threshold, so it stays.
+    const spike = "M 0 0 H 19.4 V 6 H 20.6 V 0 H 40 V 16 H 0 Z";
+    const bay = "M 0 0 H 15 V 6 H 25 V 0 H 40 V 16 H 0 Z";
+    const filled = computeProductionOutline([spike], { offset: 0 });
+    const open = computeProductionOutline([bay], { offset: 0 });
+    const raw = computeProductionOutline([spike], { offset: 0, gapClose: 0 });
+    assert.ok(filled && open && raw);
 
     const depth = (d: string) => {
       const pts = pointsOf(d);
-      const outer = Math.min(...pts.filter((p) => p.x < 3 || p.x > 37).map((p) => p.y));
-      const floor = Math.max(...pts.filter((p) => p.x > 16 && p.x < 24).map((p) => p.y));
+      const outer = Math.min(...pts.filter((p) => p.x < 2 || p.x > 38).map((p) => p.y));
+      const floor = Math.max(...pts.filter((p) => p.x > 15 && p.x < 25).map((p) => p.y));
       return floor - outer;
     };
-    assert.ok(depth(spared) > 8, `without closing the channel stays deep (${depth(spared)})`);
-    assert.ok(depth(filled) < 3, `default close fills the narrow channel (${depth(filled)})`);
-    assert.ok(depth(open) > 6, `a 14 mm bay stays (${depth(open)})`);
+    assert.ok(depth(raw) > 5, `the raw slot is deep (${depth(raw)})`);
+    assert.ok(depth(filled) < 1.5, `the 1.2 mm slot is filled (${depth(filled)})`);
+    assert.ok(depth(open) > 5, `the 10 mm bay stays (${depth(open)})`);
 
     const box = boundsOf(pointsOf(computeProductionOutline([rect(0, 0, 30, 12)])!));
     const bare = boundsOf(pointsOf(computeProductionOutline([rect(0, 0, 30, 12)], { gapClose: 0 })!));
