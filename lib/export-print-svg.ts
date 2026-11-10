@@ -6,6 +6,7 @@ import {
   SHEET_LABEL_FONT_SIZE_MM,
   type BatchLabelPlacement,
 } from "@/lib/active-frame";
+import { shapeFramesOf } from "@/lib/nesting/shape-block-marks";
 import { getItemTransform, getReceiptLabelPosition } from "@/lib/staging-transform";
 import { internalLabelsOf } from "@/lib/receipt-labels";
 import type { StagingSheet } from "@/lib/staging-types";
@@ -55,6 +56,12 @@ export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): 
       return `  <g transform="${getItemTransform(item)}">${image}${text}${label}</g>`;
     })
     .join("\n");
+  const frames = shapeFramesOf(sheet.items)
+    .map(
+      (frame) =>
+        `  <rect x="${frame.x}" y="${frame.y}" width="${frame.w}" height="${frame.h}" fill="none" stroke="#111111" stroke-width="0.2" />`
+    )
+    .join("\n");
   const receiptLabels = (internalLabels ?? [])
     .filter((label) => label.status === "PLACED")
     .map(
@@ -92,6 +99,7 @@ export function buildPrintSvgDocument(sheet: StagingSheet, labelText?: string): 
   <rect width="${W}" height="${H}" fill="#ffffff" />
   <g id="print-layer-mirrored" transform="translate(${W}, 0) scale(-1, 1)">
 ${printLayer}
+${frames}
 ${receiptLabels}
 ${customLabel}
   </g>

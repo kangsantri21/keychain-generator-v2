@@ -1,6 +1,31 @@
 import { ITEM_PADDING_BOTTOM_MM, RECEIPT_LABEL_BOTTOM_CLEARANCE_MM } from "@/lib/keychain-geometry";
 import type { StagingItemPayload } from "@/lib/staging-types";
 
+export type ItemRotation = 0 | 90 | 180 | 270;
+
+/**
+ * 0° and 180° keep the artwork's width and height. 90° and 270° swap them.
+ * Older rows only stored the boolean: true means 90°, false means 0°.
+ */
+export function itemRotationDeg(item: { rotated?: boolean; rotationDeg?: number | null }): ItemRotation {
+  const deg = item.rotationDeg;
+  if (deg === 0 || deg === 90 || deg === 180 || deg === 270) return deg;
+  return item.rotated ? 90 : 0;
+}
+
+/** Artwork-space point → sheet point. Matches `getItemTransform`. */
+export function localToSheet(
+  item: { posX: number; posY: number; width: number; height?: number; rotated?: boolean; rotationDeg?: number | null },
+  point: { x: number; y: number }
+): { x: number; y: number } {
+  const deg = itemRotationDeg(item);
+  const height = item.height ?? 0;
+  if (deg === 0) return { x: point.x + item.posX, y: point.y + item.posY };
+  if (deg === 90) return { x: item.posX + item.width - point.y, y: item.posY + point.x };
+  if (deg === 180) return { x: item.posX + item.width - point.x, y: item.posY + height - point.y };
+  return { x: item.posX + point.y, y: item.posY + height - point.x };
+}
+
 /**
  * SVG transform placing an item at its packed position.
  *
@@ -13,12 +38,14 @@ import type { StagingItemPayload } from "@/lib/staging-types";
  * unrotated orientation) must be rotated to align with that footprint.
  */
 export function getItemTransform(
-  item: Pick<StagingItemPayload, "posX" | "posY" | "width" | "rotated">
+  item: { posX: number; posY: number; width: number; height?: number; rotated?: boolean; rotationDeg?: number | null }
 ): string {
-  if (!item.rotated) {
-    return `translate(${item.posX}, ${item.posY})`;
-  }
-  return `translate(${item.posX + item.width}, ${item.posY}) rotate(90)`;
+  const deg = itemRotationDeg(item);
+  const height = item.height ?? 0;
+  if (deg === 0) return `translate(${item.posX}, ${item.posY})`;
+  if (deg === 90) return `translate(${item.posX + item.width}, ${item.posY}) rotate(90)`;
+  if (deg === 180) return `translate(${item.posX + item.width}, ${item.posY + height}) rotate(180)`;
+  return `translate(${item.posX}, ${item.posY + height}) rotate(270)`;
 }
 
 /**
@@ -30,9 +57,10 @@ export function getItemTransform(
  * directly, unswapped).
  */
 export function getContentSize(
-  item: Pick<StagingItemPayload, "width" | "height" | "rotated">
+  item: Pick<StagingItemPayload, "width" | "height" | "rotated"> & { rotationDeg?: number | null }
 ): { width: number; height: number } {
-  return item.rotated
+  const deg = itemRotationDeg(item);
+  return deg === 90 || deg === 270
     ? { width: item.height, height: item.width }
     : { width: item.width, height: item.height };
 }

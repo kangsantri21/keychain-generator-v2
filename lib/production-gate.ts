@@ -19,6 +19,8 @@
  */
 import { FIDUCIAL_RADIUS_MM, ITEM_PADDING_BOTTOM_MM, SHEET_HEIGHT_MM, SHEET_WIDTH_MM } from "@/lib/keychain-geometry";
 import { FIDUCIAL_CLEARANCE_MM, PART_GAP_MM, PRODUCTION_GROUP_GAP_X_MM, PRODUCTION_GROUP_GAP_Y_MM, SHEET_MARGIN_MM } from "@/lib/nesting/grouped-nesting-config";
+import { BLOCK_GAP_MM, CUT_CLEARANCE_MM } from "@/lib/nesting/shape-block-config";
+import { outlinesTooClose, type Pt } from "@/lib/nesting/shape-outline";
 
 export type LayoutProfile = "production" | "legacy";
 
@@ -36,6 +38,16 @@ export interface PlacedItem {
   /** The artwork's own (unrotated) size it must still have. */
   expectedWidth: number;
   expectedHeight: number;
+  /**
+   * Cut outline in sheet millimetres. When every item on a sheet has one,
+   * gaps are measured between cut lines (`cutClearanceMm`) instead of
+   * between bounding boxes, so two pieces may overlap in their boxes when
+   * a notch has room. Absent on the older box layouts — those keep the
+   * 2 mm box rules.
+   */
+  outline?: Pt[][];
+  cutClearanceMm?: number;
+  blockGapMm?: number;
 }
 
 export interface GateResult {
@@ -82,6 +94,11 @@ export function fiducialDistance(item: Pick<PlacedItem, "posX" | "posY" | "width
 export function receiptsSeparated(a: R, b: R): boolean {
   const { dx, dy } = axisSeparation(a, b);
   return dx >= PRODUCTION_GROUP_GAP_X_MM - EPS || dy >= PRODUCTION_GROUP_GAP_Y_MM - EPS;
+}
+
+function axisClear(a: R, b: R, gap: number): boolean {
+  const { dx, dy } = axisSeparation(a, b);
+  return dx >= gap - EPS || dy >= gap - EPS;
 }
 
 /** Production layouts keep every item >= SHEET_MARGIN from the media edge; the legacy packer starts at 2 mm. */
@@ -136,19 +153,28 @@ export function validatePlacedSheets(items: PlacedItem[], expectedKeys: string[]
     profiles[String(sheet)] = sheetProfile;
     const label = sheets.length > 1 ? `Lembar ${sheet}: ` : "";
 
+    const shapeSheet = list.length > 0 && list.every((item) => (item.outline?.length ?? 0) > 0);
     let overlapPairs = 0;
     let partGap = 0;
+    let cutGap = 0;
+    const cutClearance = list.find((item) => item.cutClearanceMm !== undefined)?.cutClearanceMm ?? CUT_CLEARANCE_MM;
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = rectOf(list[i]);
         const b = rectOf(list[j]);
-        if (overlaps(a, b)) overlapPairs++;
+        if (shapeSheet) {
+          const tooClose = outlinesTooClose(list[i].outline ?? [], list[j].outline ?? [], list[i].orderId === list[j].orderId ? cutClearance : cutClearance);
+          if (!tooClose) continue;
+          if (list[i].orderId === list[j].orderId) cutGap++;
+          else overlapPairs++;
+        } else if (overlaps(a, b)) overlapPairs++;
         else if (sheetProfile === "production" && list[i].orderId === list[j].orderId && separation(a, b) < PART_GAP_MM - EPS) partGap++;
       }
     }
     if (overlapPairs) errors.push(`${label}${overlapPairs} pasang item saling tumpang tindih`);
     if (sheetProfile !== "production") continue;
 
+    if (cutGap) errors.push(`${label}${cutGap} pasang garis potong dalam satu resi lebih dekat dari ${cutClearance} mm`);
     if (partGap) errors.push(`${label}${partGap} pasang item dalam satu resi berjarak < PART_GAP ${PART_GAP_MM} mm`);
     const marginBreaks = list.filter(
       (i) => i.posX < SHEET_MARGIN_MM - EPS || i.posY < SHEET_MARGIN_MM - EPS || i.posX + i.width > SHEET_WIDTH_MM - SHEET_MARGIN_MM + EPS || i.posY + i.height > SHEET_HEIGHT_MM - SHEET_MARGIN_MM + EPS
@@ -156,16 +182,22 @@ export function validatePlacedSheets(items: PlacedItem[], expectedKeys: string[]
     if (marginBreaks.length) errors.push(summarizeList(`${label}${marginBreaks.length} item melewati margin ${SHEET_MARGIN_MM} mm`, marginBreaks.map((i) => i.key)));
 
     const boxes = receiptBoxes(list);
+    const blockGap = list.find((item) => item.blockGapMm !== undefined)?.blockGapMm ?? BLOCK_GAP_MM;
     const tooClose: string[] = [];
     for (let i = 0; i < boxes.length; i++) {
       for (let j = i + 1; j < boxes.length; j++) {
-        if (!receiptsSeparated(boxes[i].rect, boxes[j].rect)) tooClose.push(`${boxes[i].orderId}/${boxes[j].orderId}`);
+        const separated = shapeSheet
+          ? axisClear(boxes[i].rect, boxes[j].rect, blockGap)
+          : receiptsSeparated(boxes[i].rect, boxes[j].rect);
+        if (!separated) tooClose.push(`${boxes[i].orderId}/${boxes[j].orderId}`);
       }
     }
     if (tooClose.length) {
       errors.push(
         summarizeList(
-          `${label}${tooClose.length} pasang resi terlalu dekat (< ${PRODUCTION_GROUP_GAP_X_MM} mm kiri-kanan / < ${PRODUCTION_GROUP_GAP_Y_MM} mm atas-bawah, resi tercampur)`,
+          shapeSheet
+            ? `${label}${tooClose.length} pasang resi terlalu dekat (< ${blockGap} mm) atau tercampur`
+            : `${label}${tooClose.length} pasang resi terlalu dekat (< ${PRODUCTION_GROUP_GAP_X_MM} mm kiri-kanan / < ${PRODUCTION_GROUP_GAP_Y_MM} mm atas-bawah, resi tercampur)`,
           tooClose
         )
       );
@@ -254,6 +286,8 @@ export interface StagedPlacement {
   width: number;
   height: number;
   rotated: boolean;
+  /** 0/90/180/270 when the row stored it. Older rows leave this unset. */
+  rotationDeg?: number | null;
   /** Staging status (carries the explicit nesting-mode marker, lib/staging-mode.ts). */
   status?: string;
 }
@@ -282,7 +316,8 @@ export function matchSubmittedToStaged<S extends StagedPlacement>(
       Math.abs(item.posY - row.posY) > EPS ||
       Math.abs(item.width - row.width) > EPS ||
       Math.abs(item.height - row.height) > EPS ||
-      !!item.rotated !== !!row.rotated
+      !!item.rotated !== !!row.rotated ||
+      (item.rotationDeg != null && row.rotationDeg != null && item.rotationDeg !== row.rotationDeg)
     ) {
       mismatched++;
     }
@@ -300,6 +335,7 @@ export function matchSubmittedToStaged<S extends StagedPlacement>(
         width: row.width,
         height: row.height,
         rotated: row.rotated,
+        ...(row.rotationDeg != null ? { rotationDeg: row.rotationDeg } : {}),
         ...(row.status !== undefined ? { status: row.status } : {}),
       };
     });

@@ -10,6 +10,7 @@
  * never its implementation — so nothing here can affect legacy behavior.
  */
 import type { NestableRect, PackedRect } from "@/lib/nesting";
+import type { Pt } from "./shape-outline";
 import type { OuterOptimizerStats } from "./grouped-nesting-outer";
 
 /**
@@ -33,6 +34,14 @@ export interface GroupedNestingItem<T> extends NestableRect<T> {
   originalWidth: number;
   originalHeight: number;
   allowRotation: boolean;
+  /**
+   * Cut outline in unrotated artwork millimetres. When any item in a
+   * production run carries one, the shape-block packer is used instead of
+   * the box packer. Missing on every older fixture, which keeps the box path.
+   */
+  outline?: Pt[][];
+  /** Printed once beside the receipt frame. Shape-block packing only. */
+  receiptCode?: string;
 }
 
 /** All items sharing one `orderId` (or one orphaned item with a missing orderId — see `groupItemsByOrder`). */

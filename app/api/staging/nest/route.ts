@@ -9,7 +9,8 @@ import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { runGroupedNesting, resolveConfig, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
 import { resolveNestingMode } from "@/lib/nesting/nesting-mode";
 import { runProductionNesting } from "@/lib/nesting/production-nesting";
-import { STAGED_PRODUCTION } from "@/lib/staging-mode";
+import { polygonsFromOutlinePath } from "@/lib/nesting/shape-outline";
+import { STAGED_SHAPE } from "@/lib/staging-mode";
 import { stagedReceiptConflicts } from "@/lib/production-gate";
 import { isSpacingBenchmarkRequest, runSpacingBenchmark } from "@/lib/nesting/grouped-nesting-benchmark";
 import { isSlotReflowRequest, runGroupedNestingV3 } from "@/lib/nesting/grouped-nesting-v3";
@@ -164,6 +165,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Tidak ada item yang bisa disusun dari pesanan terpilih" }, { status: 400 });
     }
 
+    const receiptCodeByOrderId = new Map(parentOrders.map((order) => [order.id, order.receiptCode]));
     const productionItems: GroupedNestingItem<PackData>[] = pendingRects.map((rect, index) => ({
       id: index,
       orderId: rect.data.orderId,
@@ -172,6 +174,8 @@ export async function POST(request: NextRequest) {
       originalWidth: rect.width,
       originalHeight: rect.height,
       allowRotation: true,
+      outline: polygonsFromOutlinePath(rect.data.render.outlinePath, rect.width, rect.height),
+      receiptCode: receiptCodeByOrderId.get(rect.data.orderId) ?? "",
       data: rect.data,
     }));
     const nesting = runProductionNesting(productionItems);
@@ -196,8 +200,11 @@ export async function POST(request: NextRequest) {
       width: placement.width,
       height: placement.height,
       rotated: placement.rotated,
-      // Explicit mode marker (lib/staging-mode.ts): blocks legacy append/rerun on this sheet.
-      status: STAGED_PRODUCTION,
+      rotationDeg: placement.rotationDeg,
+      // Shape-block sheets: one framed receipt, cut-line gaps, side label.
+      // The older box packer is not on this path anymore (it still runs for
+      // callers that pass no outline — tests and any future opt-out).
+      status: STAGED_SHAPE,
       holeOverrideX: placement.data.holeOverride?.x ?? null,
       holeOverrideY: placement.data.holeOverride?.y ?? null,
     }));
@@ -223,7 +230,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      engine: "production-v3",
+      engine: nesting.engine,
       sheets: nesting.sheetCount,
       items: productionRows.length,
       ordersProcessed: productionOrderIds.length,

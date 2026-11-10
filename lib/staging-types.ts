@@ -46,6 +46,8 @@ export interface StagingItemPayload {
   width: number;
   height: number;
   rotated: boolean;
+  /** 0, 90, 180 or 270. Missing on older rows: 90 when `rotated`, otherwise 0. */
+  rotationDeg?: number | null;
   status: string;
   order: StagingOrderPayload | null;
   template: StagingTemplatePayload | null;

@@ -2,6 +2,7 @@ import { activeProductionFrame, type ActiveProductionFrame } from "@/lib/active-
 import { CURVE_TOLERANCE_MM } from "@/lib/keychain-geometry";
 import { circleFromPathData, flattenPathToPolygons, type FlatPoint } from "@/lib/laser-outline";
 import type { StagingItemPayload, StagingSheet } from "@/lib/staging-types";
+import { localToSheet } from "@/lib/staging-transform";
 import { sanitizeFileName } from "@/lib/utils";
 
 /**
@@ -11,14 +12,10 @@ import { sanitizeFileName } from "@/lib/utils";
  * string, since DXF entities carry absolute coordinates, not transforms.
  */
 function applyItemTransform(
-  item: Pick<StagingItemPayload, "posX" | "posY" | "width" | "rotated">,
+  item: Pick<StagingItemPayload, "posX" | "posY" | "width" | "height" | "rotated"> & { rotationDeg?: number | null },
   point: FlatPoint
 ): FlatPoint {
-  if (!item.rotated) {
-    return { x: point.x + item.posX, y: point.y + item.posY };
-  }
-  // SVG rotate(90) maps (x, y) -> (-y, x), applied before the translate.
-  return { x: -point.y + item.posX + item.width, y: point.x + item.posY };
+  return localToSheet(item, point);
 }
 
 /**
@@ -89,7 +86,7 @@ function sheetReferenceEntities(frame: ActiveProductionFrame): string[] {
  */
 function pathToDxfEntities(
   d: string,
-  item: Pick<StagingItemPayload, "posX" | "posY" | "width" | "rotated">,
+  item: Pick<StagingItemPayload, "posX" | "posY" | "width" | "height" | "rotated"> & { rotationDeg?: number | null },
   layer: string,
   frameHeightMm: number
 ): string[] {

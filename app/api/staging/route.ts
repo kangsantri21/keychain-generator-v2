@@ -5,6 +5,7 @@ import { stagingItems, orders, templates, type Order, type Template } from "@/li
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import type { KeychainRender } from "@/lib/render-types";
+import { shapeGateFields } from "@/lib/nesting/shape-placed";
 import { summarizeSheet, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
 import type { StagingSheetSummary } from "@/lib/staging-types";
 import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
@@ -21,6 +22,7 @@ interface StagingItemPayload {
   width: number;
   height: number;
   rotated: boolean;
+  rotationDeg: number | null;
   status: string;
   order: Order | null;
   template: Template | null;
@@ -49,6 +51,7 @@ export async function GET(request: NextRequest) {
       width: stagingItems.width,
       height: stagingItems.height,
       rotated: stagingItems.rotated,
+      rotationDeg: stagingItems.rotationDeg,
       status: stagingItems.status,
       holeOverrideX: stagingItems.holeOverrideX,
       holeOverrideY: stagingItems.holeOverrideY,
@@ -112,8 +115,10 @@ export async function GET(request: NextRequest) {
       width: item.width,
       height: item.height,
       rotated: item.rotated,
+      rotationDeg: item.rotationDeg,
       expectedWidth: item.render?.width ?? NaN,
       expectedHeight: item.render?.height ?? NaN,
+      ...shapeGateFields(item, item.render),
     }));
     const { mode, source } = sheetModeOf(sheetItems);
     const gate = validatePlacedSheets(placed, placed.map((p) => p.key), mode === "mixed" ? "production" : mode);

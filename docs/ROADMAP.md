@@ -35,7 +35,9 @@ Selesai bila:
 - File itu tetap di `docs/reference/contoh-nesting-manual.jpg` dan PRD menautkannya.
 - Setiap PR nesting yang menyentuh P0.4–P0.6 menempelkan gambar hasil mesin di samping gambar ini untuk satu batch campuran (kolom nama panjang, blok karakter, dan minimal dua resi).
 
-### P0.4 Satu resi satu blok, satu kode resi di samping bingkai
+### P0.4 Satu resi satu blok, satu kode resi di samping bingkai — selesai di sesi susunan blok, belum di `main`
+
+Gambar dan angka: [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 
 `main` tidak mengelompokkan resi. Mode produksi di branch sudah mengelompokkan kotak, tetapi file cetak tidak menggambar bingkai dan kode resi diletakkan di ruang kosong di dalam kotak, atau (pada mesin lama) di bawah setiap keping.
 
@@ -46,7 +48,9 @@ Selesai bila, pada batch uji yang polanya sama dengan contoh manual:
 - Kode resi tercetak tepat satu kali, kecil, di selokan di samping bingkai, bukan di bawah setiap keping. Tes menghitung jumlah label per resi dan gagal jika bukan 1.
 - Dua resi pada fixture tes tidak saling seling jika dijalankan lewat mode yang dipakai produksi.
 
-### P0.5 Rotasi 90 derajat dan 180 derajat
+### P0.5 Rotasi 90 derajat dan 180 derajat — selesai di sesi susunan blok, belum di `main`
+
+270° dipakai hanya kalau itu membuat blok lebih pendek. Contoh manual tidak butuh sudut selain kelipatan 90°. Itu dicatat di PRD.
 
 Sekarang keping hanya bisa 0 derajat atau 90 derajat, karena packer hanya menukar lebar dan tinggi. Putaran 180 derajat tidak mengubah kotak, jadi tidak pernah dipilih. Contoh manual memakai keduanya: nama panjang menjadi kolom (90 derajat) dan banyak nama terbaca terbalik atas-bawah (180 derajat).
 
@@ -58,7 +62,9 @@ Selesai bila:
 - Kelompok resi tidak pecah gara-gara diputar.
 - Jika contoh manual ternyata butuh sudut selain kelipatan 90, catat di PRD dan jangan pura-pura butir ini sudah menutupnya.
 
-### P0.6 Kerapatan mendekati penataan manual
+### P0.6 Kerapatan mendekati penataan manual — selesai di sesi susunan blok, belum di `main`
+
+Pada sampel 11 resi, tinggi mesin 195,8 mm. Susunan tangan 223,6 mm. Selisihnya 12,4% lebih hemat, di dalam batas 10% lebih boros. Rapatan mengikuti garis potong, jarak aman 1 mm. Kotak lama pada sampel yang sama 205,0 mm.
 
 Prioritasnya hemat bahan, tanpa memecah kelompok. Contoh manual hampir penuh, sisa tepi tipis, tanda registrasi tetap di empat sudut.
 
