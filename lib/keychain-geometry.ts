@@ -89,13 +89,14 @@ export const MAX_LAYOUT_OFFSET_MM = 15;
 export const OUTLINE_OFFSET_MM = 2.5;
 
 /**
- * Extra morphological closing, applied before the offset, in mm of gap
- * width (the closing radius is half). Default 0: the 2.5 mm offset already
- * closes the small gaps between letters, and a separate closing was flattening
- * the bays the Corel sample still follows (between F and a, between z and a).
- * Raise this only when a gap wider than 2 × OUTLINE_OFFSET_MM must still join.
+ * After the 2.5 mm offset, fill concave notches narrower than this (mm).
+ * The closing radius is half of it. It runs on each already-offset piece
+ * by itself, so a straight outer edge does not move and a word space that
+ * is already a separate piece stays open. 4 mm rounds off the sharp
+ * cusps between letters in "Faza" (and the other samples) into a smooth
+ * arc without bridging the ~3 mm gap that remains between words.
  */
-export const GAP_CLOSE_MM = 0;
+export const GAP_CLOSE_MM = 4;
 
 /**
  * Round-off used only where a ring-hole washer or a character silhouette

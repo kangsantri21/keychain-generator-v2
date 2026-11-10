@@ -10,7 +10,8 @@
  *   1. Text -> path: the caller's own `ColoredTextRender` (font-preview.ts).
  *   2. Contour: one outward round-join offset of OUTLINE_OFFSET_MM (2.5 mm,
  *      Corel contour 0.25 cm). Letter gaps narrower than twice that close
- *      by themselves. GAP_CLOSE_MM stays 0 unless an extra close is asked for.
+ *      by themselves. GAP_CLOSE_MM (4 mm) then fills the sharp cusps that
+ *      remain, without moving the outer edge.
  *   3. Bounding box FROM THE CONTOUR, not the raw glyph bbox.
  *   4. Hole anchor: X = contour's own leftmost point; Y = the vertical
  *      midpoint of the FIRST LETTER's own contour.

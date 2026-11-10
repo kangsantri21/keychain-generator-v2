@@ -118,8 +118,8 @@ interface ScaledRenderResult {
  *
  * Kept fixed regardless of either target height (physical/hardware
  * constants, not design proportions): OUTLINE_OFFSET_MM (Corel contour
- * 0.25 cm = 2.5 mm, round join) and GAP_CLOSE_MM (extra closing, default
- * off — the offset itself bridges letter gaps),
+ * 0.25 cm = 2.5 mm, round join) and GAP_CLOSE_MM (fills sharp notches
+ * on that contour without moving the outer edge),
  * RING_HOLE_DIAMETER_MM (a fixed hardware-fit spec), and
  * MARGIN_MM/RING_HOLE_OFFSET_MM/holeOffsetX/Y (fixed real-world layout
  * spacing, not tied to either node's own size). template.dynamicGapX/

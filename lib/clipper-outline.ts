@@ -68,6 +68,25 @@ function clipperPathsToSvgD(paths: ClipperLib.Paths): string | null {
 }
 
 /**
+ * Fills notches narrower than `gapWidth` on each path separately.
+ * Doing it per path (not on the whole set at once) keeps two pieces that
+ * are already apart — a word space — from growing back together.
+ * Round joins, so the filled notch becomes an arc, not a flat chord.
+ */
+function closeEachPath(paths: ClipperLib.Paths, gapWidth: number, arcTolerance: number): ClipperLib.Paths {
+  if (gapWidth <= 1e-9) return paths;
+  const radius = gapWidth / 2;
+  const closed: ClipperLib.Paths = [];
+  for (const path of paths) {
+    const grown = offsetPaths([path], radius, arcTolerance);
+    const shrunk = offsetPaths(grown, -radius, arcTolerance);
+    if (shrunk.length > 0) closed.push(...shrunk);
+    else closed.push(path);
+  }
+  return keepOuterOrientation(closed);
+}
+
+/**
  * Offsets closed paths by `delta` path-units (positive = outward).
  * `arcTolerance` is the maximum distance between a true round join and the
  * straight segments that replace it, in the same units as the path — not
@@ -156,13 +175,13 @@ export interface ProductionOutlineOptions {
  *
  * 1. Union the design and drop interior holes, so the middle of "O" stays
  *    solid acrylic and the laser sees one outer silhouette.
- * 2. Optional closing (`gapClose`, default 0). Left off so inner bays keep
- *    following the letter. A non-zero value fills gaps of that width first.
- * 3. Offset outward by `offset` (default 2.5 mm) with round joins. The join
+ * 2. Offset outward by `offset` (default 2.5 mm) with round joins. The join
  *    is a circular arc of that radius. Gaps narrower than twice the offset
- *    close on their own. Curves are flattened only to `curveTolerance`
- *    (0.01 mm), which is what keeps the line from looking like straight
- *    chords when a corner is enlarged.
+ *    close on their own. A straight edge moves by exactly this distance.
+ * 3. Close each resulting piece by `gapClose` (default 4 mm). That fills
+ *    the sharp cusps left between letters without moving the outer edge
+ *    and without joining a separate word. Curves stay within
+ *    `curveTolerance` (0.01 mm).
  *
  * The old dilate(4 mm)/erode(1.5 mm) pass is not this. It closed gaps up to
  * 8 mm and then ate the bays back into flat bridges. `computeLaserOutlineClipper`
@@ -180,18 +199,15 @@ export function computeProductionOutline(shapes: string[], options: ProductionOu
     let paths = keepOuterOrientation(unionClipperPaths(subjectPaths));
     if (paths.length === 0) return null;
 
-    if (gapClose > 1e-9) {
-      const radius = gapClose / 2;
-      const grown = offsetPaths(paths, radius, curveTolerance);
-      const shrunk = offsetPaths(grown, -radius, curveTolerance);
-      if (shrunk.length > 0) paths = keepOuterOrientation(shrunk);
-    }
-
     if (offset > 1e-9) {
       const grown = offsetPaths(paths, offset, curveTolerance);
       if (grown.length === 0) return null;
       paths = keepOuterOrientation(grown);
     }
+
+    // After the offset, so the outer edge stays put. Per piece, so a word
+    // space that is already its own contour is not pulled shut.
+    paths = closeEachPath(paths, gapClose, curveTolerance);
 
     return clipperPathsToSvgD(paths);
   } catch {
