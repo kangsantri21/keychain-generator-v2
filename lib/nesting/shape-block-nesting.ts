@@ -21,11 +21,13 @@ import {
 } from "@/lib/nesting/shape-block-config";
 import {
   addTurns,
-  outlinesTooClose,
+  prepareOutline,
+  preparedTooClose,
   rectOutline,
   rotateOutline,
   roundMm,
   translatePolys,
+  type PreparedOutline,
   type Pt,
   type QuarterTurn,
 } from "@/lib/nesting/shape-outline";
@@ -89,6 +91,8 @@ interface LocalPiece<T> {
   w: number;
   h: number;
   polys: Pt[][];
+  /** Outline offset by the cut clearance, in the piece's local coordinates. */
+  prepared: PreparedOutline;
 }
 
 interface FootprintOption<T> {
@@ -121,9 +125,18 @@ function outlineOf<T>(item: ShapeBlockItem<T>): Pt[][] {
   return item.outline && item.outline.length > 0 ? item.outline : rectOutline(item.width, item.height);
 }
 
-function pieceAt<T>(item: ShapeBlockItem<T>, rot: QuarterTurn, x: number, y: number): LocalPiece<T> {
+function pieceAt<T>(item: ShapeBlockItem<T>, rot: QuarterTurn, x: number, y: number, clearance: number): LocalPiece<T> {
   const turned = rotateOutline(outlineOf(item), item.width, item.height, rot);
-  return { item, x, y, rot, w: turned.width, h: turned.height, polys: turned.polys };
+  return {
+    item,
+    x,
+    y,
+    rot,
+    w: turned.width,
+    h: turned.height,
+    polys: turned.polys,
+    prepared: prepareOutline(turned.polys, clearance),
+  };
 }
 
 function keyBefore(a: [number, number, number, number], b: [number, number, number, number]): boolean {
@@ -137,19 +150,14 @@ function rectsApart(a: { x: number; y: number; w: number; h: number }, b: { x: n
   return dx >= gap - EPS || dy >= gap - EPS;
 }
 
-function polysAt(piece: LocalPiece<unknown>, x: number, y: number): Pt[][] {
-  return translatePolys(piece.polys, x, y);
-}
-
 function hitsPiece(piece: LocalPiece<unknown>, x: number, y: number, others: LocalPiece<unknown>[], clearance: number): boolean {
   const box = { x, y, w: piece.w, h: piece.h };
-  const moved = polysAt(piece, x, y);
   for (const other of others) {
     if (other === piece) continue;
     const otherBox = { x: other.x, y: other.y, w: other.w, h: other.h };
     // Outlines live inside their boxes, so a wide box gap is already safe.
     if (rectsApart(box, otherBox, clearance)) continue;
-    if (outlinesTooClose(moved, polysAt(other, other.x, other.y), clearance)) return true;
+    if (preparedTooClose(piece.prepared, x, y, other.prepared, other.x, other.y)) return true;
   }
   return false;
 }
@@ -180,7 +188,8 @@ function slideCoord(current: number, hits: (value: number) => boolean): number {
   if (!hits(0)) return 0;
   let lo = 0;
   let hi = current;
-  for (let i = 0; i < 14; i++) {
+  // 0.2 mm is finer than the gap tolerance used when blocks are placed.
+  for (let i = 0; i < 12 && hi - lo > 0.2; i++) {
     const mid = (lo + hi) / 2;
     if (hits(mid)) lo = mid;
     else hi = mid;
@@ -256,14 +265,15 @@ function stackLayout<T>(
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const rot = turnsFor(item, baseOf(item, i))[0];
-    const piece = pieceAt(item, rot, 0, 0);
+    const piece = pieceAt(item, rot, 0, 0, gap);
     if (piece.h > maxH + EPS || piece.w > maxW + EPS) {
-      const other = item.allowRotation ? pieceAt(item, addTurns(rot, 90), 0, 0) : null;
+      const other = item.allowRotation ? pieceAt(item, addTurns(rot, 90), 0, 0, gap) : null;
       if (!other || other.h > maxH + EPS || other.w > maxW + EPS) return null;
       piece.rot = other.rot;
       piece.w = other.w;
       piece.h = other.h;
       piece.polys = other.polys;
+      piece.prepared = other.prepared;
     }
     if (column.length > 0 && colH + piece.h > maxH + EPS) flush();
     piece.y = colH;
@@ -275,6 +285,163 @@ function stackLayout<T>(
   }
   flush();
   return columns.flat();
+}
+
+interface RasterMask {
+  data: Uint8Array;
+  gw: number;
+  gh: number;
+  /** Mask pixel (0, 0) corresponds to this offset from the piece origin. */
+  origin: number;
+}
+
+function fillPolygon(data: Uint8Array, gw: number, gh: number, poly: Pt[], ox: number, oy: number): void {
+  if (poly.length < 3) return;
+  const n = poly.length;
+  let minY = gh;
+  let maxY = 0;
+  for (const p of poly) {
+    const y = p.y - oy;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const y0 = Math.max(0, Math.floor(minY));
+  const y1 = Math.min(gh - 1, Math.ceil(maxY));
+  for (let y = y0; y <= y1; y++) {
+    const ymid = y + 0.5;
+    const nodes: number[] = [];
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const yA = poly[j].y - oy;
+      const yB = poly[i].y - oy;
+      if ((yA <= ymid && yB > ymid) || (yB <= ymid && yA > ymid)) {
+        const t = (ymid - yA) / (yB - yA);
+        nodes.push(poly[j].x - ox + t * (poly[i].x - poly[j].x));
+      }
+    }
+    nodes.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < nodes.length; k += 2) {
+      const xStart = Math.max(0, Math.floor(nodes[k]));
+      const xEnd = Math.min(gw - 1, Math.ceil(nodes[k + 1]) - 1);
+      const row = y * gw;
+      for (let x = xStart; x <= xEnd; x++) data[row + x] = 1;
+    }
+  }
+}
+
+/** 1 mm cells. The mask is the outline dilated by the clearance so a later overlap test is the gap. */
+function rasterMask(polys: Pt[][], width: number, height: number, clearance: number): RasterMask {
+  const origin = Math.ceil(clearance);
+  const gw = Math.max(1, Math.ceil(width) + origin * 2);
+  const gh = Math.max(1, Math.ceil(height) + origin * 2);
+  const filled = new Uint8Array(gw * gh);
+  for (const poly of polys) fillPolygon(filled, gw, gh, poly, -origin, -origin);
+  if (origin <= 0) return { data: filled, gw, gh, origin };
+  const data = new Uint8Array(gw * gh);
+  for (let y = 0; y < gh; y++) {
+    for (let x = 0; x < gw; x++) {
+      if (!filled[y * gw + x]) continue;
+      for (let dy = -origin; dy <= origin; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= gh) continue;
+        const row = ny * gw;
+        for (let dx = -origin; dx <= origin; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= gw) continue;
+          data[row + nx] = 1;
+        }
+      }
+    }
+  }
+  return { data, gw, gh, origin };
+}
+
+function maskHits(sheet: Uint8Array, sw: number, sh: number, mask: RasterMask, x: number, y: number): boolean {
+  const x0 = x - mask.origin;
+  const y0 = y - mask.origin;
+  for (let py = 0; py < mask.gh; py++) {
+    const sy = y0 + py;
+    const row = py * mask.gw;
+    for (let px = 0; px < mask.gw; px++) {
+      if (!mask.data[row + px]) continue;
+      const sx = x0 + px;
+      if (sy < 0 || sx < 0) continue;
+      if (sx >= sw || sy >= sh || sheet[sy * sw + sx]) return true;
+    }
+  }
+  return false;
+}
+
+function stampOutline(sheet: Uint8Array, sw: number, sh: number, polys: Pt[][], x: number, y: number): void {
+  // Stamp the real outline. The dilated mask is only used while testing a gap.
+  for (const poly of polys) fillPolygon(sheet, sw, sh, poly, -x, -y);
+}
+
+/**
+ * Bottom-left nest on a 1 mm picture of the cut line. This is the search used
+ * for a whole sheet of pieces: the same anchor idea as the clipper search,
+ * without offsetting every candidate. A later slide pass checks the true gap.
+ */
+function rasterNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[] | null {
+  const sw = Math.max(1, Math.floor(maxW + EPS));
+  const sh = Math.max(1, Math.floor(maxH + EPS));
+  const sheet = new Uint8Array(sw * sh);
+  const sorted = [...items].sort(
+    (a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height) || String(a.id).localeCompare(String(b.id))
+  );
+  const placed: LocalPiece<T>[] = [];
+  const masks = new Map<string, RasterMask>();
+  const maskFor = (piece: LocalPiece<T>) => {
+    const key = `${piece.item.id}:${piece.rot}`;
+    const cached = masks.get(key);
+    if (cached) return cached;
+    const built = rasterMask(piece.polys, piece.w, piece.h, clearance);
+    masks.set(key, built);
+    return built;
+  };
+  for (const item of sorted) {
+    const rots: QuarterTurn[] = item.allowRotation ? [0, 180, 90, 270] : [0];
+    let best: LocalPiece<T> | null = null;
+    let bestKey: [number, number, number, number] | null = null;
+    for (const rot of rots) {
+      const proto = pieceAt(item, rot, 0, 0, clearance);
+      if (proto.w > maxW + EPS || proto.h > maxH + EPS) continue;
+      const mask = maskFor(proto);
+      const xs = new Set<number>([0]);
+      const ys = new Set<number>([0]);
+      for (const p of placed) {
+        xs.add(Math.max(0, Math.round(p.x)));
+        ys.add(Math.max(0, Math.round(p.y)));
+        xs.add(Math.max(0, Math.round(p.x + p.w + clearance)));
+        ys.add(Math.max(0, Math.round(p.y + p.h + clearance)));
+        for (const inset of [4, 8]) {
+          xs.add(Math.max(0, Math.round(p.x + p.w + clearance - inset)));
+          ys.add(Math.max(0, Math.round(p.y + p.h + clearance - inset)));
+        }
+      }
+      const yList = [...ys].filter((y) => y + proto.h <= maxH + 0.2).sort((a, b) => a - b);
+      const xList = [...xs].filter((x) => x + proto.w <= maxW + 0.2).sort((a, b) => a - b);
+      for (const y of yList) {
+        let foundOnRow = false;
+        for (const x of xList) {
+          if (maskHits(sheet, sw, sh, mask, x, y)) continue;
+          const bottom = Math.max(y + proto.h, ...placed.map((p) => p.y + p.h), 0);
+          const right = Math.max(x + proto.w, ...placed.map((p) => p.x + p.w), 0);
+          const key: [number, number, number, number] = [bottom, right, y, x];
+          if (!bestKey || keyBefore(key, bestKey)) {
+            bestKey = key;
+            best = { ...proto, x, y };
+          }
+          foundOnRow = true;
+          break;
+        }
+        if (foundOnRow && best && Math.abs(best.y - y) < 0.5) break;
+      }
+    }
+    if (!best) return null;
+    placed.push(best);
+    stampOutline(sheet, sw, sh, best.polys, best.x, best.y);
+  }
+  return placed;
 }
 
 /**
@@ -290,7 +457,7 @@ function outlineNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, 
     let best: LocalPiece<T> | null = null;
     let bestKey: [number, number, number, number] | null = null;
     for (const rot of rots) {
-      const proto = pieceAt(item, rot, 0, 0);
+      const proto = pieceAt(item, rot, 0, 0, clearance);
       if (proto.w > maxW + EPS || proto.h > maxH + EPS) continue;
       const xs = new Set<number>([0]);
       const ys = new Set<number>([0]);
@@ -352,10 +519,10 @@ function flipPass<T>(pieces: LocalPiece<T>[], clearance: number): LocalPiece<T>[
   if (pieces.length <= 10) {
     for (let i = 0; i < pieces.length; i++) {
       if (!pieces[i].item.allowRotation) continue;
-      trials.push(pieces.map((p, index) => (index === i ? flipped(p) : p)));
+      trials.push(pieces.map((p, index) => (index === i ? flipped(p, clearance) : p)));
     }
   }
-  trials.push(pieces.map((p, index) => (index % 2 === 1 && p.item.allowRotation ? flipped(p) : p)));
+  trials.push(pieces.map((p, index) => (index % 2 === 1 && p.item.allowRotation ? flipped(p, clearance) : p)));
   for (const trial of trials) {
     const slid = slidePieces(trial, clearance);
     if (sizeOf(slid).area + 0.5 < sizeOf(best).area) best = slid;
@@ -363,10 +530,9 @@ function flipPass<T>(pieces: LocalPiece<T>[], clearance: number): LocalPiece<T>[
   return best;
 }
 
-function flipped<T>(piece: LocalPiece<T>): LocalPiece<T> {
+function flipped<T>(piece: LocalPiece<T>, clearance: number): LocalPiece<T> {
   const rot = addTurns(piece.rot, 180);
-  const next = pieceAt(piece.item, rot, piece.x, piece.y);
-  return next;
+  return pieceAt(piece.item, rot, piece.x, piece.y, clearance);
 }
 
 /**
@@ -389,11 +555,11 @@ function columnStrips<T>(
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const rot: QuarterTurn = !item.allowRotation ? 0 : flip && i % 2 === 1 ? 270 : 90;
-    let piece = pieceAt(item, rot, 0, 0);
+    let piece = pieceAt(item, rot, 0, 0, gap);
     if (piece.h > maxH + EPS) return null;
     if (piece.w > maxW + EPS) {
       if (!item.allowRotation) return null;
-      piece = pieceAt(item, 0, 0, 0);
+      piece = pieceAt(item, 0, 0, 0, gap);
       if (piece.w > maxW + EPS || piece.h > maxH + EPS) return null;
     }
     if (x > 0 && x + piece.w > maxW + EPS) {
@@ -425,10 +591,10 @@ function rowShelf<T>(
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const rot = item.allowRotation ? rotOf(item, i) : 0;
-    let piece = pieceAt(item, rot, 0, 0);
+    let piece = pieceAt(item, rot, 0, 0, gap);
     if (piece.w > maxW + EPS) {
       if (!item.allowRotation) return null;
-      const turned = pieceAt(item, addTurns(rot, 90), 0, 0);
+      const turned = pieceAt(item, addTurns(rot, 90), 0, 0, gap);
       if (turned.w > maxW + EPS) return null;
       piece = turned;
     }
@@ -454,6 +620,9 @@ function rowShelf<T>(
 function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[][] {
   const gap = clearance;
   const heights = [maxH, maxH * 0.62, maxH * 0.4];
+  // Bottom-left search is worthwhile for a small receipt. On a full manual
+  // sheet (dozens of pieces) it spends a long time and then rejects the
+  // layout; row and column packing plus the slide pass already interlock.
   const raw: (LocalPiece<T>[] | null)[] = [
     columnStrips(items, maxW, maxH, gap, true),
     columnStrips(items, maxW, maxH, gap, false),
@@ -461,7 +630,8 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
     rowShelf(items, () => 0, maxW, gap),
     rowShelf(items, (_item, index) => oddTurn(index), maxW, gap),
     rowShelf(items, (item) => baseRot(item), maxW, gap),
-    outlineNest(items, maxW, maxH, gap),
+    rasterNest(items, maxW, maxH, gap),
+    items.length <= 18 ? outlineNest(items, maxW, maxH, gap) : null,
   ];
   for (const limit of heights) {
     raw.push(stackLayout(items, () => 0, limit, maxW, gap));

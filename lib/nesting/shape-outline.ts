@@ -142,16 +142,30 @@ function hasArea(paths: ClipperLib.Paths): boolean {
   return paths.some((path) => Math.abs(ClipperLib.Clipper.Area(path)) > AREA_EPS);
 }
 
-/** True when the two outlines come closer than `clearanceMm` (overlap counts). */
-export function outlinesTooClose(a: Pt[][], b: Pt[][], clearanceMm: number): boolean {
-  const subject = a.filter((p) => p.length >= 3).map(toPath);
-  const clip = b.filter((p) => p.length >= 3).map(toPath);
+/** Cut outline prepared once so later collision tests only intersect, not offset. */
+export interface PreparedOutline {
+  raw: ClipperLib.Paths;
+  grown: ClipperLib.Paths;
+}
+
+export function prepareOutline(polys: Pt[][], clearanceMm: number): PreparedOutline {
+  const raw = polys.filter((p) => p.length >= 3).map((p) => orientPositive(toPath(p)));
+  const grown = clearanceMm > 1e-6 ? offsetPaths(raw, clearanceMm) : raw.map((path) => path.map((p) => ({ X: p.X, Y: p.Y })));
+  return { raw, grown };
+}
+
+function shiftPaths(paths: ClipperLib.Paths, dx: number, dy: number): ClipperLib.Paths {
+  const sx = Math.round(dx * SCALE);
+  const sy = Math.round(dy * SCALE);
+  if (sx === 0 && sy === 0) return paths;
+  return paths.map((path) => path.map((p) => ({ X: p.X + sx, Y: p.Y + sy })));
+}
+
+function pathsIntersect(subject: ClipperLib.Paths, clip: ClipperLib.Paths): boolean {
   if (subject.length === 0 || clip.length === 0) return false;
-  const grown = clearanceMm > 1e-6 ? offsetPaths(subject, clearanceMm) : subject.map(orientPositive);
-  if (grown.length === 0) return false;
   const clipper = new ClipperLib.Clipper();
-  clipper.AddPaths(grown, ClipperLib.PolyType.ptSubject, true);
-  clipper.AddPaths(clip.map(orientPositive), ClipperLib.PolyType.ptClip, true);
+  clipper.AddPaths(subject, ClipperLib.PolyType.ptSubject, true);
+  clipper.AddPaths(clip, ClipperLib.PolyType.ptClip, true);
   const solution: ClipperLib.Paths = [];
   clipper.Execute(
     ClipperLib.ClipType.ctIntersection,
@@ -160,6 +174,21 @@ export function outlinesTooClose(a: Pt[][], b: Pt[][], clearanceMm: number): boo
     ClipperLib.PolyFillType.pftNonZero
   );
   return hasArea(solution);
+}
+
+/**
+ * Same test as `outlinesTooClose`, using outlines that were offset once.
+ * Positions are the translation of each outline's local origin.
+ */
+export function preparedTooClose(a: PreparedOutline, ax: number, ay: number, b: PreparedOutline, bx: number, by: number): boolean {
+  return pathsIntersect(shiftPaths(a.grown, ax, ay), shiftPaths(b.raw, bx, by));
+}
+
+/** True when the two outlines come closer than `clearanceMm` (overlap counts). */
+export function outlinesTooClose(a: Pt[][], b: Pt[][], clearanceMm: number): boolean {
+  const prepared = prepareOutline(a, clearanceMm);
+  const other = prepareOutline(b, 0);
+  return preparedTooClose(prepared, 0, 0, other, 0, 0);
 }
 
 function simplifyRing(poly: Pt[], epsilon: number, maxPoints: number): Pt[] {
