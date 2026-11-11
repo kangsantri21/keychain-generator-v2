@@ -17,6 +17,8 @@ const MANUAL_NOTE = "lembar penuh: konten sampai sekitar 6 mm dari tepi";
 async function main() {
   const listed = manualSheetPieces();
   console.log(`keping ${listed.length}, resi ${new Set(listed.map((p) => p.code)).size}`);
+  const { manualFontPath } = await import("@/lib/nesting/manual-real-outline");
+  console.log("font", manualFontPath());
   const rendered = renderManualPieces(listed);
   const sample = rendered.slice(0, 3).map((item) => `${item.piece.name} ${item.width.toFixed(1)}x${item.height.toFixed(1)}`);
   console.log("contoh ukuran", sample.join(", "));
@@ -66,28 +68,31 @@ async function main() {
   for (const sheet of sheets) {
     writeFileSync(`${dir}/manual-real-aplikasi-${sheet}.svg`, renderSheetSvg(previews, sheet, "Aplikasi — garis potong nama manual", true));
   }
-  const appPng = await sharp(Buffer.from(renderSheetSvg(previews, sheets[0], "Aplikasi", true)), { density: 72 }).png().toBuffer();
-  await sharp(appPng).toFile(`${dir}/manual-real-aplikasi.png`);
-
-  const photo = await sharp("docs/reference/contoh-nesting-manual.jpg").flop().rotate(90).resize({ height: 1334 }).png().toBuffer();
-  const appScaled = await sharp(appPng).resize({ height: 1334 }).png().toBuffer();
+  const photoPxPerMm = 1400 / SHEET_HEIGHT_MM;
+  const sheetPxH = Math.round(SHEET_HEIGHT_MM * photoPxPerMm);
+  const sheetPngs: Buffer[] = [];
+  for (const sheet of sheets) {
+    const svg = renderSheetSvg(previews, sheet, `Aplikasi lembar ${sheet + 1}`, true);
+    const png = await sharp(Buffer.from(svg), { density: 76 }).resize({ height: sheetPxH }).png().toBuffer();
+    sheetPngs.push(png);
+    if (sheet === sheets[0]) await sharp(png).toFile(`${dir}/manual-real-aplikasi.png`);
+  }
+  const photo = await sharp("docs/reference/contoh-nesting-manual.jpg").flop().rotate(90).png().toBuffer();
   const photoMeta = await sharp(photo).metadata();
-  const appMeta = await sharp(appScaled).metadata();
-  const side = await sharp({
-    create: {
-      width: (photoMeta.width ?? 0) + (appMeta.width ?? 0) + 24,
-      height: 1334,
-      channels: 3,
-      background: "#ffffff",
-    },
-  })
-    .composite([
-      { input: photo, left: 0, top: 0 },
-      { input: appScaled, left: (photoMeta.width ?? 0) + 24, top: 0 },
-    ])
+  const appMeta = await sharp(sheetPngs[0]).metadata();
+  const appW = (appMeta.width ?? 0) * sheetPngs.length + 16 * (sheetPngs.length - 1);
+  const canvasW = (photoMeta.width ?? 0) + appW + 24;
+  const canvasH = Math.max(photoMeta.height ?? 0, appMeta.height ?? 0);
+  const composites: { input: Buffer; left: number; top: number }[] = [{ input: photo, left: 0, top: 0 }];
+  let left = (photoMeta.width ?? 0) + 24;
+  for (const png of sheetPngs) {
+    composites.push({ input: png, left, top: 0 });
+    left += (appMeta.width ?? 0) + 16;
+  }
+  await sharp({ create: { width: canvasW, height: canvasH, channels: 3, background: "#ffffff" } })
+    .composite(composites)
     .png()
-    .toBuffer();
-  await sharp(side).toFile(`${dir}/manual-vs-aplikasi.png`);
+    .toFile(`${dir}/manual-vs-aplikasi.png`);
   console.log("gambar", `${dir}/manual-vs-aplikasi.png`);
 }
 
