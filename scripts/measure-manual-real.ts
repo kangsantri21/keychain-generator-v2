@@ -4,9 +4,9 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import sharp from "sharp";
-import { SHEET_HEIGHT_MM, SHEET_WIDTH_MM } from "@/lib/keychain-geometry";
+import { OUTLINE_GROWTH_MM, SHEET_HEIGHT_MM, SHEET_WIDTH_MM } from "@/lib/keychain-geometry";
 import { manualSheetPieces } from "@/lib/nesting/manual-sheet-pieces";
-import { renderManualPieces, toRealShapeItems } from "@/lib/nesting/manual-real-outline";
+import { CHARACTER_OUTER_MM, NAME_OUTER_MM, renderManualPieces, toRealShapeItems } from "@/lib/nesting/manual-real-outline";
 import { renderSheetSvg, type PreviewPiece } from "@/lib/nesting/shape-block-preview";
 import { runShapeBlockNesting } from "@/lib/nesting/shape-block-nesting";
 
@@ -19,7 +19,13 @@ async function main() {
   console.log(`keping ${listed.length}, resi ${new Set(listed.map((p) => p.code)).size}`);
   const { manualFontPath } = await import("@/lib/nesting/manual-real-outline");
   console.log("font", manualFontPath());
-  const rendered = renderManualPieces(listed);
+  // Photo of the full sheet: colored letter ink is about 16 mm, pitch about 23 mm.
+  // The 2.5 mm contour sits in the white gap, so the cut piece is ink + 5 mm.
+  const photoInkMm = 16;
+  const photoNameOuter = photoInkMm + OUTLINE_GROWTH_MM;
+  const photoCharacterOuter = CHARACTER_OUTER_MM * (photoNameOuter / NAME_OUTER_MM);
+  console.log(`skala foto: tinta ${photoInkMm} mm, tinggi luar nama ${photoNameOuter} mm, tokoh ${photoCharacterOuter.toFixed(1)} mm (bawaan setelan ${NAME_OUTER_MM}/${CHARACTER_OUTER_MM})`);
+  const rendered = renderManualPieces(listed, { nameOuterMm: photoNameOuter, characterOuterMm: photoCharacterOuter });
   const sample = rendered.slice(0, 3).map((item) => `${item.piece.name} ${item.width.toFixed(1)}x${item.height.toFixed(1)}`);
   console.log("contoh ukuran", sample.join(", "));
   const items = toRealShapeItems(rendered);
@@ -37,6 +43,8 @@ async function main() {
   console.log(`aplikasi: lembar ${run.sheetCount}, tinggi ${used.toFixed(1)} mm, panjang ${lengthPct.toFixed(1)}%, isi ${fillPct.toFixed(1)}%`);
   console.log(`manual: lembar ${MANUAL_SHEETS}, tinggi ${MANUAL_USED_HEIGHT_MM} mm (${MANUAL_NOTE})`);
   console.log(`selisih tinggi vs manual: ${vsManual.toFixed(1)}%`);
+  const rots = [0, 90, 180, 270].map((deg) => `${deg}° ${run.placements.filter((p) => p.rotationDeg === deg).length}`);
+  console.log("arah", rots.join(", "));
   console.log(
     "blok",
     run.blocks
