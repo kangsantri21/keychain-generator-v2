@@ -277,16 +277,16 @@ function stackLayout<T>(
   return columns.flat();
 }
 
-function anchorPack<T>(
-  items: ShapeBlockItem<T>[],
-  maxW: number,
-  maxH: number,
-  gap: number
-): LocalPiece<T>[] | null {
-  const sorted = [...items].sort((a, b) => b.width * b.height - a.width * a.height || String(a.id).localeCompare(String(b.id)));
+/**
+ * Bottom-left nest on the cut outline. Anchors step a few millimetres into
+ * the neighbour's box so a notch can take the next piece. 180° is tried,
+ * not only 90°, because a flip is what lets two wavy names share a gap.
+ */
+function outlineNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[] | null {
+  const sorted = [...items].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height) || String(a.id).localeCompare(String(b.id)));
   const placed: LocalPiece<T>[] = [];
   for (const item of sorted) {
-    const rots: QuarterTurn[] = item.allowRotation ? [0, 90] : [0];
+    const rots: QuarterTurn[] = item.allowRotation ? [0, 180, 90, 270] : [0];
     let best: LocalPiece<T> | null = null;
     let bestKey: [number, number, number, number] | null = null;
     for (const rot of rots) {
@@ -295,25 +295,34 @@ function anchorPack<T>(
       const xs = new Set<number>([0]);
       const ys = new Set<number>([0]);
       for (const p of placed) {
-        xs.add(roundMm(p.x + p.w + gap));
-        ys.add(roundMm(p.y + p.h + gap));
-        xs.add(p.x);
-        ys.add(p.y);
+        xs.add(roundMm(Math.max(0, p.x)));
+        ys.add(roundMm(Math.max(0, p.y)));
+        xs.add(roundMm(p.x + p.w + clearance));
+        ys.add(roundMm(p.y + p.h + clearance));
+        for (const inset of [3, 6, 10]) {
+          xs.add(roundMm(Math.max(0, p.x + p.w + clearance - inset)));
+          ys.add(roundMm(Math.max(0, p.y + p.h + clearance - inset)));
+        }
       }
-      for (const y of [...ys].sort((a, b) => a - b)) {
-        if (y + proto.h > maxH + EPS) continue;
-        for (const x of [...xs].sort((a, b) => a - b)) {
-          if (x + proto.w > maxW + EPS) continue;
-          const box = { x, y, w: proto.w, h: proto.h };
-          if (placed.some((p) => !rectsApart(box, p, gap))) continue;
-          const bottom = y + proto.h;
-          const right = x + proto.w;
+      const yList = [...ys].filter((y) => y + proto.h <= maxH + 0.2).sort((a, b) => a - b);
+      const xList = [...xs].filter((x) => x + proto.w <= maxW + 0.2).sort((a, b) => a - b);
+      for (const y of yList) {
+        let foundOnRow = false;
+        for (const x of xList) {
+          if (hitsPiece(proto, x, y, placed, clearance)) continue;
+          const bottoms = placed.map((p) => p.y + p.h);
+          const rights = placed.map((p) => p.x + p.w);
+          const bottom = Math.max(y + proto.h, ...bottoms, 0);
+          const right = Math.max(x + proto.w, ...rights, 0);
           const key: [number, number, number, number] = [bottom, right, y, x];
           if (!bestKey || keyBefore(key, bestKey)) {
             bestKey = key;
             best = { ...proto, x, y };
           }
+          foundOnRow = true;
+          break;
         }
+        if (foundOnRow && best && best.y === y) break;
       }
     }
     if (!best) return null;
@@ -408,7 +417,7 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
     rowShelf(items, (_item, index) => oddTurn(index), maxW, gap),
     rowShelf(items, (item) => baseRot(item), maxW, gap),
     rowShelf(items, (item, index) => addTurns(baseRot(item), oddTurn(index)), maxW, gap),
-    anchorPack(items, maxW, maxH, gap),
+    outlineNest(items, maxW, maxH, gap),
   ];
   for (const limit of heights) {
     raw.push(stackLayout(items, () => 0, limit, maxW, gap));
@@ -502,7 +511,8 @@ function bestSpot(
     for (const x of xs.sort((a, b) => a - b)) {
       if (!fitsSheet(x, y, w, h, config)) continue;
       const box = { x, y, w, h };
-      if (onSheet.some((p) => separation(box, p) < config.blockGapMm - EPS)) continue;
+      // 0.05 mm absorbs rounding when an anchor is the neighbour's edge plus the gap.
+      if (onSheet.some((p) => separation(box, p) < config.blockGapMm - 0.05)) continue;
       if (!best || y + h < best.y + h - EPS || (Math.abs(y + h - (best.y + h)) <= EPS && x < best.x)) best = { x, y };
     }
   }
@@ -564,7 +574,23 @@ function packBlocks<T>(blocks: BuiltBlock<T>[], config: ShapeBlockConfig): Choic
     beam = next.slice(0, 12);
     if (beam.length === 0) return null;
   }
-  return beam[0]?.choices ?? null;
+  const choices = beam[0]?.choices ?? null;
+  return choices ? pullOntoEarlierSheets(choices, config) : null;
+}
+
+/** A block that opened a new sheet is moved up if an earlier sheet still has a free strip. */
+function pullOntoEarlierSheets<T>(choices: Choice<T>[], config: ShapeBlockConfig): Choice<T>[] {
+  const order = [...choices].sort((a, b) => b.spot.sheet - a.spot.sheet || a.spot.h - b.spot.h);
+  for (const choice of order) {
+    const others = choices.filter((other) => other !== choice).map((other) => other.spot);
+    for (let sheet = 0; sheet < choice.spot.sheet; sheet++) {
+      const spot = bestSpot(others, choice.option.footW, choice.option.footH, sheet, config);
+      if (!spot) continue;
+      choice.spot = { ...choice.spot, sheet, x: spot.x, y: spot.y };
+      break;
+    }
+  }
+  return choices;
 }
 
 function compareChoices<T>(a: Choice<T>[], b: Choice<T>[]): number {

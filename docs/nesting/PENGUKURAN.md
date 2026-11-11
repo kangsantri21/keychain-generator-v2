@@ -1,48 +1,47 @@
 # Pengukuran susunan lembar
 
-Tanggal: 10 November 2026. Mesin baru ada di atas kontur 2,5 mm. Belum digabung ke `main`.
+Tanggal: 11 November 2026. Belum digabung ke `main`.
 
-Patokan: foto lembar manual Rofiq, [contoh penataan manual](../reference/contoh-nesting-manual.jpg). Bukan susunan tangan buatan mesin.
+Patokan: foto lembar manual Rofiq, [contoh penataan manual](../reference/contoh-nesting-manual.jpg).
 
-## Keputusan Rofiq (10 November 2026)
+## Keputusan Rofiq
 
-1. Jarak antar potongan tetap **1 mm** untuk sementara (`CUT_CLEARANCE_MM`).
-2. Nama panjang tidak wajib tegak. Arah 0°, 90°, 180°, atau 270° dipilih per keping hanya kalau itu menghemat bahan.
-3. Luas cetak **31 × 47 cm** (310 × 470 mm).
+1. Jarak antar potongan **1 mm**.
+2. Nama panjang tidak wajib tegak. Arah dipilih hanya untuk menghemat bahan.
+3. Luas cetak **31 × 47 cm**.
+4. Tinggi keping sungguhan: nama saja **2,6 cm**. Tokoh di depan nama **2,9 cm**.
 
-## Sampel nama sungguhan
+## Font
 
-63 keping dari 7 resi yang terbaca di foto. Nama lewat kontur aplikasi: tinggi jadi 20 mm, tokoh 26 mm, offset 2,5 mm, tutup takik 2 mm. Font pesanan tidak ada di repo. Yang dipakai Noto Sans Display Bold. Gelas karakter digambar sebagai satu pelat bundar (nama tercetak di atasnya, bukan garis potong kedua). Tokoh plus nama (Mezza, Rasya, dan sejenisnya) adalah lingkaran 26 mm yang disambung ke teks.
-
-Ejaan yang paling dekat dari font gelembung: Rasqa, Hagan, Cleona. Beberapa label gelas di foto terbalik; tetap dihitung satu keping.
+Foto manual paling dekat dengan Glossy Sheen Shine atau Coffee Soda. Glossy Sheen Shine hanya untuk pemakaian pribadi, jadi tidak dipakai. Coffee Soda (Khurasan) ditulis bebas untuk pemakaian pribadi dan komersial. File-nya ada di `local-fonts/` dan **tidak ikut commit**. Darling Coffee, Choco Shake, dan Buycat tidak punya lisensi yang jelas untuk disimpan di repo.
 
 ## Angka
 
-Manual mengisi satu lembar sampai sekitar 6 mm dari keempat tepi. Praktis satu lembar penuh, tinggi 470 mm.
+63 keping, 7 resi. Kontur 2,5 mm. Nama jadi 26 mm (contoh Ammara 115,5 × 26,0 mm). Tokoh plus nama sekitar 28–29 mm tinggi, bentuk kepala dan bahu yang menempel ke huruf pertama.
 
-Aplikasi menaruh keping yang sama di satu lembar dan berhenti pada 382 mm. Sisa di bawah bisa dipotong.
+| Susunan | Lembar | Tinggi isi | Catatan |
+| --- | --- | --- | --- |
+| Foto manual | 1 | 470 mm | lembar penuh, sisa tepi sekitar 6 mm |
+| Aplikasi | 2 | 736,1 mm | 78,3% dari dua lembar; isi 74,5% di dalam tinggi itu |
 
-| Susunan | Lembar | Tinggi isi | Panjang lembar | Isi di dalam tinggi itu |
-| --- | --- | --- | --- | --- |
-| Foto manual | 1 | 470 mm | 100% | lembar penuh |
-| Aplikasi (garis potong) | 1 | 382,0 mm | 81,3% | 68,5% |
+Aplikasi memakai **56,6% lebih banyak panjang** daripada foto (736,1 dibanding 470). Itu di atas batas 10%.
 
-Aplikasi **18,7% lebih pendek** dari lembar manual. Tidak lebih boros dari batas 10%.
+Penyebabnya ukuran. Di foto, tinta huruf di kolom Ammara terukur sekitar **16 mm** tinggi jika gambar itu dianggap lembar 310 × 470 mm utuh. Pada 2,6 cm, 18 nama seperti Ammara (lebar sekitar 11 cm) tidak muat dalam satu kolom setinggi 47 cm, jadi satu resi saja sudah selebar hampir satu lembar. Luas semua keping butuh sekitar 70 cm panjang lembar. Dua lembar adalah batas rapat untuk ukuran ini, bukan tiga.
 
-Kalau sisa lembar tidak dipotong dan akrilik selalu dibeli 470 mm, keduanya tetap satu lembar. Hematnya baru terasa saat sisa 88 mm di bawah dipotong.
+Gambar skala sama (1 piksel mewakili milimeter yang sama). Kiri foto, kanan dua lembar aplikasi:
 
-Gambar berdampingan (kiri foto manual, kanan aplikasi): [images/manual-vs-aplikasi.png](images/manual-vs-aplikasi.png)
+[images/manual-vs-aplikasi.png](images/manual-vs-aplikasi.png)
 
-Hasil aplikasi saja: [images/manual-real-aplikasi.png](images/manual-real-aplikasi.png)
+Lembar aplikasi pertama: [images/manual-real-aplikasi.png](images/manual-real-aplikasi.png)
 
-![Manual dan aplikasi](images/manual-vs-aplikasi.png)
+![Perbandingan](images/manual-vs-aplikasi.png)
 
-## Yang membuat perbandingan ini belum setara penuh
+## Yang sudah dirapatkan
 
-Gambar tokoh di foto lebih besar dan lebih rumit daripada pelat bundar di hitungan ini. Kalau file SVG tokoh asli dipakai, blok ungu dan biru bisa lebih gemuk, dan selisih 88 mm bisa menyusut. Font gelembung pesanan juga lebih lebar dari Noto Sans Display Bold pada beberapa nama.
+Di dalam blok, keping boleh masuk ke lekukan tetangga (jarak diukur pada garis potong, termasuk putaran 180°). Blok yang tersisa digeser ke lembar sebelumnya kalau masih ada strip kosong. Sisa boros yang besar bukan dari baris yang longgar, melainkan dari keping 2,6 cm yang lebih besar daripada huruf di foto.
 
 ## Cara mengulang
 
 `npx tsx scripts/measure-manual-real.ts`
 
-Jarak aman tetap di `lib/nesting/shape-block-config.ts`.
+Font dibaca dari `local-fonts/CoffeeSoda.ttf`.

@@ -1,30 +1,42 @@
 /**
- * Cut lines for the manual-sheet names, through the same contour the app
- * uses: finished text height 20 mm, character height 26 mm, offset 2.5 mm,
- * notch closing 2 mm. The shop's own font file is not in the repo. Noto
- * Sans Display Bold is the installed display face used in its place.
+ * Cut lines for the names on Rofiq's manual sheet.
+ *
+ * Finished sizes he measured: a name-only keychain is 26 mm tall, and the
+ * character in front of a name is 29 mm tall. The contour is the app's
+ * 2.5 mm round offset. Coffee Soda (Khurasan, free for commercial use) is
+ * the bubbly face; it is read from local-fonts/ and is not committed.
+ * Glossy Sheen Shine is personal-use only, so it is not used.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import * as opentypeNs from "opentype.js";
 import { computeProductionOutline } from "@/lib/clipper-outline";
 import { renderColoredGlyphsAtHeight } from "@/lib/font-preview";
-import {
-  DEFAULT_CHAR_TARGET_HEIGHT_MM,
-  DEFAULT_TEXT_TARGET_HEIGHT_MM,
-  MAX_ITEM_WIDTH_MM,
-  OUTLINE_GROWTH_MM,
-} from "@/lib/keychain-geometry";
-import { circlePathData, getPathBounds, translatePathData, squeezeHorizontalPathData } from "@/lib/laser-outline";
+import { OUTLINE_GROWTH_MM, SHEET_WIDTH_MM } from "@/lib/keychain-geometry";
+import { getPathBounds, translatePathData, squeezeHorizontalPathData } from "@/lib/laser-outline";
 import type { ManualPiece } from "@/lib/nesting/manual-sheet-pieces";
 import type { ShapeBlockItem } from "@/lib/nesting/shape-block-nesting";
 import { polygonsFromOutlinePath, type Pt } from "@/lib/nesting/shape-outline";
 
 const opentype = ((opentypeNs as unknown as { default?: typeof opentypeNs }).default ?? opentypeNs) as typeof opentypeNs;
 
-export const MANUAL_FONT_PATH = "/usr/share/fonts/truetype/noto/NotoSansDisplay-Bold.ttf";
+/** Finished cut height of a name-only keychain, mm. Rofiq: about 2.6 cm. */
+export const NAME_FINISHED_MM = 26;
+/** Finished height of the character bust in front of a name, mm. Rofiq: about 2.9 cm. */
+export const CHARACTER_FINISHED_MM = 29;
 
-const TEXT_RAW_MM = DEFAULT_TEXT_TARGET_HEIGHT_MM - OUTLINE_GROWTH_MM;
-const CHAR_RAW_MM = DEFAULT_CHAR_TARGET_HEIGHT_MM - OUTLINE_GROWTH_MM;
+const TEXT_RAW_MM = NAME_FINISHED_MM - OUTLINE_GROWTH_MM;
+const BUST_RAW_MM = CHARACTER_FINISHED_MM - OUTLINE_GROWTH_MM;
+const MAX_PIECE_MM = SHEET_WIDTH_MM - 40;
+
+export function manualFontPath(): string {
+  const fromEnv = process.env.MANUAL_FONT;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const local = "local-fonts/CoffeeSoda.ttf";
+  if (existsSync(local)) return local;
+  return "/usr/share/fonts/truetype/noto/NotoSansDisplay-Bold.ttf";
+}
+
+export const MANUAL_FONT_PATH = manualFontPath();
 
 export interface RealPiece {
   piece: ManualPiece;
@@ -34,9 +46,15 @@ export interface RealPiece {
   outline: Pt[][];
 }
 
-function roundRectPath(w: number, h: number, r: number): string {
-  const radius = Math.min(r, w / 2, h / 2);
-  return `M ${radius} 0 H ${w - radius} A ${radius} ${radius} 0 0 1 ${w} ${radius} V ${h - radius} A ${radius} ${radius} 0 0 1 ${w - radius} ${h} H ${radius} A ${radius} ${radius} 0 0 1 0 ${h - radius} V ${radius} A ${radius} ${radius} 0 0 1 ${radius} 0 Z`;
+/**
+ * Chibi head and shoulders, about as wide as it is tall. The crown is the
+ * top, the shoulders the bottom. Scaled so the raw height is `h` mm.
+ */
+function bustPath(targetHeight: number): string {
+  // The control points span 22.8 mm when s = 1. Scale so the raw bust is exactly targetHeight.
+  const s = targetHeight / 22.8;
+  const p = (x: number, y: number) => `${(x * s).toFixed(2)} ${(y * s).toFixed(2)}`;
+  return `M ${p(11, 0.6)} C ${p(4.2, 0.8)} ${p(1.4, 5.2)} ${p(1.6, 10)} C ${p(1.7, 13.6)} ${p(3.6, 15.6)} ${p(6.2, 16.6)} C ${p(3.2, 17.6)} ${p(0.8, 20)} ${p(0.6, 23.4)} L ${p(21.4, 23.4)} C ${p(21.2, 20)} ${p(18.8, 17.6)} ${p(15.8, 16.6)} C ${p(18.4, 15.6)} ${p(20.3, 13.6)} ${p(20.4, 10)} C ${p(20.6, 5.2)} ${p(17.8, 0.8)} ${p(11, 0.6)} Z`;
 }
 
 function textShapes(font: opentypeNs.Font, name: string, squeeze: number): string[] {
@@ -62,61 +80,35 @@ function renderText(font: opentypeNs.Font, name: string): { d: string; width: nu
   const first = computeProductionOutline(full);
   if (!first) return null;
   const box = normalize(first);
-  if (box.width <= MAX_ITEM_WIDTH_MM + 0.2) return box;
-  const squeeze = MAX_ITEM_WIDTH_MM / box.width;
+  if (box.width <= MAX_PIECE_MM) return box;
+  const squeeze = MAX_PIECE_MM / box.width;
   const narrow = textShapes(font, name, Math.max(0.45, squeeze));
   const again = computeProductionOutline(narrow);
   return again ? normalize(again) : box;
 }
 
-function renderCharacter(font: opentypeNs.Font, name: string): { d: string; width: number; height: number } | null {
-  const diameter = CHAR_RAW_MM;
+function renderWithBust(font: opentypeNs.Font, name: string): { d: string; width: number; height: number } | null {
   const text = textShapes(font, name, 1);
   const textBounds = text.map((d) => getPathBounds(d)).filter((b): b is NonNullable<typeof b> => !!b);
-  const textW = Math.max(...textBounds.map((b) => b.x + b.width), 1);
-  const textH = Math.max(...textBounds.map((b) => b.y + b.height), 1);
-  const gap = 1;
-  const textY = Math.max(0, (diameter - textH) / 2);
-  const shapes = [
-    circlePathData(diameter / 2, diameter / 2, diameter / 2),
-    ...text.map((d) => translatePathData(d, diameter + gap, textY)),
-  ];
+  const textH = Math.max(...textBounds.map((b) => b.height), 1);
+  const bust = bustPath(BUST_RAW_MM);
+  const bustBounds = getPathBounds(bust);
+  const bustW = bustBounds?.width ?? BUST_RAW_MM;
+  // The bust is taller. The name sits on the same baseline band, touching the shoulder.
+  const textY = Math.max(0, (BUST_RAW_MM - textH) / 2);
+  const shapes = [bust, ...text.map((d) => translatePathData(d, bustW - 0.4, textY))];
   const outline = computeProductionOutline(shapes);
   if (!outline) return null;
   const box = normalize(outline);
-  if (box.width <= MAX_ITEM_WIDTH_MM + 0.2) return box;
+  if (box.width <= MAX_PIECE_MM) return box;
   return renderText(font, name);
 }
 
-function renderCup(): { d: string; width: number; height: number } | null {
-  // The name is printed on the cup, not a second cut. One rounded plate.
-  const outline = computeProductionOutline([roundRectPath(36, 28, 10)]);
-  return outline ? normalize(outline) : null;
-}
-
-function renderBadge(font: opentypeNs.Font, name: string): { d: string; width: number; height: number } | null {
-  const text = renderText(font, name);
-  if (!text) return null;
-  const padX = 4;
-  const padY = 2.5;
-  const w = text.width + padX * 2;
-  const h = Math.max(text.height + padY * 2, 12);
-  const plate = computeProductionOutline([roundRectPath(w, h, 3)]);
-  return plate ? normalize(plate) : text;
-}
-
-export function renderManualPieces(pieces: ManualPiece[], fontPath = MANUAL_FONT_PATH): RealPiece[] {
+export function renderManualPieces(pieces: ManualPiece[], fontPath = manualFontPath()): RealPiece[] {
   const bytes = readFileSync(fontPath);
   const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   return pieces.map((piece) => {
-    const box =
-      piece.kind === "cup"
-        ? renderCup()
-        : piece.kind === "badge"
-          ? renderBadge(font, piece.name)
-          : piece.kind === "character"
-            ? renderCharacter(font, piece.name)
-            : renderText(font, piece.name);
+    const box = piece.kind === "text" || piece.kind === "badge" ? renderText(font, piece.name) : renderWithBust(font, piece.name);
     if (!box) throw new Error(`Garis potong gagal: ${piece.name}`);
     return {
       piece,
