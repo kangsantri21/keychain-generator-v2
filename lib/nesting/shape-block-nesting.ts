@@ -369,6 +369,48 @@ function flipped<T>(piece: LocalPiece<T>): LocalPiece<T> {
   return next;
 }
 
+/**
+ * Names stood on end (90°, or 270° on every other piece) and set side by
+ * side, like the columns on the manual sheet. The next column starts when
+ * the row of strips is full. 270° is a 90° turn plus a flip, so neighbouring
+ * waves can sit in each other's gaps.
+ */
+function columnStrips<T>(
+  items: ShapeBlockItem<T>[],
+  maxW: number,
+  maxH: number,
+  gap: number,
+  flip: boolean
+): LocalPiece<T>[] | null {
+  const placed: LocalPiece<T>[] = [];
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const rot: QuarterTurn = !item.allowRotation ? 0 : flip && i % 2 === 1 ? 270 : 90;
+    let piece = pieceAt(item, rot, 0, 0);
+    if (piece.h > maxH + EPS) return null;
+    if (piece.w > maxW + EPS) {
+      if (!item.allowRotation) return null;
+      piece = pieceAt(item, 0, 0, 0);
+      if (piece.w > maxW + EPS || piece.h > maxH + EPS) return null;
+    }
+    if (x > 0 && x + piece.w > maxW + EPS) {
+      y += rowH + gap;
+      x = 0;
+      rowH = 0;
+      if (y + piece.h > maxH + EPS) return null;
+    }
+    piece.x = x;
+    piece.y = y;
+    placed.push(piece);
+    x += piece.w + gap;
+    rowH = Math.max(rowH, piece.h);
+  }
+  return placed;
+}
+
 /** Fill a row left to right, then the next row. Rotation is whatever `rotOf` picks. */
 function rowShelf<T>(
   items: ShapeBlockItem<T>[],
@@ -413,10 +455,12 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
   const gap = clearance;
   const heights = [maxH, maxH * 0.62, maxH * 0.4];
   const raw: (LocalPiece<T>[] | null)[] = [
+    columnStrips(items, maxW, maxH, gap, true),
+    columnStrips(items, maxW, maxH, gap, false),
+    columnStrips(items, maxW * 0.55, maxH, gap, true),
     rowShelf(items, () => 0, maxW, gap),
     rowShelf(items, (_item, index) => oddTurn(index), maxW, gap),
     rowShelf(items, (item) => baseRot(item), maxW, gap),
-    rowShelf(items, (item, index) => addTurns(baseRot(item), oddTurn(index)), maxW, gap),
     outlineNest(items, maxW, maxH, gap),
   ];
   for (const limit of heights) {
@@ -439,12 +483,20 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
       return b.w <= a.w + 1 && b.h <= a.h + 1 && (b.w < a.w - 1 || b.h < a.h - 1);
     });
   });
-  pareto.sort((a, b) => {
+  const byShort = [...pareto].sort((a, b) => {
     const ra = materialRank(sizeOf(a).w, sizeOf(a).h, maxW, maxH)!;
     const rb = materialRank(sizeOf(b).w, sizeOf(b).h, maxW, maxH)!;
     return ra[0] - rb[0] || ra[1] - rb[1];
   });
-  return pareto.slice(0, 4);
+  const byNarrow = [...pareto].sort((a, b) => sizeOf(a).w - sizeOf(b).w || sizeOf(a).h - sizeOf(b).h);
+  const picked: LocalPiece<T>[][] = [];
+  for (const layout of [...byShort, ...byNarrow]) {
+    const size = sizeOf(layout);
+    if (picked.some((have) => Math.abs(sizeOf(have).w - size.w) < 8 && Math.abs(sizeOf(have).h - size.h) < 8)) continue;
+    picked.push(layout);
+    if (picked.length >= 6) break;
+  }
+  return picked;
 }
 
 function optionFrom<T>(pieces: LocalPiece<T>[], blockRot: 0 | 90, config: ShapeBlockConfig): FootprintOption<T> {
@@ -571,7 +623,7 @@ function packBlocks<T>(blocks: BuiltBlock<T>[], config: ShapeBlockConfig): Choic
       }
     }
     next.sort((a, b) => compareChoices(a.choices, b.choices));
-    beam = next.slice(0, 12);
+    beam = next.slice(0, 18);
     if (beam.length === 0) return null;
   }
   const choices = beam[0]?.choices ?? null;

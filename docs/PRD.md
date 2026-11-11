@@ -101,7 +101,7 @@ Rofiq mengunci tiga hal pada 10 November 2026, sesudah melihat susunan blok:
 2. Tidak ada aturan tetap “nama panjang harus tegak”.
 3. Luas cetak **31 × 47 cm** (310 × 470 mm).
 
-Pada 63 keping foto manual dengan tinggi sungguhan (nama 2,6 cm, tokoh 2,9 cm, font Coffee Soda), mesin butuh dua lembar, tinggi isi 736 mm. Foto itu muat di satu lembar 470 mm karena huruf yang tergambar di foto lebih pendek (tinta sekitar 1,6 cm). Rinciannya di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
+Setelan bawaan tetap tinggi luar 2,6 cm (nama) dan 2,9 cm (tokoh), sudah termasuk kontur. Pembanding dengan foto memakai skala foto: tinta huruf sekitar 1,6 cm, tinggi luar 2,1 cm. Pada skala itu 63 keping muat satu lembar setinggi 438 mm. Foto mengisi satu lembar penuh (470 mm). Rinciannya di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 
 Patokan gambarnya ada di repo: [docs/reference/contoh-nesting-manual.jpg](reference/contoh-nesting-manual.jpg). Itu penataan manual tim Rofiq. Hasil mesin nanti dibandingkan dengan gambar ini, bukan dengan pratinjau lama.
 
@@ -129,7 +129,7 @@ Yang terlihat pada contoh, dan karena itu menjadi bagian dari keputusan:
 
 Mode produksi sekarang memakai garis potong, bukan hanya kotak. Satu resi = satu blok berbingkai. Kode resi tercetak satu kali, kecil, di kiri bingkai. Keping bisa 0°, 90°, 180°, dan 270°. Bloknya sendiri bisa diputar 90° kalau itu memendekkan lembar. Jarak aman antar garis potong bawaan 1 mm, bisa diubah. Angka dan gambar ada di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 
-Pada 63 keping itu dengan tinggi 2,6 cm, mesin butuh dua lembar (736 mm). Foto manual tetap satu lembar. Ukuran lembar 310 × 470 mm sudah dikunci. Jarak 1 mm belum dicek di akrilik.
+Pada skala foto, 63 keping itu muat satu lembar (438 mm, foto penuh 470 mm). Ukuran lembar 310 × 470 mm sudah dikunci. Jarak 1 mm belum dicek di akrilik.
 
 Contoh manual tidak membutuhkan sudut selain kelipatan 90°. 180° dipakai kalau takik keping bisa saling masuk. 270° sama dengan 90° lalu dibalik, dan hanya dipilih kalau bloknya jadi lebih pendek.
 

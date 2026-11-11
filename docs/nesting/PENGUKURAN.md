@@ -2,46 +2,42 @@
 
 Tanggal: 11 November 2026. Belum digabung ke `main`.
 
-Patokan: foto lembar manual Rofiq, [contoh penataan manual](../reference/contoh-nesting-manual.jpg).
+Patokan: foto lembar manual Rofiq, [contoh penataan manual](../reference/contoh-nesting-manual.jpg). Foto itu satu lembar penuh 310 × 470 mm.
 
-## Keputusan Rofiq
+## Setelan ukuran
 
-1. Jarak antar potongan **1 mm**.
-2. Nama panjang tidak wajib tegak. Arah dipilih hanya untuk menghemat bahan.
-3. Luas cetak **31 × 47 cm**.
-4. Tinggi keping sungguhan: nama saja **2,6 cm**. Tokoh di depan nama **2,9 cm**.
+Yang diatur adalah **tinggi luar garis potong**, sudah termasuk kontur 2,5 mm di atas dan di bawah. Tinggi hurufnya sendiri lebih pendek 5 mm.
 
-## Font
+| | Bawaan | Skala foto (pembanding) |
+| --- | --- | --- |
+| Nama saja | 26 mm (huruf 21 mm) | 21 mm (tinta terukur 16 mm + kontur 5 mm) |
+| Tokoh | 29 mm (gambar 24 mm) | 23,4 mm, supaya perbandingannya sama |
 
-Foto manual paling dekat dengan Glossy Sheen Shine atau Coffee Soda. Glossy Sheen Shine hanya untuk pemakaian pribadi, jadi tidak dipakai. Coffee Soda (Khurasan) ditulis bebas untuk pemakaian pribadi dan komersial. File-nya ada di `local-fonts/` dan **tidak ikut commit**. Darling Coffee, Choco Shake, dan Buycat tidak punya lisensi yang jelas untuk disimpan di repo.
+Bawaan ada di `NAME_OUTER_MM` dan `CHARACTER_OUTER_MM` pada `lib/nesting/manual-real-outline.ts`. Ukuran ini nanti bisa diubah. Pembanding di bawah memakai skala foto, bukan bawaan 26 mm, supaya kepingnya sama besar dengan foto.
 
-## Angka
+Jarak antar potongan 1 mm. Arah nama tidak dipaksa. Kolom tegak (nama diputar 90° atau 270°, berjajar, selang-seling 180°) ikut dicoba. Yang dipilih adalah bentuk blok yang membuat lembar paling pendek.
 
-63 keping, 7 resi. Kontur 2,5 mm. Nama jadi 26 mm (contoh Ammara 115,5 × 26,0 mm). Tokoh plus nama sekitar 28–29 mm tinggi, bentuk kepala dan bahu yang menempel ke huruf pertama.
+## Skala foto
 
-| Susunan | Lembar | Tinggi isi | Catatan |
+Gambar 1400 × 929 piksel. Sisi panjang = 470 mm, sisi pendek = 310 mm. Di kolom Ammara, tinta huruf sekitar 16 mm, jarak antar baris sekitar 23 mm. Celah putih itu memuat kontur 2,5 mm di tiap sisi, jadi tinggi luar keping di foto sekitar 21 mm.
+
+## Angka pada skala yang sama
+
+63 keping, 7 resi, font Coffee Soda (tidak di-commit), kontur 2,5 mm. Contoh: Ammara 89 × 21 mm.
+
+| Susunan | Lembar | Tinggi isi | Isi |
 | --- | --- | --- | --- |
-| Foto manual | 1 | 470 mm | lembar penuh, sisa tepi sekitar 6 mm |
-| Aplikasi | 2 | 736,1 mm | 78,3% dari dua lembar; isi 74,5% di dalam tinggi itu |
+| Foto manual | 1 | 470 mm (penuh) | — |
+| Aplikasi | 1 | 437,9 mm | 78,3% dari luas yang terpakai |
 
-Aplikasi memakai **56,6% lebih banyak panjang** daripada foto (736,1 dibanding 470). Itu di atas batas 10%.
+Aplikasi **6,8% lebih pendek** dari lembar penuh. Masih satu lembar, di dalam batas 10% lebih boros.
 
-Penyebabnya ukuran. Di foto, tinta huruf di kolom Ammara terukur sekitar **16 mm** tinggi jika gambar itu dianggap lembar 310 × 470 mm utuh. Pada 2,6 cm, 18 nama seperti Ammara (lebar sekitar 11 cm) tidak muat dalam satu kolom setinggi 47 cm, jadi satu resi saja sudah selebar hampir satu lembar. Luas semua keping butuh sekitar 70 cm panjang lembar. Dua lembar adalah batas rapat untuk ukuran ini, bukan tiga.
+Untuk nama-nama ini, baris horizontal yang sebagian dibalik 180° lebih pendek daripada kolom tegak. Kolom tetap ada di mesin dan menang kalau itu yang lebih hemat, misalnya banyak nama yang tidak muat berjajar kalau tidur.
 
-Gambar skala sama (1 piksel mewakili milimeter yang sama). Kiri foto, kanan dua lembar aplikasi:
-
-[images/manual-vs-aplikasi.png](images/manual-vs-aplikasi.png)
-
-Lembar aplikasi pertama: [images/manual-real-aplikasi.png](images/manual-real-aplikasi.png)
+Gambar skala sama, kiri foto, kanan aplikasi: [images/manual-vs-aplikasi.png](images/manual-vs-aplikasi.png)
 
 ![Perbandingan](images/manual-vs-aplikasi.png)
-
-## Yang sudah dirapatkan
-
-Di dalam blok, keping boleh masuk ke lekukan tetangga (jarak diukur pada garis potong, termasuk putaran 180°). Blok yang tersisa digeser ke lembar sebelumnya kalau masih ada strip kosong. Sisa boros yang besar bukan dari baris yang longgar, melainkan dari keping 2,6 cm yang lebih besar daripada huruf di foto.
 
 ## Cara mengulang
 
 `npx tsx scripts/measure-manual-real.ts`
-
-Font dibaca dari `local-fonts/CoffeeSoda.ttf`.

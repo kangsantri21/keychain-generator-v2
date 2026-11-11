@@ -122,6 +122,27 @@ describe("Shape-block nesting", () => {
     assert.ok(run.placements.some((p) => p.rotationDeg === 0 || p.rotationDeg === 180));
   });
 
+  test("many long names stand side by side when a column row is shorter", () => {
+    const pieces = Array.from({ length: 22 }, (_, id) =>
+      item({
+        id,
+        orderId: 3,
+        width: 40,
+        height: 12,
+        allowRotation: true,
+        outline: rectOutline(40, 12),
+        receiptCode: "KOLOM",
+        data: id,
+      })
+    );
+    const run = runShapeBlockNesting(pieces);
+    assert.equal(run.ok, true, run.errors.join("; "));
+    assert.equal(run.sheetCount, 1);
+    const vertical = run.placements.filter((p) => p.rotationDeg === 90 || p.rotationDeg === 270).length;
+    assert.ok(vertical >= 12, `only ${vertical} stood up`);
+    assert.ok(run.sumUsedHeight < 220, `used height ${run.sumUsedHeight}`);
+  });
+
   test("a wide block is turned 90° when that keeps the batch on one sheet", () => {
     // Six wide plates. Lying flat, only one fits across the sheet and six
     // rows spill onto a second sheet. Stood up, several share a row.
@@ -131,8 +152,8 @@ describe("Shape-block nesting", () => {
         orderId: orderId + 1,
         width: 190,
         height: 80,
-        allowRotation: true,
-        outline: rectOutline(190, 70),
+        allowRotation: false,
+        outline: rectOutline(190, 80),
         receiptCode: `BLOK-${orderId + 1}`,
         data: orderId,
       })
