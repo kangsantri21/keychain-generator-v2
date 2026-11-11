@@ -92,7 +92,9 @@ Menghapus resi (`DELETE /api/orders/[id]`) ikut menghapus item pesanan dan item 
 
 Ukuran lembar ganci: 310×470 mm (`lib/keychain-geometry.ts`). Empat tanda kamera (fiducial) ada di DXF dan di file cetak. Itu sudah sesuai tanda registrasi di empat sudut pada [contoh penataan manual](reference/contoh-nesting-manual.jpg).
 
-Keputusan produk untuk susunan lembar ada di `docs/PRD.md`: hemat bahan, satu resi satu kelompok, kerapatan maksimal, item boleh diputar. Gambar manual menunjukkan bentuk kelompok yang diinginkan (bingkai, satu kode resi di samping, kolom nama, putaran 90 dan 180 derajat). Mesin di `main` hanya memutar kotak 90 derajat dan tidak membaca nomor resi. Mesin di branch mengelompokkan resi dan memutar 90 derajat, tetapi tidak memutar 180 derajat dan tidak menggambar bingkai seperti contoh.
+Keputusan produk untuk susunan lembar ada di `docs/PRD.md`: hemat bahan, satu resi satu kelompok, kerapatan maksimal, item boleh diputar. Gambar manual menunjukkan bentuk kelompok yang diinginkan (bingkai, satu kode resi di samping, kolom nama, putaran 90 dan 180 derajat). Mesin di `main` hanya memutar kotak 90 derajat dan tidak membaca nomor resi. Mesin kotak di branch mengelompokkan resi dan memutar 90 derajat.
+
+Sesi susunan blok (di atas kontur 2,5 mm, belum di `main`) menambah jalan lain di `runProductionNesting`: kalau keping membawa garis potong, yang jalan adalah `lib/nesting/shape-block-nesting.ts`. Keping dirapatkan sampai jarak `CUT_CLEARANCE_MM` (bawaan 1 mm) antar garis potong, jadi kotaknya boleh saling tindih selama potongannya tidak. Arah keping dan blok dipilih supaya tinggi lembar paling pendek, bukan supaya nama panjang selalu tegak. Bingkai dan satu kode resi dihitung ulang di `lib/nesting/shape-block-marks.ts` dan ikut file cetak. File laser tidak memuat kode resi. Sudut keping disimpan di kolom `staging_items.rotation_deg` (0, 90, 180, atau 270). Baris lama yang kolomnya kosong tetap dibaca seperti dulu: `rotated` berarti 90°. Status barisnya `staged-shape`. Angka pemakaian bahan ada di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 
 ## Integrasi
 
@@ -137,9 +139,9 @@ Tiap resi dikelompokkan dulu. Item dalam satu resi disusun rapat (jarak antar-it
 - `lib/active-frame.ts` memendekkan tinggi ekspor jika isi tidak penuh.
 - `lib/staging-mode.ts` menulis status `staged-production` lawan `staged`, tanpa kolom database baru.
 - `lib/staging-cache.ts` menyimpan salinan lembar di browser. Bukan sumber kebenaran. Kunci batch tetap membaca database.
-- `POST /api/staging/nest` dengan `mode: "production-v3"` menolak resi yang sudah punya item aktif (HTTP 409) dan menolak hasil yang tidak lolos gate (HTTP 422). Penulisan staging dan ubah status ada dalam satu transaksi, dicek lagi di dalam transaksi.
+- `POST /api/staging/nest` dengan `mode: "production-v3"` menolak resi yang sudah punya item aktif (HTTP 409) dan menolak hasil yang tidak lolos gate (HTTP 422). Penulisan staging dan ubah status ada dalam satu transaksi, dicek lagi di dalam transaksi. Pada sesi susunan blok, permintaan ini mengirim garis potong ke packer baru dan menulis status `staged-shape` plus `rotation_deg`. Packer kotak tetap dipakai jika tidak ada garis potong (tes lama).
 - `POST /api/print-batches` mencocokkan kiriman browser dengan baris database, merender ulang untuk cek ukuran, lalu baru menyimpan.
 - Perbaikan resi PAT (batch 228) dan `.gitignore` untuk `*.key`, `credentials*.json`, dan `service-account*.json` hanya ada di commit terbaru branch ini.
-- Skrip `npm test` menjalankan `tsx --test lib/nesting/*.test.ts lib/contour-outline.test.ts`. `tsx` tidak ditulis sebagai devDependency langsung. Ia ikut terpasang lewat pohon dependensi (Drizzle Kit). Pada audit 10 Nov 2026 suite nesting saja 341 lulus. Setelah sesi kontur, suite yang sama plus 10 tes kontur: 351 lulus.
+- Skrip `npm test` menjalankan `tsx --test lib/nesting/*.test.ts lib/contour-outline.test.ts`. `tsx` tidak ditulis sebagai devDependency langsung. Ia ikut terpasang lewat pohon dependensi (Drizzle Kit). Pada audit 10 Nov 2026 suite nesting saja 341 lulus. Setelah sesi kontur, suite yang sama plus 10 tes kontur: 351 lulus. Setelah sesi susunan blok: 364 lulus.
 
 `resolveNestingMode` di `lib/nesting/nesting-mode.ts`: selain teks persis `grouped-v2` atau `production-v3`, permintaan dianggap mesin lama. Itu sengaja, supaya pemanggil lama tidak berubah perilaku.

@@ -205,10 +205,13 @@ export const stagingItems = sqliteTable("staging_items", {
   posY: real("pos_y").notNull(),
   width: real("width").notNull(),
   height: real("height").notNull(),
-  // True if the packer rotated this item 90deg to fit a tight gap. width/height
-  // above stay the item's own (pre-rotation) size — renderers must swap them
-  // and rotate the drawn content to match the packer's actual footprint.
+  // True when the on-sheet box is the artwork turned a quarter turn (90° or 270°).
+  // width/height above are the ON-SHEET footprint. 180° keeps this false
+  // because the box does not change; the real angle is `rotationDeg`.
   rotated: integer("rotated", { mode: "boolean" }).notNull().default(false),
+  // 0, 90, 180 or 270. Null on rows staged before shape-block nesting:
+  // readers then treat `rotated` as 90° and otherwise 0°.
+  rotationDeg: integer("rotation_deg"),
   status: text("status").notNull().default("staged"),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
   // Frozen snapshot of orderItems.holeOverrides[nameIndex] at the moment

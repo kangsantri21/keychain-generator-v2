@@ -5,6 +5,7 @@ import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, RECEIPT_LABEL_FONT_SIZE_MM } from "@/l
 import { activeProductionFrame, rectToFiducial } from "@/lib/active-frame";
 import { getItemTransform, getContentSize, getReceiptLabelPosition } from "@/lib/staging-transform";
 import { receiptBoxes } from "@/lib/production-gate";
+import { shapeFramesOf } from "@/lib/nesting/shape-block-marks";
 import { internalLabelsOf } from "@/lib/receipt-labels";
 import { compactionTags, productionGroupOverlay, readRememberedCompaction, type RememberedCompaction } from "@/lib/staging-overlay";
 import { FIDUCIAL_CLEARANCE_MM } from "@/lib/nesting/grouped-nesting-config";
@@ -49,6 +50,7 @@ export function StagingCanvas({ sheet }: { sheet: StagingSheet | null }) {
   const isProduction = sheet?.summary?.profile === "production";
   const groupBoxes = isProduction && sheet ? receiptBoxes(sheet.items) : [];
   const overlay = productionGroupOverlay(sheet, showDebug);
+  const shapeFrames = sheet ? shapeFramesOf(sheet.items) : [];
 
   // Same labels as the print export (lib/export-print-svg.ts): internal receipt labels on
   // Production sheets, the per-item labels on legacy sheets.
@@ -164,6 +166,18 @@ export function StagingCanvas({ sheet }: { sheet: StagingSheet | null }) {
           );
         })}
 
+        {shapeFrames.map((shapeFrame) => (
+          <rect
+            key={`shape-frame-${shapeFrame.orderId}`}
+            x={shapeFrame.x}
+            y={shapeFrame.y}
+            width={shapeFrame.w}
+            height={shapeFrame.h}
+            fill="none"
+            stroke="#111111"
+            strokeWidth={0.25}
+          />
+        ))}
         {overlay.outlines.map((outline) => (
           <rect
             key={`group-${outline.orderId}`}

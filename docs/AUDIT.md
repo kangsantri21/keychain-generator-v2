@@ -21,6 +21,10 @@ Yang paling mutakhir: `feature/nesting-v3-compact`. `feature/nesting-v2` adalah 
 
 Next.js 16, React 19, SQLite satu file, Drizzle. Halaman: dashboard, master template, input pesanan, antrean, staging, file siap cetak, dan modul mahar yang tabelnya terpisah. Tidak ada login. Tidak ada sambungan BigSeller, Accurate, Shopee, atau TikTok Shop. Detail ada di `docs/ARCHITECTURE.md` dan `docs/PRD.md`.
 
+## Pembaruan sesi susunan blok
+
+10 November 2026, sesudah audit ini ditulis. Sesi susunan blok (di atas kontur 2,5 mm, belum di `main`) menutup celah bingkai, label di samping, putaran 180°, putaran blok, dan rapatan garis potong. Angkanya di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md). Paragraf di bawah ini adalah keadaan pada saat audit.
+
 ## Nesting dibanding contoh manual
 
 Patokan pemilik: [docs/reference/contoh-nesting-manual.jpg](reference/contoh-nesting-manual.jpg). Keputusan tertulis di PRD: hemat bahan, satu resi satu kelompok, kerapatan maksimal, item boleh diputar.
