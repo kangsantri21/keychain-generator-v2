@@ -49,7 +49,7 @@ Modul mahar: input nama pengantin, tanggal, nominal teks, bentuk, dan ukuran. Ne
 
 - Antrean punya tiga mode: Production Nesting (bawaan), Legacy Flat (mesin `main`), dan pratinjau Grouped V2 (tidak menulis ke database).
 - Mode produksi menolak resi yang sudah ada di lembar kerja, supaya satu resi tidak tercetak dua kali (perbaikan kasus PAT).
-- Satu resi disusun sebagai satu kelompok dan tidak dipecah ke banyak lembar.
+- Satu resi disusun sebagai satu kelompok. Resi yang muat di satu lembar tidak dipecah. Resi yang tidak muat satu lembar 310×470 mm dipecah menjadi bagian sesedikit mungkin, masing-masing blok berbingkai berlabel `kode 1/2`, `2/2`, dan seterusnya. Ini ada di branch, belum di main.
 - Label resi produksi diletakkan di ruang kosong di dalam kelompok, setelah posisi potongan selesai. Label tidak menggeser potongan.
 - Mengunci batch dicek ulang ke database. Layout dari browser yang tidak cocok ditolak.
 - Lembar produksi bisa memakai tinggi aktif yang lebih pendek dari 470 mm jika isi lembar tidak penuh, supaya bahan tidak terbuang. Ekspor mengikuti bingkai itu.
@@ -82,7 +82,7 @@ Status di kolom “Main” adalah yang ada di branch `main` hari ini. Kolom “B
 | Login | Tidak ada. Paket `better-auth` terpasang tetapi tidak dipakai | Sama |
 | Impor BigSeller / marketplace | Tidak ada | Tidak ada |
 | Jurnal Accurate | Tidak ada | Tidak ada |
-| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Sesi susunan blok, lalu perbaikan selang-seling dan kontur tokoh: 371 lulus |
+| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Sesi susunan blok, lalu perbaikan selang-seling dan kontur tokoh: 371 lulus. Sesi pecah resi kebesaran: 376 lulus |
 
 ## Keputusan nesting
 
@@ -136,7 +136,7 @@ Contoh manual tidak membutuhkan sudut selain kelipatan 90°. 180° dipakai kalau
 ### Celah terhadap keputusan
 
 1. Di `main` keputusan kelompok belum terpenuhi sama sekali. Perbaikan kotak ada di branch nesting lama. Bingkai, label di samping, putaran 180°, dan rapatan garis potong ada di sesi susunan blok, belum di `main`.
-2. Resi yang lebih besar dari satu lembar tetap ditolak, tidak dipecah. Contoh manual yang terlihat muat dalam satu lembar. Belum ada keputusan untuk resi yang tidak muat.
+2. Resi yang lebih besar dari satu lembar boleh dipecah. Keputusan Rofiq, fitur C: hanya kalau satu blok tidak muat setelah semua rotasi. Tiap bagian blok berbingkai sendiri, label `kode 1/N`. Resi yang muat tetap utuh. Ada di branch, belum di main. Contoh 97 tag (10 Nov 8) ada di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 3. Jarak 1 mm belum dicek pada akrilik sungguhan. Ukuran lembar 310 × 470 mm sudah dikunci.
 
 ## Pertanyaan yang masih terbuka
@@ -147,7 +147,7 @@ Yang belum diputuskan ada di bagian nesting. Jawaban kontur sudah ditulis di baw
 
 1. Ukuran lembar **310 × 470 mm** sudah dikonfirmasi Rofiq (31 × 47 cm).
 2. Jarak aman antar garis potong **1 mm** untuk sementara. Belum dicek pada potongan sungguhan. Mesin kotak lama tetap 2 mm antar kotak.
-3. Resi yang tidak muat dalam satu lembar: sesi ini tetap menolak, tidak memecah. Belum ada keputusan baru.
+3. Resi yang tidak muat dalam satu lembar **boleh dipecah** (keputusan Rofiq, fitur C). Bagian sesedikit mungkin, tiap bagian satu blok berbingkai berlabel `kode 1/N`. Resi yang muat tidak pernah dipecah. Mengunci satu bagian tanpa menyelesaikan bagian lain adalah fitur D, belum dikerjakan.
 4. Berapa lama operator masih mau menunggu untuk satu gelombang (misalnya 30 nama, atau batch sebesar PAT 228)?
 5. Label: satu kode per blok, di samping bingkai. Bukan satu kode di bawah setiap keping. Ini yang tergambar di contoh manual, dan yang sekarang dicetak.
 

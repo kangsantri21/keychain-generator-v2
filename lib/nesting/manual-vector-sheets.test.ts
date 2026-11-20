@@ -13,14 +13,23 @@ function sheet(id: string): VectorSheet {
 }
 
 /**
- * Same rule for every traced sheet: keep the pieces of one frame together.
- * Fitting on one sheet must stay within 10% of the manual frame's area.
- * Refusing to split is also a pass — that is the full 470×310 tag sheet.
+ * Same rule for every traced sheet: keep the pieces of one frame together
+ * when they fit. Fitting on one sheet must stay within 10% of the manual
+ * frame's area. 10 Nov 8 is the full 470×310 tag sheet: it does not fit,
+ * so it is split into two labeled parts and that is the pass.
  */
 function assertSheetContract(id: string): void {
   const frame = sheet(id);
   const run = runShapeBlockNesting(itemsFromVectorSheet(frame));
   const manual = frame.frameW * frame.frameH;
+  if (id === "10nov-8") {
+    assert.equal(run.ok, true, run.errors.join("; "));
+    assert.equal(run.sheetCount, 2, "97 tag dipecah dua lembar");
+    assert.equal(run.placements.length, frame.pieces.length);
+    const labels = run.blocks.map((block) => block.label).sort();
+    assert.deepEqual(labels, ["10 Nov 8 1/2", "10 Nov 8 2/2"]);
+    return;
+  }
   if (!run.ok) {
     assert.match(run.errors.join(" "), /tidak dipecah/);
     assert.equal(run.sheetCount, 0);

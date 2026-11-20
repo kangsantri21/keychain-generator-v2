@@ -1,17 +1,25 @@
 /**
  * Shape-block nesting (P0.4–P0.6).
  *
- * One receipt is one block. Inside the block, pieces are placed by their
- * cut outline (a rectangle when no outline was given) and may turn 0/90/180/270.
- * 180° is a different outline even though the box does not change, so a notch
- * can receive the neighbouring piece. The whole block may then turn 90° if
- * that makes the sheet shorter. A thin frame and one receipt code sit in a
- * gutter reserved beside the frame — the code is not dropped into a hole.
+ * One receipt is one framed block when it fits on a 310×470 sheet. Inside
+ * the block, pieces are placed by their cut outline (a rectangle when no
+ * outline was given) and may turn 0/90/180/270. 180° is a different outline
+ * even though the box does not change, so a notch can receive the neighbouring
+ * piece. The whole block may then turn 90° if that makes the sheet shorter.
+ * A thin frame and one receipt code sit in a gutter reserved beside the
+ * frame — the code is not dropped into a hole.
+ *
+ * A receipt that still does not fit after those rotations is split into as
+ * few framed parts as possible. Each part is its own block on its own sheet,
+ * labeled "<kode> 1/N". A receipt that fits is never split. The box packer
+ * in grouped-nesting.ts is not this path: it still reports
+ * ORDER_GROUP_TOO_LARGE_FOR_SHEET and does not draw frames.
  *
  * Bounding boxes of pieces in the same receipt may overlap. The cut lines
  * stay at least `cutClearanceMm` apart. Pieces from two receipts never share
  * a block.
  */
+import { receiptPartLabel } from "@/lib/receipt-parts";
 import { fiducialDistance } from "@/lib/production-gate";
 import { FIDUCIAL_CLEARANCE_MM } from "@/lib/nesting/grouped-nesting-config";
 import {
@@ -59,6 +67,9 @@ export interface ShapeBlockPlacement<T> {
   rotationDeg: QuarterTurn;
   /** Cut outline in sheet millimetres. */
   outline: Pt[][];
+  /** 1-based part of an oversized receipt. Null when the receipt stayed whole. */
+  splitPart: number | null;
+  splitCount: number | null;
 }
 
 export interface ShapeBlockInfo {
@@ -70,6 +81,10 @@ export interface ShapeBlockInfo {
   y: number;
   width: number;
   height: number;
+  /** Printed code, including " 1/2" when this block is one part of a split. */
+  label: string;
+  splitPart: number | null;
+  splitCount: number | null;
 }
 
 export interface ShapeBlockResult<T> {
@@ -108,9 +123,16 @@ interface FootprintOption<T> {
 interface BuiltBlock<T> {
   orderId: number | null;
   code: string;
+  label: string;
+  splitPart: number | null;
+  splitCount: number | null;
+  /** Split parts of one receipt each take their own sheet. */
+  soloSheet: boolean;
   options: FootprintOption<T>[];
   maxArea: number;
 }
+
+type LayoutMode = "full" | "shelf" | "search";
 
 interface PlacedFootprint {
   orderId: number | null;
@@ -755,12 +777,21 @@ function rowShelf<T>(
  * best once other receipts share the sheet, so the outer search keeps a
  * few that are not strictly larger in both directions.
  */
-function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[][] {
+function layoutCandidates<T>(
+  items: ShapeBlockItem<T>[],
+  maxW: number,
+  maxH: number,
+  clearance: number,
+  mode: LayoutMode = "full"
+): LocalPiece<T>[][] {
   const gap = clearance;
   const heights = [maxH, maxH * 0.62, maxH * 0.4];
   // Bottom-left search is worthwhile for a small receipt. On a full manual
   // sheet (dozens of pieces) it spends a long time and then rejects the
   // layout; row and column packing plus the slide pass already interlock.
+  // "shelf" and "search" skip that search. "search" also skips the slide,
+  // so a binary search over a prefix stays cheap. A raw shelf is never
+  // smaller than the slid one, so a prefix that fails here cannot fit.
   const raw: (LocalPiece<T>[] | null)[] = [
     columnStrips(items, maxW, maxH, gap, true),
     columnStrips(items, maxW, maxH, gap, false),
@@ -768,16 +799,19 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
     rowShelf(items, (_item, index) => oddTurn(index), maxW, gap),
     rowShelf(items, () => 0, maxW, gap),
     rowShelf(items, (item) => baseRot(item), maxW, gap),
-    rasterNest(items, maxW, maxH, gap),
-    items.length <= 18 ? outlineNest(items, maxW, maxH, gap) : null,
   ];
+  if (mode === "full") {
+    raw.push(rasterNest(items, maxW, maxH, gap));
+    raw.push(items.length <= 18 ? outlineNest(items, maxW, maxH, gap) : null);
+  }
   for (const limit of heights) {
     raw.push(stackLayout(items, () => 0, limit, maxW, gap));
     raw.push(stackLayout(items, (item) => baseRot(item), limit, maxW, gap));
   }
   const finished: LocalPiece<T>[][] = [];
   for (const candidate of raw) {
-    const done = finish(candidate, clearance, maxW, maxH);
+    if (!candidate) continue;
+    const done = mode === "search" ? candidate : finish(candidate, clearance, maxW, maxH);
     if (!done) continue;
     const size = sizeOf(done);
     if (!materialRank(size.w, size.h, maxW, maxH)) continue;
@@ -883,10 +917,13 @@ function placeOption(
   placed: PlacedFootprint[],
   option: { footW: number; footH: number },
   orderId: number | null,
-  config: ShapeBlockConfig
+  config: ShapeBlockConfig,
+  soloSheet: boolean
 ): PlacedFootprint | null {
+  const taken = new Set(soloSheet ? placed.filter((foot) => foot.orderId === orderId).map((foot) => foot.sheet) : []);
   const sheets = placed.length === 0 ? [0] : [...new Set(placed.map((p) => p.sheet))].sort((a, b) => a - b);
   for (const sheet of sheets) {
+    if (taken.has(sheet)) continue;
     const spot = bestSpot(placed, option.footW, option.footH, sheet, config);
     if (spot) return { orderId, sheet, x: spot.x, y: spot.y, w: option.footW, h: option.footH };
   }
@@ -913,7 +950,9 @@ function stateKey<T>(choices: Choice<T>[]): string {
 }
 
 function packBlocks<T>(blocks: BuiltBlock<T>[], config: ShapeBlockConfig): Choice<T>[] | null {
-  const ordered = [...blocks].sort((a, b) => b.maxArea - a.maxArea || String(a.orderId).localeCompare(String(b.orderId)));
+  const ordered = [...blocks].sort(
+    (a, b) => b.maxArea - a.maxArea || (a.splitPart ?? 0) - (b.splitPart ?? 0) || String(a.orderId).localeCompare(String(b.orderId))
+  );
   let beam: { choices: Choice<T>[]; placed: PlacedFootprint[] }[] = [{ choices: [], placed: [] }];
   for (const block of ordered) {
     const next: { choices: Choice<T>[]; placed: PlacedFootprint[] }[] = [];
@@ -921,10 +960,10 @@ function packBlocks<T>(blocks: BuiltBlock<T>[], config: ShapeBlockConfig): Choic
     for (const state of beam) {
       const options = config.allowBlockRotation ? block.options : block.options.filter((option) => option.blockRot === 0);
       for (const option of options) {
-        const spot = placeOption(state.placed, option, block.orderId, config);
+        const spot = placeOption(state.placed, option, block.orderId, config, block.soloSheet);
         if (!spot) continue;
         const choices = [...state.choices, { block, option, spot }];
-        const key = `${stateKey(choices)}:${block.orderId}:${option.blockRot}:${spot.sheet}:${spot.x.toFixed(2)}:${spot.y.toFixed(2)}`;
+        const key = `${stateKey(choices)}:${block.orderId}:${block.splitPart ?? 0}:${option.blockRot}:${spot.sheet}:${spot.x.toFixed(2)}:${spot.y.toFixed(2)}`;
         if (seen.has(key)) continue;
         seen.add(key);
         next.push({ choices, placed: [...state.placed, spot] });
@@ -994,6 +1033,8 @@ function realize<T>(choice: Choice<T>, config: ShapeBlockConfig): { placements: 
       rotated: rotationDeg === 90 || rotationDeg === 270,
       rotationDeg,
       outline: sheetOutlineOf(turned.polys, posX, posY),
+      splitPart: choice.block.splitPart,
+      splitCount: choice.block.splitCount,
     };
   });
   return {
@@ -1006,6 +1047,9 @@ function realize<T>(choice: Choice<T>, config: ShapeBlockConfig): { placements: 
       y: roundMm(spot.y),
       width: roundMm(spot.w),
       height: roundMm(spot.h),
+      label: choice.block.label,
+      splitPart: choice.block.splitPart,
+      splitCount: choice.block.splitCount,
     },
   };
 }
@@ -1029,6 +1073,124 @@ function groupOf<T>(items: ShapeBlockItem<T>[]): { orderId: number | null; items
   return groups;
 }
 
+type ReceiptGroup<T> = { orderId: number | null; items: ShapeBlockItem<T>[]; code: string };
+
+function contentLimits(config: ShapeBlockConfig): { maxW: number; maxH: number } {
+  const slack = config.labelGutterMm;
+  const pad = config.framePadMm;
+  return {
+    maxW: config.sheetWidthMm - 2 * config.sheetMarginMm - 2 * pad - slack,
+    maxH: config.sheetHeightMm - 2 * config.sheetMarginMm - 2 * pad - slack,
+  };
+}
+
+function optionsFromLayouts<T>(layouts: LocalPiece<T>[][], config: ShapeBlockConfig): FootprintOption<T>[] {
+  const options: FootprintOption<T>[] = [];
+  const seen = new Map<string, number>();
+  for (const laid of layouts) {
+    for (const rot of [0, 90] as const) {
+      const option = optionFrom(laid, rot, config);
+      if (option.footW > config.sheetWidthMm - 2 * config.sheetMarginMm + EPS) continue;
+      if (option.footH > config.sheetHeightMm - 2 * config.sheetMarginMm + EPS) continue;
+      const key = `${option.footW.toFixed(0)}x${option.footH.toFixed(0)}`;
+      // Same footprint: keep the layout that faces more than one way.
+      const mix = new Set(laid.map((piece) => piece.rot)).size;
+      const prev = seen.get(key);
+      if (prev !== undefined && mix <= prev) continue;
+      seen.set(key, mix);
+      if (prev !== undefined) {
+        const index = options.findIndex((have) => `${have.footW.toFixed(0)}x${have.footH.toFixed(0)}` === key);
+        if (index >= 0) options.splice(index, 1);
+      }
+      options.push(option);
+    }
+  }
+  return options;
+}
+
+function buildBlock<T>(group: ReceiptGroup<T>, config: ShapeBlockConfig, split: { part: number; count: number } | null, mode: LayoutMode): BuiltBlock<T> | null {
+  const { maxW, maxH } = contentLimits(config);
+  const layouts = layoutCandidates(group.items, maxW, maxH, config.cutClearanceMm, mode);
+  const options = optionsFromLayouts(layouts, config);
+  if (options.length === 0) return null;
+  const label = split ? receiptPartLabel(group.code, split.part, split.count) : group.code;
+  return {
+    orderId: group.orderId,
+    code: group.code,
+    label,
+    splitPart: split?.part ?? null,
+    splitCount: split?.count ?? null,
+    soloSheet: split != null,
+    options,
+    maxArea: Math.max(...options.map((option) => option.footW * option.footH)),
+  };
+}
+
+/** Largest prefix of `items` whose shelf layout fits one sheet. 0 when even the first piece does not. */
+function largestFittingPrefix<T>(items: ShapeBlockItem<T>[], config: ShapeBlockConfig): number {
+  const { maxW, maxH } = contentLimits(config);
+  const fits = (count: number) => layoutCandidates(items.slice(0, count), maxW, maxH, config.cutClearanceMm, "search").length > 0;
+  if (items.length === 0 || !fits(1)) return 0;
+  if (fits(items.length)) return items.length;
+  let lo = 1;
+  let hi = items.length;
+  let best = 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(mid)) {
+      best = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
+}
+
+/**
+ * Fewest framed parts of a receipt that did not fit as one block.
+ * Returns one unmarked block when a shelf still holds every piece
+ * (the receipt fits, so it is not split). Returns null when a piece
+ * is larger than the sheet.
+ *
+ * Split parts use a shelf with a slightly wider gap and no slide pass.
+ * The slide pass pulls notches together and, on a full sheet of tags,
+ * can leave cut lines closer than CUT_CLEARANCE_MM after rounding.
+ */
+function fewestParts<T>(group: ReceiptGroup<T>, config: ShapeBlockConfig): BuiltBlock<T>[] | null {
+  const packing: ShapeBlockConfig = { ...config, cutClearanceMm: Math.round((config.cutClearanceMm + 0.2) * 1000) / 1000 };
+  const chunks: ShapeBlockItem<T>[][] = [];
+  let rest = group.items;
+  while (rest.length > 0) {
+    let count = largestFittingPrefix(rest, packing);
+    let fitted = false;
+    while (count > 0) {
+      const probe = buildBlock({ ...group, items: rest.slice(0, count) }, packing, { part: 1, count: 2 }, "search");
+      if (probe) {
+        chunks.push(rest.slice(0, count));
+        rest = rest.slice(count);
+        fitted = true;
+        break;
+      }
+      count -= 1;
+    }
+    if (!fitted) return null;
+  }
+  if (chunks.length < 2) {
+    const whole = buildBlock(group, packing, null, "search");
+    return whole ? [whole] : null;
+  }
+  const blocks: BuiltBlock<T>[] = [];
+  for (let index = 0; index < chunks.length; index++) {
+    const block = buildBlock({ ...group, items: chunks[index] }, packing, { part: index + 1, count: chunks.length }, "search");
+    if (!block) return null;
+    blocks.push(block);
+  }
+  return blocks;
+}
+
+function receiptName<T>(group: ReceiptGroup<T>): string {
+  return group.code || (group.orderId != null ? String(group.orderId) : "(tanpa nomor)");
+}
+
 export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Partial<ShapeBlockConfig>): ShapeBlockResult<T> {
   const config = resolveShapeConfig(partial);
   const errors: string[] = [];
@@ -1036,52 +1198,22 @@ export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Pa
     return { ok: true, errors, placements: [], blocks: [], sheetCount: 0, sumUsedHeight: 0, config };
   }
 
-  const gutterSlack = config.labelGutterMm;
-  const pad = config.framePadMm;
-  const maxW = config.sheetWidthMm - 2 * config.sheetMarginMm - 2 * pad - gutterSlack;
-  const maxH = config.sheetHeightMm - 2 * config.sheetMarginMm - 2 * pad - gutterSlack;
   const blocks: BuiltBlock<T>[] = [];
 
   for (const group of groupOf(items)) {
-    const layouts = layoutCandidates(group.items, maxW, maxH, config.cutClearanceMm);
-    if (layouts.length === 0) {
+    const whole = buildBlock(group, config, null, "full");
+    if (whole) {
+      blocks.push(whole);
+      continue;
+    }
+    const parts = fewestParts(group, config);
+    if (!parts) {
       errors.push(
-        `Resi ${group.code || group.orderId || "(tanpa nomor)"} tidak muat dalam satu lembar ${config.sheetWidthMm}×${config.sheetHeightMm} mm. Resi tidak dipecah.`
+        `Resi ${receiptName(group)} tidak muat dalam satu lembar ${config.sheetWidthMm}×${config.sheetHeightMm} mm, dan ada keping yang lebih besar dari lembar. Resi tidak dipecah.`
       );
       continue;
     }
-    const options: FootprintOption<T>[] = [];
-    const seen = new Map<string, number>();
-    for (const laid of layouts) {
-      for (const rot of [0, 90] as const) {
-        const option = optionFrom(laid, rot, config);
-        if (option.footW > config.sheetWidthMm - 2 * config.sheetMarginMm + EPS) continue;
-        if (option.footH > config.sheetHeightMm - 2 * config.sheetMarginMm + EPS) continue;
-        const key = `${option.footW.toFixed(0)}x${option.footH.toFixed(0)}`;
-        // Same footprint: keep the layout that faces more than one way.
-        const mix = new Set(laid.map((piece) => piece.rot)).size;
-        const prev = seen.get(key);
-        if (prev !== undefined && mix <= prev) continue;
-        seen.set(key, mix);
-        if (prev !== undefined) {
-          const index = options.findIndex((have) => `${have.footW.toFixed(0)}x${have.footH.toFixed(0)}` === key);
-          if (index >= 0) options.splice(index, 1);
-        }
-        options.push(option);
-      }
-    }
-    if (options.length === 0) {
-      errors.push(
-        `Resi ${group.code || group.orderId || "(tanpa nomor)"} tidak muat dalam satu lembar ${config.sheetWidthMm}×${config.sheetHeightMm} mm. Resi tidak dipecah.`
-      );
-      continue;
-    }
-    blocks.push({
-      orderId: group.orderId,
-      code: group.code,
-      options,
-      maxArea: Math.max(...options.map((option) => option.footW * option.footH)),
-    });
+    blocks.push(...parts);
   }
 
   if (errors.length > 0) {
@@ -1090,7 +1222,7 @@ export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Pa
 
   const choices = packBlocks(blocks, config);
   if (!choices || choices.length !== blocks.length) {
-    errors.push("Satu atau lebih blok resi tidak muat di lembar tanpa memecah resi.");
+    errors.push("Satu atau lebih blok resi tidak muat di lembar.");
     return { ok: false, errors, placements: [], blocks: [], sheetCount: 0, sumUsedHeight: 0, config };
   }
 

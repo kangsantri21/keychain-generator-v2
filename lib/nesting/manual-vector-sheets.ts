@@ -31,7 +31,7 @@ export function ringOf(flat: number[]): Pt[] {
   return ring;
 }
 
-/** One frame, one receipt. The packer may turn pieces; it may not split the frame. */
+/** One traced frame, one receipt. The packer may turn pieces. It splits the frame only when the pieces do not fit one sheet. */
 export function itemsFromVectorSheet(sheet: VectorSheet): ShapeBlockItem<null>[] {
   return sheet.pieces.map((piece, index) => ({
     id: `${sheet.id}-${index}`,

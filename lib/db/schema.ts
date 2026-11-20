@@ -212,6 +212,12 @@ export const stagingItems = sqliteTable("staging_items", {
   // 0, 90, 180 or 270. Null on rows staged before shape-block nesting:
   // readers then treat `rotated` as 90° and otherwise 0°.
   rotationDeg: integer("rotation_deg"),
+  // Both null on a whole receipt. Set together only when the shape packer
+  // split a receipt that did not fit one sheet: part 1..count. Old rows
+  // stay null and are still rejected if the same receipt sits on two sheets.
+  // Feature D (lock one part) reads these before marking the order completed.
+  splitPart: integer("split_part"),
+  splitCount: integer("split_count"),
   status: text("status").notNull().default("staged"),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
   // Frozen snapshot of orderItems.holeOverrides[nameIndex] at the moment

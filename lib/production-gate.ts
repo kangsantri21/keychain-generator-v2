@@ -13,7 +13,8 @@
  *   - production: universal checks + margin 5, PART_GAP 2 inside a receipt,
  *                 receipts >= 2 mm apart side by side or stacked (Production
  *                 receipt-group gaps), artwork clear of the 4 camera fiducials, one
- *                 receipt on one sheet.
+ *                 receipt on one sheet — unless every piece is marked as a part
+ *                 of a receipt that did not fit (lib/receipt-parts.ts).
  * Universal checks: expected == placed, no duplicate, no missing, artwork
  * size unchanged (only a 90° swap when rotated), inside 310 x 470, no overlap.
  */
@@ -21,6 +22,7 @@ import { FIDUCIAL_RADIUS_MM, ITEM_PADDING_BOTTOM_MM, SHEET_HEIGHT_MM, SHEET_WIDT
 import { FIDUCIAL_CLEARANCE_MM, PART_GAP_MM, PRODUCTION_GROUP_GAP_X_MM, PRODUCTION_GROUP_GAP_Y_MM, SHEET_MARGIN_MM } from "@/lib/nesting/grouped-nesting-config";
 import { BLOCK_GAP_MM, CUT_CLEARANCE_MM } from "@/lib/nesting/shape-block-config";
 import { outlinesTooClose, type Pt } from "@/lib/nesting/shape-outline";
+import { unauthorizedSplitOrderIds } from "@/lib/receipt-parts";
 
 export type LayoutProfile = "production" | "legacy";
 
@@ -48,6 +50,12 @@ export interface PlacedItem {
   outline?: Pt[][];
   cutClearanceMm?: number;
   blockGapMm?: number;
+  /**
+   * Set together only for a part of a receipt that did not fit one sheet.
+   * Absent on a whole receipt. See lib/receipt-parts.ts.
+   */
+  splitPart?: number | null;
+  splitCount?: number | null;
 }
 
 export interface GateResult {
@@ -144,8 +152,16 @@ export function validatePlacedSheets(items: PlacedItem[], expectedKeys: string[]
   if (outside.length) errors.push(summarizeList(`${outside.length} item keluar media ${SHEET_WIDTH_MM}x${SHEET_HEIGHT_MM}`, outside.map((i) => i.key)));
 
   const sheets = [...new Set(items.map((i) => i.sheet))].sort((a, b) => a - b);
-  const sheetsByOrder = new Map<number, Set<number>>();
-  for (const item of items) sheetsByOrder.set(item.orderId, (sheetsByOrder.get(item.orderId) ?? new Set()).add(item.sheet));
+  const illegalSplits = new Set(
+    unauthorizedSplitOrderIds(
+      items.map((item) => ({
+        orderId: item.orderId,
+        sheet: item.sheet,
+        splitPart: item.splitPart,
+        splitCount: item.splitCount,
+      }))
+    )
+  );
 
   for (const sheet of sheets) {
     const list = items.filter((i) => i.sheet === sheet);
@@ -208,7 +224,7 @@ export function validatePlacedSheets(items: PlacedItem[], expectedKeys: string[]
       errors.push(summarizeList(`${label}${nearFiducial.length} item terlalu dekat marker kamera (< ${FIDUCIAL_CLEARANCE_MM} mm)`, nearFiducial.map((i) => i.key)));
     }
 
-    const split = boxes.filter((b) => (sheetsByOrder.get(b.orderId)?.size ?? 1) > 1).map((b) => String(b.orderId));
+    const split = boxes.filter((b) => illegalSplits.has(b.orderId)).map((b) => String(b.orderId));
     if (split.length) errors.push(summarizeList(`${label}${split.length} resi terpecah ke lebih dari satu lembar`, split));
   }
 

@@ -13,6 +13,11 @@ function badRequest(message: string, status = 400) {
  * (GET /api/staging/nest only pulls "pending" orders) and the main Input
  * Pesanan queue (GET /api/orders excludes "completed"), and the sheet
  * itself moves from the Staging Area's active list into its history view.
+ *
+ * Feature D: a receipt split across sheets (split_part / split_count) must
+ * stay processing until receiptIsComplete (lib/receipt-parts.ts) is true.
+ * This route still completes every order on the sheet. Do not change that
+ * here — D owns the per-part lock.
  */
 export async function POST(
   _request: NextRequest,

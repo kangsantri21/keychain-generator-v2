@@ -55,7 +55,7 @@ Empat tanda registrasi sudah ada di DXF dan di file cetak, di `main` maupun di b
 3. **Rotasi.** Keduanya hanya 0 atau 90 derajat. Putaran 90 menukar lebar dan tinggi, itu yang membuat kolom mungkin. Putaran 180 tidak mengubah ukuran kotak, jadi packer tidak pernah memilihnya. Contoh memakai 180 derajat (nama terbaca terbalik atas-bawah di dalam kolom).
 4. **Kolom nama panjang.** Tidak ada aturan “nama panjang harus bertumpuk”. Branch mencoba beberapa lebar kelompok, jadi kolom bisa muncul, tetapi tidak diwajibkan. `main` cenderung menghampar.
 5. **Kerapatan.** Keduanya merapatkan kotak pembungkus, bukan garis potong. Untuk kolom nama yang memang kotak, itu dekat dengan contoh. Sudut kosong di dalam kotak karakter tidak terisi. Jalur 5 mm di `main` dan tepi atas sekitar 13 mm pada mode produksi lebih boros daripada tepi tipis di gambar. Belum ada angka persen karena daftar ukuran keping pada gambar itu tidak tersimpan sebagai data, hanya fotonya.
-6. **Satu resi tidak dipecah.** Mode produksi menolak memecah resi ke dua lembar. Contoh yang terlihat muat dalam satu lembar. Resi yang lebih besar dari lembar akan gagal, bukan dilanjutkan.
+6. **Satu resi yang muat tidak dipecah.** Mode produksi menolak memecah resi yang masih muat satu lembar. Resi yang tidak muat setelah semua rotasi dipecah menjadi bagian berbingkai (fitur C, ada di branch, belum di main). Contoh 97 tag (10 Nov 8) menjadi dua lembar. Mengunci satu bagian saja masih ditolak; itu fitur D.
 
 Tes 341 di branch menjaga agar resi tidak terpecah, jarak produksi tidak saling tindih, dan label dalam tidak menggeser keping. Tes itu tidak membandingkan hasil dengan gambar manual, tidak menuntut bingkai, dan tidak menuntut putaran 180 derajat.
 

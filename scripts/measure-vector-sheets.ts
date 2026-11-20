@@ -107,7 +107,10 @@ async function main(): Promise<void> {
     const pieceArea = sheet.pieces.reduce((sum, piece) => sum + ringArea(piece.p), 0);
     const pct = (used / manual - 1) * 100;
     const fill = (pieceArea / used) * 100;
-    if (pct > 10 || run.sheetCount > 1) over++;
+    const split = run.blocks.some((block) => (block.splitCount ?? 0) > 1);
+    // A receipt that does not fit one sheet is allowed to occupy several
+    // labeled parts. A sheet that fits must stay one part, within 10%.
+    if (!split && (pct > 10 || run.sheetCount > 1)) over++;
     console.log(
       `${sheet.label} ${sheet.id}  keping ${items.length}  manual ${sheet.frameW.toFixed(0)}×${sheet.frameH.toFixed(0)}  aplikasi ${run.sheetCount} lembar ${run.sumUsedHeight.toFixed(0)} mm  ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%  isi ${fill.toFixed(1)}%  ${ms} ms`
     );

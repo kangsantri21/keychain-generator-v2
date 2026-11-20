@@ -6,6 +6,7 @@
  * optional: every receipt gets exactly one label, outside the frame.
  */
 import { LABEL_CHAR_EM, LABEL_FONT_MM, LABEL_GUTTER_MM, FRAME_PAD_MM, labelFontThatFits, labelSide, labelTextLength } from "@/lib/nesting/shape-block-config";
+import { receiptPartLabel } from "@/lib/receipt-parts";
 import { STAGED_SHAPE } from "@/lib/staging-mode";
 
 const ASCENT = 0.8;
@@ -18,6 +19,9 @@ export interface MarkItem {
   height: number;
   status?: string;
   order?: { receiptCode: string } | null;
+  /** Set on each piece of an authorized split. The label becomes "<kode> 1/2". */
+  splitPart?: number | null;
+  splitCount?: number | null;
 }
 
 export interface BlockFrame {
@@ -112,7 +116,11 @@ export function shapeFramesOf(items: MarkItem[]): BlockFrame[] {
 /** One side label per receipt, or null when this is not a shape-block sheet. */
 export function shapeLabelsOf(items: MarkItem[]): SideLabel[] | null {
   if (!isShapeSheet(items)) return null;
-  const codeOf = (orderId: number) => items.find((item) => item.orderId === orderId)?.order?.receiptCode ?? `#${orderId}`;
+  const codeOf = (orderId: number) => {
+    const item = items.find((candidate) => candidate.orderId === orderId);
+    const code = item?.order?.receiptCode ?? `#${orderId}`;
+    return receiptPartLabel(code, item?.splitPart, item?.splitCount);
+  };
   return framesAndLabels(items, codeOf).labels;
 }
 

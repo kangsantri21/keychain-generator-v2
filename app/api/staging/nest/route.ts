@@ -201,6 +201,8 @@ export async function POST(request: NextRequest) {
       height: placement.height,
       rotated: placement.rotated,
       rotationDeg: placement.rotationDeg,
+      splitPart: placement.splitPart ?? null,
+      splitCount: placement.splitCount ?? null,
       // Shape-block sheets: one framed receipt, cut-line gaps, side label.
       // The older box packer is not on this path anymore (it still runs for
       // callers that pass no outline — tests and any future opt-out).
