@@ -557,9 +557,7 @@ function finish<T>(pieces: LocalPiece<T>[] | null, clearance: number, maxW: numb
   slid = flipPass(slid, clearance);
   slid = tuckBottoms(slid, maxW, maxH, clearance);
   slid = fillVoids(slid, maxW, maxH, clearance);
-  // The 1 mm picture used while searching can leave a real gap under 1 mm.
-  // Push those pairs apart, or drop the candidate if they no longer fit.
-  return pushToClearance(slid, clearance, maxW, maxH);
+  return slid;
 }
 
 function pairTooClose<T>(a: LocalPiece<T>, b: LocalPiece<T>, clearance: number): boolean {
@@ -855,7 +853,15 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
     picked.push(layout);
     if (picked.length >= 6) break;
   }
-  return picked;
+  // The coarse search can leave a cut gap under 1 mm. Correct only the few
+  // layouts we might actually use — doing it on every candidate is what made
+  // a full pending batch take about a minute.
+  const cleared: LocalPiece<T>[][] = [];
+  for (const layout of picked) {
+    const pushed = pushToClearance(layout, clearance, maxW, maxH);
+    if (pushed) cleared.push(pushed);
+  }
+  return cleared;
 }
 
 function optionFrom<T>(pieces: LocalPiece<T>[], blockRot: 0 | 90, config: ShapeBlockConfig): FootprintOption<T> {
@@ -1024,6 +1030,38 @@ function sheetOutlineOf(polys: Pt[][], posX: number, posY: number): Pt[][] {
   return translatePolys(polys, posX, posY);
 }
 
+/** Move saved pieces until every cut line on a sheet is at least `clearance` apart. */
+function separatePlaced<T>(placements: ShapeBlockPlacement<T>[], clearance: number): ShapeBlockPlacement<T>[] {
+  const next = placements.map((piece) => ({
+    ...piece,
+    outline: piece.outline.map((poly) => poly.map((point) => ({ ...point }))),
+  }));
+  const shift = (piece: ShapeBlockPlacement<T>, dx: number, dy: number) => {
+    piece.posX = roundMm(piece.posX + dx);
+    piece.posY = roundMm(piece.posY + dy);
+    piece.outline = translatePolys(piece.outline, dx, dy);
+  };
+  for (let pass = 0; pass < 80; pass++) {
+    let moved = false;
+    for (let i = 0; i < next.length && !moved; i++) {
+      for (let j = i + 1; j < next.length; j++) {
+        if (next[i].sheetIndex !== next[j].sheetIndex) continue;
+        if (!outlinesTooClose(next[i].outline, next[j].outline, clearance)) continue;
+        const ix = next[i].posX + next[i].width / 2;
+        const jx = next[j].posX + next[j].width / 2;
+        const iy = next[i].posY + next[i].height / 2;
+        const jy = next[j].posY + next[j].height / 2;
+        if (Math.abs(ix - jx) >= Math.abs(iy - jy)) shift(ix >= jx ? next[i] : next[j], 0.4, 0);
+        else shift(iy >= jy ? next[i] : next[j], 0, 0.4);
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;
+  }
+  return next;
+}
+
 function realize<T>(choice: Choice<T>, config: ShapeBlockConfig): { placements: ShapeBlockPlacement<T>[]; block: ShapeBlockInfo } {
   const { option, spot } = choice;
   const originX = spot.x + (option.side === "left" ? config.labelGutterMm : 0) + config.framePadMm;
@@ -1135,7 +1173,7 @@ export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Pa
     });
   }
 
-  if (errors.length > 0) {
+  if (blocks.length === 0) {
     return { ok: false, errors, placements: [], blocks: [], sheetCount: 0, sumUsedHeight: 0, config };
   }
 
@@ -1159,7 +1197,10 @@ export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Pa
   }
   // Keep the caller's item order in the flat list so a missing piece is obvious.
   const byId = new Map(placements.map((p) => [p.item, p]));
-  const ordered = items.map((item) => byId.get(item)).filter((p): p is ShapeBlockPlacement<T> => !!p);
+  const ordered = separatePlaced(
+    items.map((item) => byId.get(item)).filter((p): p is ShapeBlockPlacement<T> => !!p),
+    config.cutClearanceMm
+  );
 
   return {
     ok: true,

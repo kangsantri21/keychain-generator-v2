@@ -3,7 +3,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, orderItems, templates, stagingItems, type NewStagingItem, type HoleOverride } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
-import { renderTemplateItem } from "@/lib/render-dispatcher";
+import { renderTemplateItemCached } from "@/lib/render-cache";
 import type { KeychainRender } from "@/lib/render-types";
 import { packMaxRects, type NestableRect } from "@/lib/nesting";
 import { runGroupedNesting, resolveConfig, type GroupedNestingItem } from "@/lib/nesting/grouped-nesting";
@@ -98,6 +98,7 @@ export async function POST(request: NextRequest) {
   // asset or name, or an unrenderable glyph). Legacy keeps skipping them as
   // before; Production Nesting refuses to stage a partial batch.
   const unrenderedNames: string[] = [];
+  const unrenderedOrderIds = new Set<number>();
 
   for (const item of selectedItems) {
     // A completed order is done for good — never re-nest its items even if
@@ -109,6 +110,7 @@ export async function POST(request: NextRequest) {
 
     const template = templateMap.get(item.templateId);
     if (!template) {
+      unrenderedOrderIds.add(item.orderId);
       for (const nameIndex of requestedIndexes) unrenderedNames.push(`${describe(nameIndex)}: template tidak ditemukan`);
       continue;
     }
@@ -119,6 +121,7 @@ export async function POST(request: NextRequest) {
         assets = await loadTemplateAssets(template);
         assetsCache.set(template.id, assets);
       } catch {
+        unrenderedOrderIds.add(item.orderId);
         for (const nameIndex of requestedIndexes) unrenderedNames.push(`${describe(nameIndex)}: aset template gagal dimuat`);
         continue;
       }
@@ -126,14 +129,13 @@ export async function POST(request: NextRequest) {
 
     for (const nameIndex of requestedIndexes) {
       const name = item.customerNames[nameIndex];
-      if (!name) {
-        unrenderedNames.push(`${describe(nameIndex)}: nama tidak ada`);
+      if (!name || name.trim().length === 0) {
         continue;
       }
 
       try {
         const holeOverride = item.holeOverrides?.[nameIndex] ?? null;
-        const rendered = renderTemplateItem(assets, template, name, holeOverride);
+        const rendered = renderTemplateItemCached(assets, template, name, holeOverride);
         const data: PackData = {
           orderId: item.orderId,
           templateId: template.id,
@@ -144,16 +146,15 @@ export async function POST(request: NextRequest) {
         pendingRects.push({ width: rendered.width, height: rendered.height, data });
         successfulOrderIds.add(item.orderId);
       } catch {
+        unrenderedOrderIds.add(item.orderId);
         unrenderedNames.push(`${describe(nameIndex)}: gagal dirender`);
         // Skip a single unrenderable name (e.g. a glyph the font can't shape) without failing the whole item.
       }
     }
   }
 
-  // PRODUCTION NESTING (V2 -> V3 slot reflow -> compound -> region repack
-  // FAST, ORDER_GAP 8): all-or-nothing. Every selected name must render and
-  // be placed, and the production gate must pass, before anything is
-  // written; otherwise nothing is staged and the reasons are returned.
+  // PRODUCTION NESTING. Receipts that are already on a sheet, or that cannot
+  // be drawn or fitted, are skipped and listed. The rest are saved.
   if (resolveNestingMode(body) === "production-v3") {
     // 1 receipt = 1 group = 1 sheet: refuse receipts that already have active
     // units in Staging (re-sending them would stage units twice and put the
@@ -163,28 +164,32 @@ export async function POST(request: NextRequest) {
       .from(stagingItems)
       .where(inArray(stagingItems.orderId, orderIds));
     const conflicts = stagedReceiptConflicts(orderIds, activeRows);
-    if (conflicts.length > 0) {
-      const codeOf = new Map(parentOrders.map((order) => [order.id, `${order.receiptCode}${order.manualCode ? ` (${order.manualCode})` : ""}`]));
+    const codeOf = new Map(parentOrders.map((order) => [order.id, `${order.receiptCode}${order.manualCode ? ` (${order.manualCode})` : ""}`]));
+    const skipped = new Set<number>([...conflicts.map((conflict) => conflict.orderId), ...unrenderedOrderIds]);
+    const failed: { receipt: string; reason: string }[] = [
+      ...conflicts.map((conflict) => ({
+        receipt: codeOf.get(conflict.orderId) ?? `#${conflict.orderId}`,
+        reason: `sudah ada di Lembar Kerja #${conflict.sheetIds.join(", #")}. Bongkar lembar itu dulu kalau mau disusun ulang.`,
+      })),
+      ...[...unrenderedOrderIds].map((orderId) => ({
+        receipt: codeOf.get(orderId) ?? `#${orderId}`,
+        reason: "ada nama yang tidak bisa digambar (font atau gambar template tidak kebaca). Resi ini dilewati.",
+      })),
+    ];
+    const readyRects = pendingRects.filter((rect) => !skipped.has(rect.data.orderId));
+    if (readyRects.length === 0) {
       return NextResponse.json(
         {
-          error: `${conflicts.length} resi sudah ada di Lembar Kerja — tidak ada yang disimpan. Bongkar lembar kerjanya dulu, lalu kirim ulang seluruh resi.`,
-          details: conflicts.map((c) => `${codeOf.get(c.orderId) ?? `#${c.orderId}`} sudah di Lembar Kerja #${c.sheetIds.join(", #")}`).slice(0, 20),
+          error: failed.length > 0 ? "Tidak ada resi yang bisa disusun." : "Tidak ada item yang bisa disusun dari pesanan terpilih",
+          details: failed.map((item) => `${item.receipt}: ${item.reason}`).slice(0, 30),
+          failed,
         },
-        { status: 409 }
+        { status: failed.length > 0 ? 422 : 400 }
       );
-    }
-    if (unrenderedNames.length > 0) {
-      return NextResponse.json(
-        { error: `${unrenderedNames.length} item tidak bisa diproses — tidak ada yang disimpan`, details: unrenderedNames.slice(0, 20) },
-        { status: 422 }
-      );
-    }
-    if (pendingRects.length === 0) {
-      return NextResponse.json({ error: "Tidak ada item yang bisa disusun dari pesanan terpilih" }, { status: 400 });
     }
 
-    const receiptCodeByOrderId = new Map(parentOrders.map((order) => [order.id, order.receiptCode]));
-    const productionItems: GroupedNestingItem<PackData>[] = pendingRects.map((rect, index) => ({
+    const receiptCodeByOrderId = codeOf;
+    const productionItems: GroupedNestingItem<PackData>[] = readyRects.map((rect, index) => ({
       id: index,
       orderId: rect.data.orderId,
       width: rect.width,
@@ -196,13 +201,46 @@ export async function POST(request: NextRequest) {
       receiptCode: receiptCodeByOrderId.get(rect.data.orderId) ?? "",
       data: rect.data,
     }));
-    const nesting = runProductionNesting(productionItems);
+    let nesting = runProductionNesting(productionItems);
+    if (!nesting.ok) {
+      const byOrder = new Map<number, GroupedNestingItem<PackData>[]>();
+      for (const item of productionItems) {
+        const id = item.orderId ?? -1;
+        const list = byOrder.get(id) ?? [];
+        list.push(item);
+        byOrder.set(id, list);
+      }
+      const placements: typeof nesting.placements = [];
+      let sheetCount = 0;
+      let sumUsedHeight = 0;
+      for (const [orderId, group] of byOrder) {
+        const one = runProductionNesting(group);
+        if (!one.ok) {
+          failed.push({
+            receipt: codeOf.get(orderId) ?? `#${orderId}`,
+            reason: one.errors[0] ?? "tidak bisa disusun dalam satu lembar",
+          });
+          continue;
+        }
+        for (const placement of one.placements) {
+          placements.push({ ...placement, sheetIndex: sheetCount + placement.sheetIndex });
+        }
+        sheetCount += one.sheetCount;
+        sumUsedHeight += one.sumUsedHeight;
+      }
+      nesting = { ...nesting, ok: placements.length > 0, placements, sheetCount, sumUsedHeight, errors: nesting.errors };
+    }
     if (!nesting.ok) {
       return NextResponse.json(
-        { error: "Production Nesting gagal validasi — tidak ada yang disimpan", details: nesting.errors.slice(0, 20) },
+        {
+          error: "Tidak ada resi yang bisa disusun.",
+          details: [...failed.map((item) => `${item.receipt}: ${item.reason}`), ...nesting.errors].slice(0, 30),
+          failed: [...failed, ...nesting.errors.map((reason) => ({ receipt: "", reason }))],
+        },
         { status: 422 }
       );
     }
+    for (const reason of nesting.errors) failed.push({ receipt: "", reason });
 
     const [{ maxSheet: productionMaxSheet }] = await db
       .select({ maxSheet: sql<number | null>`MAX(${stagingItems.sheetId})` })
@@ -226,7 +264,7 @@ export async function POST(request: NextRequest) {
       holeOverrideX: placement.data.holeOverride?.x ?? null,
       holeOverrideY: placement.data.holeOverride?.y ?? null,
     }));
-    const productionOrderIds = [...successfulOrderIds];
+    const productionOrderIds = [...new Set(productionRows.map((row) => row.orderId))];
     // Re-checked inside the write transaction (a second request may have staged the same receipts meanwhile).
     const raced = db.transaction((tx) => {
       const nowActive = tx
@@ -234,7 +272,8 @@ export async function POST(request: NextRequest) {
         .from(stagingItems)
         .where(inArray(stagingItems.orderId, orderIds))
         .all();
-      const late = stagedReceiptConflicts(orderIds, nowActive);
+      const writing = new Set(productionRows.map((row) => row.orderId));
+      const late = stagedReceiptConflicts(orderIds, nowActive).filter((conflict) => writing.has(conflict.orderId));
       if (late.length > 0) return late;
       tx.insert(stagingItems).values(productionRows).run();
       if (productionOrderIds.length > 0) tx.update(orders).set({ status: "processing" }).where(inArray(orders.id, productionOrderIds)).run();
@@ -256,6 +295,7 @@ export async function POST(request: NextRequest) {
       items: productionRows.length,
       ordersProcessed: productionOrderIds.length,
       sumUsedHeight: nesting.sumUsedHeight,
+      failed,
       // Debug only: how far each receipt was compacted (left/up) after packing.
       compaction: nesting.compaction.map((m) => ({ orderId: m.orderId, dx: m.dx, dy: m.dy, status: m.status })),
     });

@@ -15,11 +15,11 @@ import type { StagingItemPayload } from "@/lib/staging-types";
 import { validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
 import { framesAndLabels } from "@/lib/nesting/shape-block-marks";
 import { runShapeBlockNesting, type ShapeBlockItem, type ShapeBlockPlacement } from "@/lib/nesting/shape-block-nesting";
+import { runProductionNesting } from "@/lib/nesting/production-nesting";
+import type { GroupedNestingItem } from "@/lib/nesting/grouped-nesting-types";
 import { CUT_CLEARANCE_MM } from "@/lib/nesting/shape-block-config";
 import { lOutline, outlinesTooClose, rectOutline } from "@/lib/nesting/shape-outline";
 import { layoutByHand, manualLikeBatch, toShapeItems } from "@/lib/nesting/shape-block-sample";
-import { runProductionNesting } from "@/lib/nesting/production-nesting";
-import type { GroupedNestingItem } from "@/lib/nesting/grouped-nesting-types";
 
 const EPS = 0.15;
 
@@ -99,6 +99,49 @@ describe("Shape-block nesting", () => {
     assert.ok(free.blocks[0].width < frozen.blocks[0].width - 10);
     const gate = validatePlacedSheets(placedOf(free), ["0", "1"], "production");
     assert.deepEqual(gate.errors, []);
+  });
+
+  test("a receipt that does not fit is skipped and the others are still placed", () => {
+    const small = item({
+      id: "kecil",
+      orderId: 1,
+      width: 20,
+      height: 10,
+      allowRotation: true,
+      outline: rectOutline(20, 10),
+      receiptCode: "KECIL",
+      data: "kecil",
+    });
+    const huge = item({
+      id: "besar",
+      orderId: 2,
+      width: 400,
+      height: 400,
+      allowRotation: false,
+      outline: rectOutline(400, 400),
+      receiptCode: "BESAR",
+      data: "besar",
+    });
+    const run = runShapeBlockNesting([small, huge]);
+    assert.equal(run.ok, true, run.errors.join("; "));
+    assert.deepEqual(run.placements.map((piece) => piece.item.id), ["kecil"]);
+    assert.match(run.errors.join(" "), /BESAR/);
+    const asGrouped = (piece: typeof small): GroupedNestingItem<string> => ({
+      id: piece.id,
+      orderId: piece.orderId,
+      width: piece.width,
+      height: piece.height,
+      originalWidth: piece.width,
+      originalHeight: piece.height,
+      allowRotation: piece.allowRotation,
+      outline: piece.outline,
+      receiptCode: piece.receiptCode,
+      data: piece.data,
+    });
+    const production = runProductionNesting([asGrouped(small), asGrouped(huge)]);
+    assert.equal(production.ok, true, production.errors.join("; "));
+    assert.equal(production.placements.length, 1);
+    assert.equal(production.placements[0].data, "kecil");
   });
 
   test("equal rectangles alternate 0° and 180° when that does not use more sheet", () => {
