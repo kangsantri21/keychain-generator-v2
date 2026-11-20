@@ -3,7 +3,7 @@ import { and, eq, ne, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { stagingItems, orders, templates, type Order, type Template } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
-import { renderTemplateItem } from "@/lib/render-dispatcher";
+import { renderTemplateItemCached } from "@/lib/render-cache";
 import type { KeychainRender } from "@/lib/render-types";
 import { shapeGateFields } from "@/lib/nesting/shape-placed";
 import { summarizeSheet, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
             row.holeOverrideX !== null && row.holeOverrideY !== null
               ? { x: row.holeOverrideX, y: row.holeOverrideY }
               : null;
-          render = renderTemplateItem(assets, row.template, row.customerName, holeOverride);
+          render = renderTemplateItemCached(assets, row.template, row.customerName, holeOverride);
         } catch {
           render = null;
         }

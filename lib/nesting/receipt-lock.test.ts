@@ -312,6 +312,35 @@ test("locking, unlocking, and dismantling update one part at a time", async () =
   assert.equal(otherDouble.length, 1);
   assert.equal(otherDouble[0].sheetId, 42);
 
+  const finished = await addOrder("SUDAH");
+  await db.update(schema.orders).set({ status: "completed" }).where(eq(schema.orders.id, finished.id));
+  await stage(finished.id, 91);
+  await stage(finished.id, 92);
+  const removedFinished = await deleteSheet(sheetRequest("DELETE", 91), sheetContext(91));
+  assert.equal(removedFinished.status, 200);
+  assert.equal(await orderStatus(finished.id), "completed");
+  const finishedLeft = await db.select().from(schema.stagingItems).where(eq(schema.stagingItems.orderId, finished.id));
+  assert.deepEqual(finishedLeft.map((row) => row.sheetId), [92]);
+
+  const history = await addOrder("RIWAYAT");
+  await stage(history.id, 93);
+  await db.insert(schema.stagingItems).values({
+    orderId: history.id,
+    templateId: template.id,
+    customerName: "Ani",
+    sheetId: 94,
+    posX: 40,
+    posY: 40,
+    width: rendered.width,
+    height: rendered.height,
+    rotated: false,
+    status: "completed",
+    partDone: true,
+  });
+  const removedHistory = await deleteSheet(sheetRequest("DELETE", 93), sheetContext(93));
+  assert.equal(removedHistory.status, 200);
+  assert.equal(await orderStatus(history.id), "pending");
+
   const old = await addOrder("LAMA");
   await db.insert(schema.stagingItems).values({
     orderId: old.id,

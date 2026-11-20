@@ -87,12 +87,17 @@ export function receiptViewsFor(
   const byOrder = new Map<number, ReceiptPiece[]>();
   for (const id of unique) byOrder.set(id, []);
   for (const row of staging) {
+    // A row whose status is "completed" is old history, not an active piece.
+    // Bongkar ignores it the same way: it does not keep the receipt in
+    // processing, and it does not by itself finish the receipt. A part locked
+    // with part_done keeps its layout status, so it still counts.
+    if (row.status === "completed") continue;
     byOrder.get(row.orderId)?.push({
       orderId: row.orderId,
       sheetId: row.sheetId,
       splitPart: row.splitPart,
       splitCount: row.splitCount,
-      locked: row.partDone || row.status === "completed",
+      locked: row.partDone,
     });
   }
   for (const piece of lockedBatchPieces(unique, options?.exceptBatchId)) {

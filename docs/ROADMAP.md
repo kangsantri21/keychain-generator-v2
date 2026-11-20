@@ -128,9 +128,10 @@ Yang belum selesai:
 
 Selesai bila (sudah ada di branch fitur D):
 
-- Resi kembali ke pending hanya jika tidak ada lagi item staging aktif dan tidak ada bagian yang masih terkunci di batch.
+- Resi kembali ke pending hanya jika tidak ada keping aktif di lembar lain. Keping `part_done` dan keping di batch tetap dihitung. Riwayat lama berstatus `completed` tidak menahan resi.
 - Jika masih ada item di lembar lain, status tetap `processing` dan item di lembar lain tidak berubah.
-- Ada tes untuk resi yang terbelah di dua lembar (data lama tanpa tanda pecahan, dan pecahan sah), lalu satu lembar dibongkar. Tes: `lib/nesting/receipt-lock.test.ts`.
+- Resi yang sudah `completed` tidak diubah oleh bongkar. Buka Kunci yang menghitung ulang bagian itu.
+- Ada tes untuk resi yang terbelah di dua lembar (data lama tanpa tanda pecahan, dan pecahan sah), lalu satu lembar dibongkar. Tes: `lib/nesting/staging-start.test.ts` dan `lib/nesting/receipt-lock.test.ts`.
 
 ### P0.11 Login sederhana untuk alat internal
 

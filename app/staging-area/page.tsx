@@ -41,6 +41,7 @@ export default function StagingAreaPage() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isLocking, setIsLocking] = useState(false);
   const [isStartingNesting, setIsStartingNesting] = useState(false);
+  const [nestNotice, setNestNotice] = useState<{ tone: "error" | "warn"; text: string } | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("active");
   const [pendingSheetActionId, setPendingSheetActionId] = useState<number | null>(null);
 
@@ -141,21 +142,43 @@ export default function StagingAreaPage() {
 
   async function handleStartNesting() {
     setIsStartingNesting(true);
+    setNestNotice(null);
     try {
       const res = await fetch("/api/staging/nest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(STAGING_START_REQUEST),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        const details: string[] = Array.isArray(data.details) ? data.details : [];
-        throw new Error([data.error ?? "Gagal menyusun lembar kerja", ...details.slice(0, 5)].join("\n"));
+      const raw = await res.text();
+      let data: { error?: string; details?: string[]; items?: number; sheets?: number; failed?: { receipt: string; reason: string }[] } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error(raw.trim().slice(0, 400) || `Server menjawab ${res.status} tanpa pesan`);
       }
-      toast.success(`${data.items} pesanan berhasil disusun di ${data.sheets} lembar`);
+      const failedLines = Array.isArray(data.failed)
+        ? data.failed.map((item) => (item.receipt ? `${item.receipt}: ${item.reason}` : item.reason))
+        : [];
+      const details = Array.isArray(data.details) ? data.details : [];
+      const reason = [data.error, ...details, ...failedLines].filter(Boolean).join("\n");
+      if (!res.ok) {
+        const text = reason || `Gagal menyusun lembar kerja (HTTP ${res.status})`;
+        setNestNotice({ tone: "error", text });
+        toast.error(text, { duration: 12000 });
+        return;
+      }
+      if (failedLines.length > 0) {
+        const text = `Sebagian resi tersusun (${data.items ?? 0} keping, ${data.sheets ?? 0} lembar).\nYang dilewati:\n${failedLines.join("\n")}`;
+        setNestNotice({ tone: "warn", text });
+        toast(text, { duration: 12000 });
+      } else {
+        toast.success(`${data.items} pesanan berhasil disusun di ${data.sheets} lembar`);
+      }
       await reloadAfterMutation();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Gagal menyusun lembar kerja");
+      const text = error instanceof Error ? error.message : "Gagal menyusun lembar kerja";
+      setNestNotice({ tone: "error", text });
+      toast.error(text, { duration: 12000 });
     } finally {
       setIsStartingNesting(false);
     }
@@ -288,6 +311,7 @@ export default function StagingAreaPage() {
           activeSheetId={activeSheetId}
           onSelectSheet={handleSelectSheet}
           onStartNesting={handleStartNesting}
+          nestNotice={nestNotice}
           onLockBatch={handleLockBatch}
           isStartingNesting={isStartingNesting}
           isLocking={isLocking}

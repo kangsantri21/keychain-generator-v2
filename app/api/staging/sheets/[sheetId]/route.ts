@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { stagingItems } from "@/lib/db/schema";
+import { orders, stagingItems } from "@/lib/db/schema";
 import { describeLockedOrders, syncOrderStatuses } from "@/lib/receipt-status";
 
 function badRequest(message: string, status = 400) {
@@ -10,9 +10,12 @@ function badRequest(message: string, status = 400) {
 
 /**
  * "Bongkar" — deletes this sheet's pieces only.
- * The receipt returns to pending only when nothing of it remains on a
- * sheet or in a locked batch. Another part that is still arranged or
- * locked keeps the receipt in processing (P0.10 / feature D).
+ *
+ * Same rule as the per-receipt dismantle: a receipt goes back to pending
+ * only when it has no active piece left on another sheet. A piece that is
+ * still arranged, or locked as one part (part_done or a print batch), keeps
+ * the receipt in processing. A receipt that is already completed is left
+ * completed — Buka Kunci is what reopens a finished part.
  */
 export async function DELETE(
   _request: NextRequest,
@@ -32,10 +35,18 @@ export async function DELETE(
 
   const orderIds = [...new Set(items.map((item) => item.orderId))];
 
-  const orders = db.transaction((tx) => {
+  const receipts = db.transaction((tx) => {
     tx.delete(stagingItems).where(eq(stagingItems.sheetId, sheetId)).run();
-    return describeLockedOrders(tx, syncOrderStatuses(tx, orderIds));
+    const current = tx.select().from(orders).where(inArray(orders.id, orderIds)).all();
+    const openIds = current.filter((order) => order.status !== "completed").map((order) => order.id);
+    const described = describeLockedOrders(tx, syncOrderStatuses(tx, openIds));
+    for (const order of current) {
+      if (order.status !== "completed") continue;
+      if (described.some((row) => row.id === order.id)) continue;
+      described.push({ id: order.id, receiptCode: order.receiptCode, status: "completed", progressLabel: null });
+    }
+    return described;
   });
 
-  return NextResponse.json({ success: true, orders });
+  return NextResponse.json({ success: true, orders: receipts });
 }

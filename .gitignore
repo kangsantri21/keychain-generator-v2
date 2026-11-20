@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# drawn keychain cache (rebuilt locally; can hold customer names)
+/.cache/
+
 # production
 /build
 

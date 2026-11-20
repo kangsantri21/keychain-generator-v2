@@ -87,8 +87,9 @@ Mengunci atau menandai selesai satu lembar hanya menyelesaikan keping di lembar 
 - Aturan selesai tetap `receiptIsComplete` di `lib/receipt-parts.ts`, dipanggil lewat `lib/receipt-lock.ts`. Resi pecahan selesai hanya kalau bagian 1 sampai N semuanya terkunci. Resi utuh di satu lembar selesai seperti biasa.
 - `POST /api/staging/sheets/[id]/complete` (Tandai Selesai) mengisi `part_done` pada keping lembar itu. Status susunan (`staged-shape` dan yang lain) tidak ditimpa, supaya lembar bisa dibuka lagi.
 - `POST /api/print-batches` (Kunci batch) mengizinkan pecahan sah. Resi yang juga ada di lembar lain tanpa tanda pecahan tetap ditolak. Keping lembar itu pindah ke batch. Resi belum selesai kalau masih ada bagian yang terbuka.
-- `POST .../reopen` (tombol Buka Kunci di Riwayat) mengembalikan lembar ke daftar aktif dan menghitung ulang status resi.
-- `DELETE .../sheets/[id]` (Bongkar) hanya menghapus lembar itu. Resi kembali ke pending hanya kalau tidak ada bagian lain yang masih tersusun atau terkunci. Itu menutup P0.10 di branch ini.
+- `POST .../reopen` (tombol Buka Kunci di Riwayat) mengembalikan lembar ke daftar aktif dan menghitung ulang status resi. Bongkar tidak membuka resi yang sudah selesai; Buka Kunci yang menghitung ulang.
+- `DELETE .../sheets/[id]` (Bongkar) hanya menghapus lembar itu. Resi kembali ke pending hanya kalau tidak ada keping aktif di lembar lain. Keping yang `part_done` atau yang sudah masuk batch tetap dihitung, jadi resi tetap `processing`. Riwayat lama berstatus `completed` tidak menahan resi. Resi yang sudah `completed` tidak diubah oleh bongkar.
 - Menghapus batch yang berisi pecahan mengembalikan bagian itu ke Staging. Menghapus batch resi utuh tidak mengubah status selesai.
 - Antrean Pesanan dan daftar pesanan di Input menampilkan `1/2 bagian selesai` selagi baru sebagian bagian yang terkunci. Lembar di Staging menampilkan lencana `Bagian 1/2`.
 - Kolom baru: `staging_items.part_done`, migrasi `0019_part_done`. Keduanya kosong (0) pada lembar yang masih aktif. Baris lama berstatus `completed` diisi 1.
+- Tombol “Mulai Susun” menyimpan resi yang muat dan resi yang dipecah. Yang disebut dilewati hanya resi yang sudah ada di lembar lain, yang tidak bisa digambar, atau yang punya satu keping lebih besar dari lembar.

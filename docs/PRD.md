@@ -76,15 +76,15 @@ Status di kolom “Main” adalah yang ada di branch `main` hari ini. Kolom “B
 | Tambah ke lembar yang sudah ada | Ada, hanya pesanan pending, tidak mengacak isi lama | Ada. Lembar produksi tidak boleh ditambah dengan cara legacy |
 | Pratinjau staging dan HPP sederhana | Ada | Ada, plus metrik lembar. Tombol “Mulai Susun Lembar Kerja” menyusun semua resi pending (Production Nesting). Di `main` tombol itu memanggil API tanpa daftar nama dan selalu gagal |
 | Kunci batch produksi | Ada. Isi layout dipercaya dari browser | Ada di branch, belum di main: layout dicocokkan ke database dan aturan jarak |
-| Tandai selesai tanpa membuat file | Ada. Seluruh resi di lembar jadi selesai | Perlu dicek ulang saat digabung; aturan resi utuh sudah lebih ketat |
-| Bongkar lembar | Ada. Semua resi di lembar kembali ke pending | Ada |
+| Tandai selesai tanpa membuat file | Ada. Seluruh resi di lembar jadi selesai | Ada di branch fitur D, belum di main: hanya keping di lembar itu. Resi selesai kalau semua bagian terkunci |
+| Bongkar lembar | Ada. Semua resi di lembar kembali ke pending | Ada di branch, belum di main: pending hanya jika tidak ada keping aktif di lembar lain. Resi yang sudah selesai tidak dibuka |
 | File siap cetak, unduh DXF dan JPG | Ada | Ada. Bingkai tinggi aktif untuk lembar produksi |
 | Ubah status batch menjadi sudah dicetak / arsip | Tampilan ada, tidak ada tombol atau API | Sama |
 | Bahan Mahar (input, nesting, DXF, batch) | Ada, terpisah dari ganci | Sama |
 | Login | Tidak ada. Paket `better-auth` terpasang tetapi tidak dipakai | Sama |
 | Impor BigSeller / marketplace | Tidak ada | Tidak ada |
 | Jurnal Accurate | Tidak ada | Tidak ada |
-| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Susunan blok, selang-seling, kontur tokoh, dan tombol Staging: 374 lulus. Setelah pecah resi kebesaran: 379 lulus |
+| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Susunan blok, bongkar per resi, pecah resi, dan kunci per bagian: 386 lulus |
 
 ## Keputusan nesting
 
@@ -175,7 +175,7 @@ Masalah yang masih mengganggu pekerjaan, baik di `main` maupun yang baru selesai
 3. **Satu resi bisa masuk dua lembar** di `main`. Antrean masih bisa mengirim nama yang statusnya sudah “diproses”. Perbaikan ada di branch, belum di main.
 4. **Mengunci satu lembar menandai seluruh resi selesai — diperbaiki untuk pecahan di branch fitur D, belum di `main`.** Di `main`, dan untuk nama yang memang tidak ikut terpilih (bukan pecahan sah), sisa nama masih ikut selesai. Di branch fitur D, kunci atau tandai selesai hanya menyelesaikan keping di lembar itu. Resi pecahan selesai setelah semua bagian terkunci. Memilih sebagian nama sebuah resi yang tidak dipecah mesin masih urusan P0.8.
 5. **Tombol “Mulai Susun Lembar Kerja” di `main` tidak bisa jalan.** Ia memanggil API tanpa daftar nama. Di branch ini tombol sudah diperbaiki: server mengisi daftar nama dari resi yang masih pending, lalu Production Nesting menulis lembar. Resi yang sudah diproses atau selesai tidak ikut. Jika tidak ada resi pending, tidak ada lembar baru. Memilih sebagian nama tetap dari Antrean Pesanan. Perbaikan ini belum di `main`.
-6. **Membongkar satu lembar mengembalikan semua resi di lembar itu ke pending — diperbaiki di branch fitur D, belum di `main`.** Di branch ini resi kembali ke pending hanya kalau tidak ada bagian lain yang masih tersusun atau terkunci.
+6. **Membongkar satu lembar mengembalikan semua resi di lembar itu ke pending — diperbaiki di branch, belum di `main`.** Resi kembali ke pending hanya kalau tidak ada keping aktif di lembar lain. Bagian yang sudah dikunci (atau masuk batch) membuat resi tetap diproses. Resi yang sudah selesai tidak dibuka oleh bongkar.
 7. **Tidak ada login.** Nama pelanggan dan file produksi terbuka bagi siapa saja yang kebuka aplikasinya.
 8. **Edit pesanan belum ada.**
 9. **Status “Sudah Dicetak” di File Siap Cetak tidak pernah berubah** dari pending.

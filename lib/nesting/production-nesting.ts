@@ -120,7 +120,9 @@ function shapeProductionResult<T>(items: GroupedNestingItem<T>[]): ProductionNes
   }));
   const errors = [...shape.errors];
   if (shape.ok) {
-    const byData = new Map(items.map((item) => [item.data, item]));
+    const placedData = new Set(shape.placements.map((p) => p.item.data));
+    const kept = items.filter((item) => placedData.has(item.data));
+    const byData = new Map(kept.map((item) => [item.data, item]));
     const placed: PlacedItem[] = shape.placements.map((p, index) => {
       const source = byData.get(p.item.data);
       return {
@@ -141,11 +143,23 @@ function shapeProductionResult<T>(items: GroupedNestingItem<T>[]): ProductionNes
         splitCount: p.splitCount,
       };
     });
-    const gate = validatePlacedSheets(placed, items.map((item) => String(item.id)), "production");
+    const gate = validatePlacedSheets(placed, kept.map((item) => String(item.id)), "production");
     if (!gate.ok) errors.push(...gate.errors);
+    else if (shape.placements.length > 0) {
+      return {
+        ok: true,
+        errors,
+        placements,
+        sheetCount: shape.sheetCount,
+        sumUsedHeight: shape.sumUsedHeight,
+        engine: "SHAPE",
+        compaction: [],
+        result: emptyGroupedResult(items, shape),
+      };
+    }
   }
   return {
-    ok: shape.ok && errors.length === 0,
+    ok: false,
     errors,
     placements,
     sheetCount: shape.sheetCount,
