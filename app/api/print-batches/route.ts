@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { printBatches, orderItems, orders, stagingItems } from "@/lib/db/schema";
+import { printBatches, orderItems, orders, stagingItems, templates } from "@/lib/db/schema";
 import { isUniqueConstraintError } from "@/lib/template-files";
+import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
+import { renderTemplateItem } from "@/lib/render-dispatcher";
+import { matchSubmittedToStaged, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
 import type { StagingItemPayload } from "@/lib/staging-types";
+import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
+import { activeProductionFrame } from "@/lib/active-frame";
 
 function badRequest(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -50,7 +55,90 @@ export async function POST(request: NextRequest) {
     return badRequest("Ukuran kanvas tidak valid");
   }
 
-  const layoutData = items as StagingItemPayload[];
+  // VALIDATION GATE: the staging rows in the DB are the single source of
+  // truth for placement (they are what the Staging Area preview shows). The
+  // submitted sheet must match them exactly, and the sheet must pass the
+  // production gate (lib/production-gate.ts); otherwise nothing is saved.
+  const submitted = items as StagingItemPayload[];
+  const dbRows = await db
+    .select()
+    .from(stagingItems)
+    .where(and(eq(stagingItems.sheetId, sheetId), ne(stagingItems.status, "completed")));
+  if (dbRows.length === 0) {
+    return badRequest("Lembar kerja tidak ditemukan di Staging Area", 404);
+  }
+
+  const gateErrors: string[] = [];
+  const match = matchSubmittedToStaged(dbRows, submitted);
+  if (match.mismatched > 0 || submitted.length !== dbRows.length) {
+    gateErrors.push(
+      `Layout yang dikirim berbeda dari Staging Area (${match.mismatched} item tidak cocok, ${submitted.length} dikirim vs ${dbRows.length} tersimpan) — muat ulang halaman`
+    );
+  }
+
+  // Artwork size check: re-render every unit and compare with its stored footprint.
+  const templateRows = await db.select().from(templates).where(inArray(templates.id, [...new Set(dbRows.map((r) => r.templateId))]));
+  const templateMap = new Map(templateRows.map((t) => [t.id, t]));
+  const assetsCache = new Map<number, TemplateAssets | null>();
+  const placed: PlacedItem[] = [];
+  for (const row of dbRows) {
+    let expected = { width: NaN, height: NaN };
+    const template = templateMap.get(row.templateId);
+    if (template) {
+      let assets = assetsCache.get(template.id);
+      if (assets === undefined) {
+        assets = await loadTemplateAssets(template).catch(() => null);
+        assetsCache.set(template.id, assets);
+      }
+      if (assets) {
+        try {
+          const holeOverride = row.holeOverrideX !== null && row.holeOverrideY !== null ? { x: row.holeOverrideX, y: row.holeOverrideY } : null;
+          const render = renderTemplateItem(assets, template, row.customerName, holeOverride);
+          expected = { width: render.width, height: render.height };
+        } catch {
+          // leaves NaN -> reported as an artwork mismatch below
+        }
+      }
+    }
+    placed.push({
+      key: String(row.id),
+      orderId: row.orderId,
+      sheet: row.sheetId,
+      posX: row.posX,
+      posY: row.posY,
+      width: row.width,
+      height: row.height,
+      rotated: row.rotated,
+      expectedWidth: expected.width,
+      expectedHeight: expected.height,
+    });
+  }
+  // Mode comes from the explicit staging marker (lib/staging-mode.ts), not from geometry.
+  const { mode } = sheetModeOf(dbRows);
+  if (mode === "mixed") gateErrors.push(MIXED_MODE_ERROR);
+  const gate = validatePlacedSheets(placed, dbRows.map((row) => String(row.id)), mode === "mixed" ? "production" : mode);
+  gateErrors.push(...gate.errors);
+
+  // A production sheet must hold every staged unit of its receipts (one receipt = one group on one sheet).
+  if (mode !== "legacy") {
+    const sheetOrderIds = [...new Set(dbRows.map((row) => row.orderId))];
+    const elsewhere = await db
+      .select({ orderId: stagingItems.orderId, sheetId: stagingItems.sheetId })
+      .from(stagingItems)
+      .where(and(inArray(stagingItems.orderId, sheetOrderIds), ne(stagingItems.sheetId, sheetId), ne(stagingItems.status, "completed")));
+    if (elsewhere.length > 0) {
+      gateErrors.push(`${new Set(elsewhere.map((e) => e.orderId)).size} resi juga memiliki item di lembar kerja lain — resi tidak boleh terpecah`);
+    }
+  }
+  // The physical export frame (adaptive height on Production sheets) must hold the validated layout.
+  gateErrors.push(...activeProductionFrame({ items: match.layout }).errors);
+
+  if (gateErrors.length > 0) {
+    return NextResponse.json({ error: "Validasi lembar kerja gagal — batch tidak disimpan", details: gateErrors.slice(0, 20) }, { status: 422 });
+  }
+
+  // Saved layout = the validated DB placement (same numbers the preview showed), with the client's render payload.
+  const layoutData: StagingItemPayload[] = match.layout;
   const orderIds = [...new Set(layoutData.map((item) => item.orderId))];
 
   // A staged item only carries orderId+templateId, not the order_items row

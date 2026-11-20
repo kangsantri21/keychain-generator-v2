@@ -3,12 +3,26 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { Search, CircleDot, Trash2 } from "lucide-react";
+import { Search, CircleDot, Trash2, X } from "lucide-react";
 import type { OrderItemVariant, OrderQueueEntry, OrderStatus, HoleOverride } from "@/lib/store/useTemplateStore";
 import type { StagingSheet } from "@/lib/staging-types";
 import type { Template } from "@/lib/db/schema";
 import { HoleOverrideModal } from "@/components/order-queue/HoleOverrideModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { MultiSheetPreview } from "@/components/order-queue/MultiSheetPreview";
+import { SpacingBenchmarkPanel } from "@/components/order-queue/SpacingBenchmarkPanel";
+import { SlotReflowPanel, slotOverlaysOf } from "@/components/order-queue/SlotReflowPanel";
+import { buildGroupedV2PreviewSheet, buildHeaderMetrics, type GroupedV2ApiResponse, type GroupedV2PreviewSheet } from "@/lib/nesting/grouped-nesting-preview";
+import { PART_GAP_MM, ORDER_GAP_MM, SHEET_MARGIN_MM, SHEET_WIDTH_MM, SHEET_HEIGHT_MM } from "@/lib/nesting/grouped-nesting-config";
+import { invalidateStagingCache } from "@/lib/staging-cache";
+import { rememberCompaction } from "@/lib/staging-overlay";
+
+type NestingMode = "production" | "legacy" | "grouped-v2-preview";
+
+/** "Tambahkan ke Batch Aktif" uses the legacy append packer, so only legacy sheets may receive it. */
+function isAppendableSheet(sheet: StagingSheet): boolean {
+  return (sheet.summary?.profile ?? "legacy") === "legacy";
+}
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -137,6 +151,25 @@ export default function OrderQueuePage() {
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ReceiptGroup | null>(null);
   const [isDeletingReceipt, setIsDeletingReceipt] = useState(false);
 
+  // PHASE 2B — dev/engineering visual validation only. `nestingMode`
+  // defaults to "legacy" so the normal user workflow (and every existing
+  // caller of handleSendToNesting/the button it drives) is completely
+  // unchanged unless someone explicitly flips this toggle. `v2Preview` is
+  // PURE CLIENT STATE, never written anywhere else — switching back to
+  // "legacy" just stops rendering it; nothing about the order/DB/Staging
+  // Area was ever touched by having it set.
+  // Production Nesting (V3 FAST, ORDER_GAP 8) is the default; Legacy Flat stays as a fallback.
+  const [nestingMode, setNestingMode] = useState<NestingMode>("production");
+  const [v2Preview, setV2Preview] = useState<GroupedV2PreviewSheet | null>(null);
+  // PHASE 2F — opt-in DEV spacing benchmark (ORDER GAP 8/6/4) on the same dry-run request.
+  const [benchmarkSpacing, setBenchmarkSpacing] = useState(false);
+  // V3A-1 EXPERIMENTAL — opt-in slot-aware reflow on the same dry-run request (off = plain V2).
+  const [slotReflow, setSlotReflow] = useState(false);
+  // V3A-3 EXPERIMENTAL — two-group compound moves on top of the slot reflow (needs slotReflow).
+  const [slotReflowCompound, setSlotReflowCompound] = useState(false);
+  // V3A-4 EXPERIMENTAL — local region repack (FAST) on top of the slot reflow (needs slotReflow).
+  const [slotReflowRegion, setSlotReflowRegion] = useState(false);
+
   async function loadOrders() {
     const res = await fetch("/api/orders");
     const data = await res.json();
@@ -150,9 +183,11 @@ export default function OrderQueuePage() {
     if (!res.ok) throw new Error(data.error ?? "Gagal memuat lembar kerja aktif");
     const sheets = data.sheets as StagingSheet[];
     setActiveSheets(sheets);
+    // Only legacy sheets accept "Tambahkan ke Batch Aktif" (Production Nesting sheets are blocked server-side too).
+    const appendable = sheets.filter((sheet) => isAppendableSheet(sheet));
     setTargetSheetId((current) => {
-      if (current !== "" && sheets.some((sheet) => sheet.sheetId === current)) return current;
-      return sheets[0]?.sheetId ?? "";
+      if (current !== "" && appendable.some((sheet) => sheet.sheetId === current)) return current;
+      return appendable[0]?.sheetId ?? "";
     });
   }
 
@@ -221,6 +256,7 @@ export default function OrderQueuePage() {
       const res = await fetch(`/api/orders/${orderId}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menghapus resi");
+      invalidateStagingCache(); // the order's staged units are deleted with it
 
       toast.success(`Resi ${confirmDeleteGroup.receiptCode} berhasil dihapus`);
       const deletedRowIds = new Set(confirmDeleteGroup.rows.map((row) => row.rowId));
@@ -288,17 +324,59 @@ export default function OrderQueuePage() {
       toast.error("Pilih minimal satu pesanan terlebih dahulu");
       return;
     }
+    // Production: 1 receipt = 1 sheet — receipts already staged/processed are refused (the server enforces it too).
+    if (nestingMode === "production") {
+      const notPending = [...new Set(selectedRows.filter((row) => row.status !== "pending").map((row) => row.receiptCode))];
+      if (notPending.length > 0) {
+        toast.error(
+          `${notPending.length} resi bukan Pending (sudah di Lembar Kerja/diproses): ${notPending.slice(0, 5).join(", ")}${notPending.length > 5 ? ", …" : ""}. Hapus dari pilihan, atau bongkar lembarnya dulu.`
+        );
+        return;
+      }
+    }
 
     setSending(true);
     try {
       const res = await fetch("/api/staging/nest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections: selectedRows.map((row) => row.rowId) }),
+        body: JSON.stringify(
+          nestingMode === "grouped-v2-preview"
+            ? {
+                selections: selectedRows.map((row) => row.rowId),
+                mode: "grouped-v2",
+                ...(benchmarkSpacing ? { benchmark: true } : {}),
+                ...(slotReflow ? { slotReflow: true } : {}),
+                ...(slotReflow && slotReflowCompound ? { slotReflowCompound: true } : {}),
+                ...(slotReflow && slotReflowRegion ? { slotReflowRegion: true } : {}),
+              }
+            : nestingMode === "production"
+              ? { selections: selectedRows.map((row) => row.rowId), mode: "production-v3" }
+              : { selections: selectedRows.map((row) => row.rowId) }
+        ),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Gagal mengirim ke mesin nesting");
+      if (!res.ok) {
+        const details: string[] = Array.isArray(data.details) ? data.details : [];
+        throw new Error([data.error ?? "Gagal mengirim ke mesin nesting", ...details.slice(0, 5)].join("\n"));
+      }
 
+      if (nestingMode === "grouped-v2-preview") {
+        // Dry-run only (app/api/staging/nest/route.ts's grouped-v2 branch
+        // never writes to stagingItems or order status) — render inline,
+        // no navigation, nothing persisted. `v2Preview` is the only place
+        // this result lives.
+        setV2Preview(buildGroupedV2PreviewSheet(data as GroupedV2ApiResponse));
+        if (data.unfitCount > 0) {
+          toast.error(`${data.unfitCount} item tidak muat dan dilewati — lihat panel info di bawah`);
+        } else {
+          toast.success(`Preview: ${data.metrics.totalItems} item, ${data.metrics.totalOrders} grup resi`);
+        }
+        return;
+      }
+
+      invalidateStagingCache();
+      if (Array.isArray(data.compaction)) rememberCompaction(data.compaction);
       toast.success(`${data.items} pesanan berhasil disusun di ${data.sheets} lembar`);
       router.push("/staging-area");
     } catch (error) {
@@ -318,7 +396,11 @@ export default function OrderQueuePage() {
       return;
     }
     if (targetSheetId === "") {
-      toast.error("Belum ada Lembar Kerja aktif — jalankan Nesting terlebih dahulu untuk membuatnya");
+      toast.error(
+        activeSheets.length > 0
+          ? "Lembar Kerja Production Nesting tidak bisa ditambah — bongkar lalu kirim ulang semua pesanannya dengan Production Nesting"
+          : "Belum ada Lembar Kerja aktif — jalankan Nesting terlebih dahulu untuk membuatnya"
+      );
       return;
     }
 
@@ -332,6 +414,7 @@ export default function OrderQueuePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menambahkan ke batch aktif");
 
+      invalidateStagingCache();
       toast.success(`${data.items} pesanan ditambahkan ke Lembar Kerja #${targetSheetId}`);
       setSelected(new Set());
       await Promise.all([loadOrders(), loadActiveSheets()]);
@@ -368,6 +451,68 @@ export default function OrderQueuePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Nesting engine — Production Nesting by default; Legacy Flat is the fallback; Grouped V2 Preview is a dev dry-run. Switching never touches the DB by itself. */}
+            <div className="flex items-center overflow-hidden rounded-md border border-slate-300 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => {
+                  setNestingMode("production");
+                  setV2Preview(null);
+                }}
+                title="Mesin nesting produksi: satu resi = satu grup, jarak antar resi 8 mm"
+                className={`px-2.5 py-2 transition-colors ${
+                  nestingMode === "production" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                Production Nesting
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNestingMode("legacy");
+                  setV2Preview(null);
+                }}
+                className={`px-2.5 py-2 transition-colors ${
+                  nestingMode === "legacy" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                Legacy Flat (fallback)
+              </button>
+              <button
+                type="button"
+                onClick={() => setNestingMode("grouped-v2-preview")}
+                title="Alat validasi engineering — hasil tidak disimpan ke database, hanya preview di halaman ini"
+                className={`px-2.5 py-2 transition-colors ${
+                  nestingMode === "grouped-v2-preview" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                Grouped V2 Preview (Dev)
+              </button>
+            </div>
+            {nestingMode === "grouped-v2-preview" && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="DEV: jalankan juga ORDER GAP 8/6/4 mm untuk perbandingan. Default produksi tidak berubah.">
+                <input type="checkbox" checked={benchmarkSpacing} onChange={(event) => setBenchmarkSpacing(event.target.checked)} />
+                Benchmark gap 8/6/4
+              </label>
+            )}
+            {nestingMode === "grouped-v2-preview" && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: setelah V2, coba pindahkan + susun ulang satu resi ke free slot. Dipakai hanya jika lebih baik. Dry-run, tidak disimpan.">
+                <input type="checkbox" checked={slotReflow} onChange={(event) => setSlotReflow(event.target.checked)} />
+                V3A Slot Reflow (exp)
+              </label>
+            )}
+            {nestingMode === "grouped-v2-preview" && slotReflow && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: setelah slot reflow, coba pasangan 2 resi (A pindah dulu, lalu B). Dipakai hanya jika hasil akhirnya lebih baik. Dry-run.">
+                <input type="checkbox" checked={slotReflowCompound} onChange={(event) => setSlotReflowCompound(event.target.checked)} />
+                V3A-3 Compound (exp)
+              </label>
+            )}
+            {nestingMode === "grouped-v2-preview" && slotReflow && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-600" title="EXPERIMENTAL: lepas 2–3 resi sekaligus dan susun ulang region itu (beam search FAST). Dipakai hanya jika hasil akhirnya lebih baik. Dry-run.">
+                <input type="checkbox" checked={slotReflowRegion} onChange={(event) => setSlotReflowRegion(event.target.checked)} />
+                V3A-4 Region Repack (FAST)
+              </label>
+            )}
             <select
               value={targetSheetId}
               onChange={(event) => setTargetSheetId(event.target.value ? Number(event.target.value) : "")}
@@ -377,11 +522,15 @@ export default function OrderQueuePage() {
               {activeSheets.length === 0 ? (
                 <option value="">Belum ada Lembar Kerja aktif</option>
               ) : (
-                activeSheets.map((sheet) => (
-                  <option key={sheet.sheetId} value={sheet.sheetId}>
-                    Lembar Kerja #{sheet.sheetId} ({sheet.items.length} item)
-                  </option>
-                ))
+                <>
+                  {!activeSheets.some((sheet) => isAppendableSheet(sheet)) && <option value="">Tidak ada Lembar Kerja Legacy aktif</option>}
+                  {activeSheets.map((sheet) => (
+                    <option key={sheet.sheetId} value={sheet.sheetId} disabled={!isAppendableSheet(sheet)}>
+                      Lembar Kerja #{sheet.sheetId} ({sheet.items.length} item)
+                      {isAppendableSheet(sheet) ? "" : " — Production, tidak bisa ditambah"}
+                    </option>
+                  ))}
+                </>
               )}
             </select>
             <button
@@ -399,7 +548,11 @@ export default function OrderQueuePage() {
               disabled={sending}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {sending ? "Memproses..." : "Kirim ke Mesin Nesting"}
+              {sending
+                ? "Memproses..."
+                : nestingMode === "grouped-v2-preview"
+                  ? "Jalankan Preview Grouped V2"
+                  : "Kirim ke Mesin Nesting"}
             </button>
           </div>
         </div>
@@ -526,6 +679,181 @@ export default function OrderQueuePage() {
           </div>
         )}
       </div>
+
+      {v2Preview && (
+        <div className="mt-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-800">Grouped V2 Preview (Dev) — belum disimpan ke database</h2>
+            <button
+              type="button"
+              onClick={() => setV2Preview(null)}
+              className="rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              aria-label="Tutup preview"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Alat validasi engineering — bukan tampilan produksi. */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-4">
+            {buildHeaderMetrics(v2Preview).map(({ label, value }) => (
+              <span key={label}>
+                {label}: {value}
+              </span>
+            ))}
+            <span>PART GAP: {PART_GAP_MM} mm</span>
+            <span>ORDER GAP: {ORDER_GAP_MM} mm</span>
+            <span>SHEET MARGIN: {SHEET_MARGIN_MM} mm</span>
+          </div>
+
+          {v2Preview.warnings.length > 0 && (
+            <ul className="flex flex-col gap-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              {v2Preview.warnings.map((warning, index) => (
+                <li key={index}>⚠ {warning}</li>
+              ))}
+            </ul>
+          )}
+
+          {/* PHASE 2D/2E dev diagnostics — did the gain come from candidate selection or from the outer packing strategy? */}
+          {(() => {
+            const optimizer = v2Preview.optimizer;
+            const formatScore = (score: typeof optimizer.finalScore) =>
+              `${score.sheetCount} lembar · ΣH ${score.usedHeight.toFixed(1)} · ${score.boundingArea.toFixed(0)} mm²`;
+            const { usedWidth, usedHeight } = v2Preview.metrics;
+            const summary = v2Preview.summary;
+            const multiSheet = (summary?.sheetCount ?? 1) > 1;
+            const sourceLabel = { phase2c: "Phase 2C (lokal)", phase2d: "Phase 2D (global)", phase2e: "Phase 2E (multi-outer)", phase2h: "Phase 2H (best-existing)" }[
+              optimizer.candidateSource
+            ];
+            return (
+              <div className="grid grid-cols-1 gap-x-6 gap-y-1 rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-600 sm:grid-cols-3">
+                <span className="font-semibold text-slate-700 sm:col-span-3">OBJECTIVE</span>
+                <span>
+                  Media: {SHEET_WIDTH_MM} × {SHEET_HEIGHT_MM} mm
+                </span>
+                <span>Optimization Goal: {multiSheet ? "MIN SHEETS, then MIN SUM USED HEIGHT" : "MIN USED HEIGHT"}</span>
+                <span>Reason: preserve reusable full-width remainder</span>
+                {multiSheet && summary ? (
+                  <>
+                    <span className="font-semibold text-slate-700">Sheet Count: {summary.sheetCount}</span>
+                    <span>
+                      Orders: {summary.totalOrders} · Items: {summary.totalItems} · Unfit: {summary.totalUnfitItems}
+                    </span>
+                    <span>Total Item Area: {summary.totalItemArea.toFixed(0)} mm²</span>
+                    <span>Sum Used Height: {summary.sumUsedHeight.toFixed(1)} mm</span>
+                    <span>Total Remaining Full-Width: {summary.totalRemainingFullWidthHeight.toFixed(1)} mm</span>
+                    <span>Total Side Fragment: {summary.totalSideFragmentWidth.toFixed(1)} mm</span>
+                    <span>
+                      Avg / Max / Min Used Height: {summary.averageUsedHeight.toFixed(1)} / {summary.maxUsedHeight.toFixed(1)} /{" "}
+                      {summary.minUsedHeight.toFixed(1)} mm
+                    </span>
+                    <span>Total Sheet Area: {summary.totalSheetArea.toFixed(0)} mm²</span>
+                    <span>Overall Material Utilization: {summary.overallMaterialUtilizationPercent.toFixed(1)}%</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Used Width: {usedWidth.toFixed(1)} mm</span>
+                    <span>Used Height: {usedHeight.toFixed(1)} mm</span>
+                    <span />
+                    <span>Remaining Full-Width Height: {(SHEET_HEIGHT_MM - usedHeight).toFixed(1)} mm</span>
+                    <span>Side Fragment Width: {(SHEET_WIDTH_MM - usedWidth).toFixed(1)} mm</span>
+                    <span />
+                  </>
+                )}
+                <span className="mt-2 font-semibold text-slate-700 sm:col-span-3">OUTER PACKING</span>
+                <span>Selected Strategy: {optimizer.selectedHeuristic}</span>
+                <span>Selected Sort: {optimizer.selectedSort}</span>
+                <span>Global Candidate State: {sourceLabel}</span>
+                <span>
+                  Strategies Tried: {optimizer.attemptsPerState}/{optimizer.strategiesTried} per state
+                </span>
+                <span>
+                  Outer Attempts: {optimizer.outerPackAttempts}
+                  {optimizer.limitReached ? " (limit)" : ""}
+                </span>
+                <span>
+                  States Evaluated: {optimizer.candidateStatesEvaluated}
+                  {optimizer.elapsedMs !== undefined ? ` · ${optimizer.elapsedMs.toFixed(0)} ms` : ""}
+                </span>
+                <span>Baseline 2C: {formatScore(optimizer.phase2cScore)}</span>
+                <span>Phase 2D: {formatScore(optimizer.phase2dScore)}</span>
+                <span>Final: {formatScore(optimizer.finalScore)}</span>
+                <span>Height Improvement vs 2C: {optimizer.improvementVsPhase2CPercent.toFixed(1)}%</span>
+                <span>Height Improvement vs 2D: {optimizer.improvementVsPhase2DPercent.toFixed(1)}%</span>
+                {/* PHASE 2H — "before" is the Phase 2G LAST_ONLY result. */}
+                <span className="mt-2 font-semibold text-slate-700 sm:col-span-3">MULTI-SHEET PACKING</span>
+                <span>
+                  Strategy: {optimizer.multiSheet.mode}
+                  {optimizer.multiSheet.bestExistingEvaluated && optimizer.multiSheet.mode === "LAST_ONLY" ? " (fallback — 2G tetap terbaik)" : ""}
+                  {!optimizer.multiSheet.bestExistingEvaluated ? " (1 lembar — BEST_EXISTING tidak diperlukan)" : ""}
+                </span>
+                <span>
+                  Sheets Before → After: {optimizer.multiSheet.sheetsBefore} → {optimizer.multiSheet.sheetsAfter}
+                </span>
+                <span>
+                  Sum Used Height Before → After: {optimizer.multiSheet.sumUsedHeightBefore.toFixed(1)} → {optimizer.multiSheet.sumUsedHeightAfter.toFixed(1)} mm
+                </span>
+                <span>
+                  Height Saved: {optimizer.multiSheet.heightSavedMm.toFixed(1)} mm / {optimizer.multiSheet.heightSavedPercent.toFixed(1)}%
+                </span>
+                <span>Existing-Sheet Attempts: {optimizer.multiSheet.existingSheetAttempts}</span>
+                <span>Successful Backfills: {optimizer.multiSheet.successfulBackfills}</span>
+                <span>New Sheets Avoided: {optimizer.multiSheet.newSheetsAvoided}</span>
+                <span>Relocation Pass: {optimizer.multiSheet.relocationPass}</span>
+                <span>
+                  BEST_EXISTING Stage: {optimizer.multiSheet.statesEvaluated} states · {optimizer.multiSheet.packEvaluations} packs
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* PHASE 2C dev diagnostics — which group wastes the most of its own box. */}
+          <div className="overflow-x-auto">
+            <table className="w-full font-mono text-xs text-slate-600">
+              <thead className="text-left text-slate-400">
+                <tr>
+                  <th className="py-1 pr-4 font-medium">Order/Resi</th>
+                  <th className="py-1 pr-4 font-medium">Candidates</th>
+                  <th className="py-1 pr-4 font-medium">Local (2C)</th>
+                  <th className="py-1 pr-4 font-medium">Global (2D)</th>
+                  <th className="py-1 pr-4 font-medium">Group W×H</th>
+                  <th className="py-1 pr-4 font-medium">Item Area</th>
+                  <th className="py-1 font-medium">Internal Util</th>
+                </tr>
+              </thead>
+              <tbody>
+                {v2Preview.groups.map((group, index) => (
+                  <tr key={index} className="border-t border-slate-100">
+                    <td className="py-1 pr-4">{group.label}</td>
+                    <td className="py-1 pr-4">{group.candidateCount}</td>
+                    <td className="py-1 pr-4">{group.localStrategy}</td>
+                    <td className="py-1 pr-4">
+                      {group.selectedStrategy}
+                      {group.selectedStrategy !== group.localStrategy ? " *" : ""}
+                    </td>
+                    <td className="py-1 pr-4">
+                      {group.width.toFixed(1)} × {group.height.toFixed(1)} mm
+                    </td>
+                    <td className="py-1 pr-4">{group.itemArea.toFixed(0)} mm²</td>
+                    <td className="py-1">{group.internalUtilizationPercent.toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {v2Preview.benchmark && <SpacingBenchmarkPanel sheet={v2Preview} benchmark={v2Preview.benchmark} />}
+
+          {v2Preview.slotReflow && <SlotReflowPanel diagnostics={v2Preview.slotReflow} />}
+
+          <MultiSheetPreview
+            items={v2Preview.items}
+            groups={v2Preview.groups}
+            sheets={v2Preview.sheets}
+            slots={slotOverlaysOf(v2Preview.slotReflow)}
+          />
+        </div>
+      )}
 
       {editingRow &&
         (() => {

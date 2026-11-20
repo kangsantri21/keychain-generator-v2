@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { Download, Search, Trash2 } from "lucide-react";
 import { downloadSheetDxf } from "@/lib/export-dxf";
-import { downloadPrintSheetJpg } from "@/lib/export-print-svg";
+import { batchLabelOf, downloadPrintSheetJpg } from "@/lib/export-print-svg";
+import { activeProductionFrame } from "@/lib/active-frame";
 import type { StagingItemPayload } from "@/lib/staging-types";
 
 type BatchStatus = "pending" | "printed" | "archived";
@@ -61,8 +62,12 @@ export default function FileSiapCetakPage() {
   }, []);
 
   function handleDownloadDxf(batch: PrintBatch) {
-    downloadSheetDxf({ sheetId: batch.id, items: batch.layoutData }, batch.batchCode);
-    toast.success(`Batch ${batch.batchCode} diekspor (DXF)`);
+    try {
+      downloadSheetDxf({ sheetId: batch.id, items: batch.layoutData }, batch.batchCode);
+      toast.success(`Batch ${batch.batchCode} diekspor (DXF)`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal mengekspor file DXF");
+    }
   }
 
   async function handleDownloadJpg(batch: PrintBatch) {
@@ -150,10 +155,23 @@ export default function FileSiapCetakPage() {
               <tbody>
                 {filteredBatches.map((batch) => {
                   const created = new Date(batch.createdAt);
+                  // Same frame + batch-code placement the JPG/DXF export uses (lib/active-frame.ts).
+                  const sheet = { sheetId: batch.id, items: batch.layoutData };
+                  const frame = activeProductionFrame(sheet);
+                  const batchLabel = batchLabelOf(sheet, batch.batchCode);
                   return (
                     <tr key={batch.id} className="border-t border-slate-100 hover:bg-slate-50">
                       <td className="px-3 py-3 align-top font-semibold text-slate-800">
                         {batch.batchCode}
+                        <div className="text-xs font-normal text-slate-500">
+                          Frame {frame.widthMm} × {frame.heightMm} mm
+                          {frame.errors.length > 0 && <span className="text-red-600"> · INVALID</span>}
+                        </div>
+                        {batchLabel && (
+                          <div className={`text-xs font-normal ${batchLabel.status === "PLACED_INTERNAL" ? "text-emerald-700" : "text-amber-700"}`}>
+                            BATCH_LABEL: {batchLabel.status}
+                          </div>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 align-top text-slate-600">
                         <div>{created.toLocaleDateString("id-ID")}</div>

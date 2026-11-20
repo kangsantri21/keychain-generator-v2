@@ -7,6 +7,7 @@ import { renderTemplateItem } from "@/lib/render-dispatcher";
 import { packIntoExistingSheet, type NestableRect, type ExistingPlacement } from "@/lib/nesting";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
+import { appendBlockReason } from "@/lib/staging-mode";
 
 interface PackData {
   orderId: number;
@@ -51,6 +52,11 @@ export async function POST(
   }
   if (existingItems.some((item) => item.status === "completed")) {
     return badRequest("Lembar Kerja ini sudah ditandai selesai, tidak bisa ditambahkan lagi");
+  }
+  // Production Nesting sheets must never receive legacy-packed units (lib/staging-mode.ts).
+  const appendBlocked = appendBlockReason(existingItems);
+  if (appendBlocked) {
+    return badRequest(appendBlocked, 409);
   }
 
   const itemIds = [...selectionsByItem.keys()];

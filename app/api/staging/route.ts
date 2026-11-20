@@ -5,6 +5,10 @@ import { stagingItems, orders, templates, type Order, type Template } from "@/li
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
 import type { KeychainRender } from "@/lib/render-types";
+import { summarizeSheet, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
+import type { StagingSheetSummary } from "@/lib/staging-types";
+import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
+import { activeProductionFrame } from "@/lib/active-frame";
 
 interface StagingItemPayload {
   id: number;
@@ -95,9 +99,38 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Operator metrics + the same validation gate the batch lock runs (lib/production-gate.ts).
+  const sheetsByOrder = new Map<number, Set<number>>();
+  for (const item of items) sheetsByOrder.set(item.orderId, (sheetsByOrder.get(item.orderId) ?? new Set()).add(item.sheetId));
+  const summaryOf = (sheetId: number, sheetItems: StagingItemPayload[]): StagingSheetSummary => {
+    const placed: PlacedItem[] = sheetItems.map((item) => ({
+      key: String(item.id),
+      orderId: item.orderId,
+      sheet: sheetId,
+      posX: item.posX,
+      posY: item.posY,
+      width: item.width,
+      height: item.height,
+      rotated: item.rotated,
+      expectedWidth: item.render?.width ?? NaN,
+      expectedHeight: item.render?.height ?? NaN,
+    }));
+    const { mode, source } = sheetModeOf(sheetItems);
+    const gate = validatePlacedSheets(placed, placed.map((p) => p.key), mode === "mixed" ? "production" : mode);
+    const profile = mode;
+    const errors = [...gate.errors];
+    if (mode === "mixed") errors.unshift(MIXED_MODE_ERROR);
+    if (mode !== "legacy") {
+      const split = [...new Set(sheetItems.map((i) => i.orderId))].filter((o) => (sheetsByOrder.get(o)?.size ?? 1) > 1);
+      if (split.length > 0) errors.push(`${split.length} resi juga memiliki item di lembar kerja lain — resi tidak boleh terpecah`);
+    }
+    errors.push(...activeProductionFrame({ items: sheetItems }).errors);
+    return { ...summarizeSheet(placed), profile, modeSource: source, valid: errors.length === 0, errors };
+  };
+
   const sheets = [...sheetsMap.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([sheetId, sheetItems]) => ({ sheetId, items: sheetItems }));
+    .map(([sheetId, sheetItems]) => ({ sheetId, items: sheetItems, summary: summaryOf(sheetId, sheetItems) }));
 
   return NextResponse.json({ sheets });
 }

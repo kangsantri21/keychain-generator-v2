@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Play, Lock, Trash2, CheckCircle2, History, Layers } from "lucide-react";
 import type { StagingSheet } from "@/lib/staging-types";
 import { HppCalculator } from "./HppCalculator";
@@ -9,10 +10,12 @@ export function ControlPanel({
   sheets,
   activeSheetId,
   onSelectSheet,
-  onRunNesting,
+  onStartNesting,
   onLockBatch,
-  isRunningNesting,
+  isStartingNesting,
   isLocking,
+  canLock = true,
+  isVerifying = false,
   viewMode,
   onViewModeChange,
   isLoadingHistory,
@@ -23,10 +26,14 @@ export function ControlPanel({
   sheets: StagingSheet[];
   activeSheetId: number | null;
   onSelectSheet: (sheetId: number) => void;
-  onRunNesting: () => void;
+  onStartNesting: () => void;
   onLockBatch: (batchCode: string) => void;
-  isRunningNesting: boolean;
+  isStartingNesting: boolean;
   isLocking: boolean;
+  /** False when the active sheet fails the production validation gate — locking is blocked (the server enforces it too). */
+  canLock?: boolean;
+  /** True while the shown sheets come from the client cache and are being re-checked with the server — locking waits. */
+  isVerifying?: boolean;
   viewMode: "active" | "history";
   onViewModeChange: (mode: "active" | "history") => void;
   isLoadingHistory: boolean;
@@ -44,13 +51,20 @@ export function ControlPanel({
         <h2 className="text-sm font-semibold text-slate-800">Nesting</h2>
         <button
           type="button"
-          onClick={onRunNesting}
-          disabled={isRunningNesting}
+          onClick={onStartNesting}
+          disabled={isStartingNesting}
           className="flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Play size={16} />
-          {isRunningNesting ? "Menyusun..." : "Mulai Susun Lembar Kerja (Run Nesting)"}
+          {isStartingNesting ? "Menyusun..." : "Mulai Susun Lembar Kerja"}
         </button>
+        <p className="text-xs text-slate-400">
+          Menyusun semua resi yang masih pending dengan Production Nesting. Untuk memilih sebagian nama, buka{" "}
+          <Link href="/order-queue" className="font-medium text-blue-600 hover:text-blue-700">
+            Antrean Pesanan
+          </Link>
+          . Untuk menyusun ulang, bongkar lembarnya dulu lalu kirim ulang.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -154,12 +168,18 @@ export function ControlPanel({
         <button
           type="button"
           onClick={() => onLockBatch(batchCode)}
-          disabled={!activeSheet || isLocking}
+          disabled={!activeSheet || isLocking || !canLock || isVerifying}
           className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Lock size={16} />
           {isLocking ? "Mengunci Batch..." : "Kunci & Simpan Batch Produksi"}
         </button>
+        {activeSheet && isVerifying && (
+          <p className="text-xs text-slate-400">Memeriksa data terbaru dari server sebelum bisa dikunci...</p>
+        )}
+        {activeSheet && !canLock && (
+          <p className="text-xs font-medium text-red-600">Lembar kerja ini INVALID — perbaiki atau bongkar sebelum dikunci.</p>
+        )}
         <p className="text-xs text-slate-400">
           Mengarsipkan lembar kerja yang aktif sebagai batch produksi permanen di File Siap
           Cetak (untuk download DXF/print), lalu mengosongkan lembar kerja ini dari Staging Area.

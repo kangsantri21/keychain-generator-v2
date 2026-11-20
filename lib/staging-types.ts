@@ -52,7 +52,25 @@ export interface StagingItemPayload {
   render: KeychainRenderPayload | null;
 }
 
+/** Operator metrics + production validation status of one sheet (GET /api/staging, lib/production-gate.ts). */
+export interface StagingSheetSummary {
+  itemCount: number;
+  receiptCount: number;
+  usedWidth: number;
+  usedHeight: number;
+  remainingFullWidth: number;
+  sideFragment: number;
+  /** "production" = Production Nesting layout; "legacy" = Legacy Flat layout; "mixed" = both (invalid). */
+  profile: "production" | "legacy" | "mixed";
+  /** "explicit" = from the staging status marker; "geometry" = fallback inference (history only). */
+  modeSource: "explicit" | "geometry";
+  valid: boolean;
+  errors: string[];
+}
+
 export interface StagingSheet {
   sheetId: number;
   items: StagingItemPayload[];
+  /** Present on sheets served by GET /api/staging; absent on archived batch layouts. */
+  summary?: StagingSheetSummary;
 }
