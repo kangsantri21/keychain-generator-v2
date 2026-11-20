@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, ne } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { stagingItems, orders } from "@/lib/db/schema";
+import { orders, stagingItems } from "@/lib/db/schema";
+import { describeLockedOrders, syncOrderStatuses } from "@/lib/receipt-status";
 
 function badRequest(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
 /**
- * "Bongkar" — dismantles a staging sheet without touching the underlying
- * order data: only the staging_items rows (this nested instance) are
- * deleted, while the orders they came from revert to "pending" so they
- * fall back into the pool the next nesting run picks up. order_items
- * (the customer names themselves) are never touched by this at all.
+ * "Bongkar" — deletes this sheet's pieces only.
+ *
+ * Same rule as the per-receipt dismantle: a receipt goes back to pending
+ * only when it has no active piece left on another sheet. A piece that is
+ * still arranged, or locked as one part (part_done or a print batch), keeps
+ * the receipt in processing. A receipt that is already completed is left
+ * completed — Buka Kunci is what reopens a finished part.
  */
 export async function DELETE(
   _request: NextRequest,
@@ -32,22 +35,18 @@ export async function DELETE(
 
   const orderIds = [...new Set(items.map((item) => item.orderId))];
 
-  db.transaction((tx) => {
+  const receipts = db.transaction((tx) => {
     tx.delete(stagingItems).where(eq(stagingItems.sheetId, sheetId)).run();
-    for (const orderId of orderIds) {
-      const [order] = tx.select().from(orders).where(eq(orders.id, orderId)).all();
-      if (!order || order.status === "completed") continue;
-      const stillActive = tx
-        .select({ id: stagingItems.id })
-        .from(stagingItems)
-        .where(and(eq(stagingItems.orderId, orderId), ne(stagingItems.status, "completed")))
-        .all();
-      tx.update(orders)
-        .set({ status: stillActive.length > 0 ? "processing" : "pending" })
-        .where(eq(orders.id, orderId))
-        .run();
+    const current = tx.select().from(orders).where(inArray(orders.id, orderIds)).all();
+    const openIds = current.filter((order) => order.status !== "completed").map((order) => order.id);
+    const described = describeLockedOrders(tx, syncOrderStatuses(tx, openIds));
+    for (const order of current) {
+      if (order.status !== "completed") continue;
+      if (described.some((row) => row.id === order.id)) continue;
+      described.push({ id: order.id, receiptCode: order.receiptCode, status: "completed", progressLabel: null });
     }
+    return described;
   });
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, orders: receipts });
 }

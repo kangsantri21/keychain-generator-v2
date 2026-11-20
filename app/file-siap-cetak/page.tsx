@@ -82,12 +82,16 @@ export default function FileSiapCetakPage() {
     }
   }
 
+  function batchHasSplit(batch: PrintBatch): boolean {
+    return batch.layoutData.some((item) => (item.splitCount ?? 0) >= 2 && item.splitPart != null);
+  }
+
   async function handleDelete(batch: PrintBatch) {
-    if (
-      !window.confirm(
-        `Hapus batch "${batch.batchCode}"? File arsip ini akan dihapus permanen (pesanan di dalamnya tetap tercatat selesai).`
-      )
-    ) {
+    const split = batchHasSplit(batch);
+    const message = split
+      ? `Hapus batch "${batch.batchCode}"? File arsip dihapus dan bagian pecahan di batch ini kembali ke Staging. Status resi dihitung ulang.`
+      : `Hapus batch "${batch.batchCode}"? File arsip ini akan dihapus permanen (pesanan di dalamnya tetap tercatat selesai).`;
+    if (!window.confirm(message)) {
       return;
     }
     setDeletingId(batch.id);
@@ -96,7 +100,21 @@ export default function FileSiapCetakPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menghapus batch");
       setBatches((prev) => prev.filter((b) => b.id !== batch.id));
-      toast.success(`Batch ${batch.batchCode} dihapus`);
+      const notes: { receiptCode: string; progressLabel: string | null; status: string }[] = Array.isArray(data.orders)
+        ? data.orders
+        : [];
+      const partial = notes
+        .map((order) => {
+          if (order.progressLabel) return `${order.receiptCode}: ${order.progressLabel}`;
+          if (order.status === "completed") return null;
+          return `${order.receiptCode} masih diproses`;
+        })
+        .filter((note): note is string => Boolean(note));
+      toast.success(
+        data.restored
+          ? `Batch ${batch.batchCode} dihapus. Bagian kembali ke Staging${partial.length ? `: ${partial.join(", ")}` : ""}.`
+          : `Batch ${batch.batchCode} dihapus`
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menghapus batch");
     } finally {

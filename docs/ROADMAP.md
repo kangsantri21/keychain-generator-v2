@@ -88,7 +88,7 @@ Selesai bila:
 - Gate menolak pecahan yang tidak ditandai, dan menerima pecahan yang kolom `split_part` / `split_count`-nya lengkap.
 - Gambar contoh ada di [docs/nesting/images/resi-pecah-10nov-8.png](nesting/images/resi-pecah-10nov-8.png). Nama pelanggan tidak digambar.
 
-Belum selesai (fitur D, sesi lain): mengunci atau menandai selesai satu bagian tidak boleh menyelesaikan seluruh resi. Pakai `receiptIsComplete` di `lib/receipt-parts.ts`. Route `POST /api/print-batches` dan `POST /api/staging/sheets/[id]/complete` masih berperilaku lama. Membongkar satu bagian tidak boleh mengembalikan resi ke pending kalau bagian lain masih tersusun.
+Fitur D (kunci per bagian) selesai di branch ini, belum di `main`. Mengunci atau menandai selesai satu bagian tidak menyelesaikan seluruh resi. `receiptIsComplete` di `lib/receipt-parts.ts` dipakai sebelum `orders.status` ditulis. Pecahan sah boleh dikunci. Antrean menampilkan `1/2 bagian selesai` selagi baru sebagian. Membongkar satu bagian tidak mengembalikan resi ke pending kalau bagian lain masih tersusun atau terkunci.
 
 ### P0.7 Gabungkan nesting produksi ke main
 
@@ -122,15 +122,16 @@ Yang belum selesai:
 - API legacy menolak pilihan yang sudah punya baris `staging_items` aktif untuk nama yang sama, dengan pesan yang bisa dibaca operator.
 - Tes untuk penolakan legacy itu. Untuk mode produksi, tes resi ganda yang sudah ada di branch tetap lulus.
 
-### P0.10 Bongkar lembar tidak merusak lembar lain
+### P0.10 Bongkar lembar tidak merusak lembar lain — selesai di branch fitur D, belum di `main`
 
-`DELETE /api/staging/sheets/[id]` mengembalikan setiap resi di lembar itu ke pending, walaupun resi yang sama masih punya item di lembar lain.
+`DELETE /api/staging/sheets/[id]` di `main` mengembalikan setiap resi di lembar itu ke pending, walaupun resi yang sama masih punya item di lembar lain.
 
-Selesai bila:
+Selesai bila (sudah ada di branch fitur D):
 
-- Resi kembali ke pending hanya jika tidak ada lagi item staging aktif untuk resi itu.
+- Resi kembali ke pending hanya jika tidak ada keping aktif di lembar lain. Keping `part_done` dan keping di batch tetap dihitung. Riwayat lama berstatus `completed` tidak menahan resi.
 - Jika masih ada item di lembar lain, status tetap `processing` dan item di lembar lain tidak berubah.
-- Ada tes untuk resi yang terbelah di dua lembar (data lama), lalu satu lembar dibongkar.
+- Resi yang sudah `completed` tidak diubah oleh bongkar. Buka Kunci yang menghitung ulang bagian itu.
+- Ada tes untuk resi yang terbelah di dua lembar (data lama tanpa tanda pecahan, dan pecahan sah), lalu satu lembar dibongkar. Tes: `lib/nesting/staging-start.test.ts` dan `lib/nesting/receipt-lock.test.ts`.
 
 ### P0.11 Login sederhana untuk alat internal
 

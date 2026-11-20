@@ -25,7 +25,7 @@ Tidak ada `middleware.ts`. Tidak ada pemeriksaan login di route mana pun.
 | `components/` | Form, antrean, kanvas staging, mahar, template. |
 | `lib/` | Mesin gambar, nesting, ekspor, skema database. |
 | `lib/db/` | `schema.ts` (ganci) dan `mahar-schema.ts` (mahar). |
-| `drizzle/` | 19 migrasi SQL (`0000` sampai `0018_receipt_split_part`, kolom `split_part` dan `split_count`; sebelumnya `0017` menambah `rotation_deg`). Tidak dijalankan otomatis saat aplikasi nyala. |
+| `drizzle/` | 20 migrasi SQL (`0000` sampai `0019_part_done`, kolom `part_done`; `0018` menambah `split_part` dan `split_count`; `0017` menambah `rotation_deg`). Tidak dijalankan otomatis saat aplikasi nyala. |
 | `public/uploads/` | Font, gambar karakter, dan thumbnail. Diabaikan git. |
 | `public/logo.png` | Logo Kedai Creative. |
 
@@ -51,7 +51,7 @@ Satu file SQLite. Lokasi bawaan `sqlite.db` di folder proyek, atau path di `DATA
 ### Gantungan kunci
 
 - `templates` — kode unik, jenis, path file, warna, mode `dynamic` atau `fixed`, zona teks/gambar, lubang, offset, tinggi target.
-- `orders` — satu resi (`receiptCode` unik), kode manual, status `pending` / `processing` / `completed`.
+- `orders` — satu resi (`receiptCode` unik), kode manual, status `pending` / `processing` / `completed`. Di branch fitur D, resi yang baru sebagian bagiannya terkunci tetap `processing`. Antrean menampilkan `1/2 bagian selesai`. Itu bukan status baru di kolom.
 - `order_items` — template, daftar nama (JSON), varian `keychain` atau `pin`, jumlah, override lubang per indeks nama, `batchId` terakhir.
 - `staging_items` — satu potongan yang sudah disusun: resi, template, nama, nomor lembar, posisi, ukuran, rotasi, status, snapshot override lubang.
 - `print_batches` — batch terkunci. `layoutData` adalah JSON beku (garis, teks, gambar) supaya file tetap bisa diunduh walau template nanti berubah. Status tipe `pending` / `printed` / `archived`, tetapi kode hanya pernah menulis `pending`.
@@ -68,14 +68,16 @@ Nomor lembar (`sheetId`) bukan tabel sendiri. Nilainya `MAX(sheetId) + 1` saat n
 2. **Simpan pesanan.** `POST /api/orders` menulis `orders` dan `order_items` dalam satu transaksi. Kode resi ganda ditolak.
 3. **Susun.** `POST /api/staging/nest` menerima daftar `itemId:indeksNama`. Untuk tiap nama, server memuat font dan gambar, menghitung garis potong, lalu `packMaxRects` di `lib/nesting.ts` menaruh kotak di lembar 310×470 mm. Jarak kanan 2 mm, jarak bawah 5 mm (ruang label resi). Hasilnya disisipkan ke `staging_items`. Status resi menjadi `processing`. Di `main`, langkah simpan dan ubah status tidak dalam satu transaksi, dan nama yang sudah staged tidak ditolak. Tombol Staging “Mulai Susun Lembar Kerja” di branch ini mengirim `allPending: true` tanpa daftar nama. Server (`lib/staging-start.ts`) mengisi daftar itu dari resi `pending` saja, memaksa `mode: "production-v3"`, lalu menulis lembar. Permintaan kosong tanpa `allPending` tetap ditolak.
 4. **Lihat lembar.** `GET /api/staging` membaca baris staging lalu **menggambar ulang setiap item** (font + Clipper) supaya kanvas punya path. Riwayat (`?history=1`) dipisah karena gambar ulang itu berat.
-5. **Kunci.** Browser mengirim salinan item ke `POST /api/print-batches`. Di `main`, server menyimpan JSON itu, menandai semua resi di dalamnya `completed`, dan menghapus `staging_items` lembar itu. Server tidak menghitung ulang posisi dari database.
+5. **Kunci.** Browser mengirim salinan item ke `POST /api/print-batches`. Di `main`, server menyimpan JSON itu, menandai semua resi di dalamnya `completed`, dan menghapus `staging_items` lembar itu. Server tidak menghitung ulang posisi dari database. Di branch fitur D, pecahan sah boleh dikunci per lembar. Resi menjadi `completed` hanya kalau semua bagiannya terkunci. Bagian yang baru sebagian menampilkan `1/2 bagian selesai` di antrean.
 6. **Unduh.** Halaman File Siap Cetak memakai `lib/export-dxf.ts` dan `lib/export-print-svg.ts` di browser. JPG dicerminkan horizontal karena cetak dari belakang akrilik.
 
 `POST /api/staging/sheets/[id]/append` menaruh nama baru di sisa ruang tanpa menggeser yang sudah ada. Hanya resi pending.
 
-`POST .../complete` menandai lembar dan semua resinya selesai tanpa membuat batch.
+`POST .../complete` menandai keping di lembar itu selesai (`part_done`) tanpa membuat batch. Di `main` ini masih menandai seluruh resi selesai. Di branch fitur D, resi selesai hanya kalau semua bagian terkunci.
 
-`DELETE .../sheets/[id]` menghapus item lembar itu dan memaksa semua resinya kembali ke pending.
+`POST .../reopen` (Buka Kunci) mengembalikan lembar yang sudah ditandai selesai ke daftar aktif dan menghitung ulang status resi. Ada di branch fitur D, belum di `main`.
+
+`DELETE .../sheets/[id]` menghapus item lembar itu. Di `main` semua resinya dipaksa kembali ke pending. Di branch fitur D, resi kembali ke pending hanya kalau tidak ada bagian lain yang masih tersusun atau terkunci. Menghapus batch pecahan mengembalikan bagian itu ke Staging. Menghapus batch resi utuh tidak mengubah status selesai.
 
 Menghapus resi (`DELETE /api/orders/[id]`) ikut menghapus item pesanan dan item staging resi itu. Resi selesai ditolak.
 
@@ -145,10 +147,11 @@ Tiap resi dikelompokkan dulu. Item dalam satu resi disusun rapat (jarak antar-it
 - `lib/staging-cache.ts` menyimpan salinan lembar di browser. Bukan sumber kebenaran. Kunci batch tetap membaca database.
 - `POST /api/staging/nest` dengan `mode: "production-v3"` menulis staging dan status dalam satu transaksi. Pada sesi susunan blok, permintaan ini mengirim garis potong ke packer baru dan menulis status `staged-shape` plus `rotation_deg`. Resi yang tidak muat satu lembar dipecah dan menulis `split_part` serta `split_count` (migrasi `0018_receipt_split_part`). Yang dilewati, dan disebut di jawaban, hanya resi yang sudah ada di lembar lain, yang tidak bisa digambar, atau yang punya keping lebih besar dari lembar (tidak bisa dipecah). Packer kotak (`grouped-nesting.ts`, pratinjau dan jalur tanpa garis potong) tetap menolak resi kebesaran dengan `ORDER_GROUP_TOO_LARGE_FOR_SHEET` dan tidak menggambar bingkai.
 - Tombol “Mulai Susun Lembar Kerja” (`app/staging-area/page.tsx`) mengirim `STAGING_START_REQUEST` (`allPending` + `production-v3`). Route mengisi `selections` dari `order_items` yang induknya masih `pending` (`selectionsForPendingItems`), lalu menjalankan packer yang sama. Resi yang bisa disusun, termasuk yang dipecah, tetap disimpan. Pesan resi yang dilewati tampil di panel Staging. Gambar keping diingat di `.cache/keychain-render` supaya GET berikutnya tidak menghitung kontur lagi.
-- Bongkar satu lembar hanya menghapus baris lembar itu. Resi kembali ke pending hanya jika tidak ada keping aktifnya di lembar lain. Salinan yang masih di lembar lain membuat resi tetap `processing`.
+- Bongkar satu lembar hanya menghapus baris lembar itu. Resi kembali ke pending hanya jika tidak ada keping aktif di lembar lain. Keping `part_done` dan keping yang sudah masuk batch tetap dihitung, jadi resi tetap `processing`. Riwayat lama berstatus `completed` tidak menahan resi. Resi yang sudah selesai tidak diubah oleh bongkar; Buka Kunci yang menghitung ulang.
 - `POST /api/print-batches` mencocokkan kiriman browser dengan baris database, merender ulang untuk cek ukuran, lalu baru menyimpan.
 - Perbaikan resi PAT (batch 228) dan `.gitignore` untuk `*.key`, `credentials*.json`, dan `service-account*.json` hanya ada di commit terbaru branch ini.
-- Skrip `npm test` menjalankan `tsx --test lib/nesting/*.test.ts lib/contour-outline.test.ts`. `tsx` tidak ditulis sebagai devDependency langsung. Ia ikut terpasang lewat pohon dependensi (Drizzle Kit). Pada audit 10 Nov 2026 suite nesting saja 341 lulus. Setelah sesi kontur: 351 lulus. Setelah susunan blok, tombol Staging, bongkar yang tidak mengosongkan resi dobel, dan pecah resi kebesaran: 381 lulus (`npm test`, 20 November 2026).
-- `lib/receipt-parts.ts` memutuskan label `kode 1/N`, pecahan yang sah, dan `receiptIsComplete`. Fungsi terakhir dipakai fitur D: resi yang dipecah selesai hanya kalau setiap bagian selesai. Route kunci batch dan tandai selesai belum memanggilnya.
+- Skrip `npm test` menjalankan `tsx --test lib/nesting/*.test.ts lib/contour-outline.test.ts`. `tsx` tidak ditulis sebagai devDependency langsung. Ia ikut terpasang lewat pohon dependensi (Drizzle Kit). Pada audit 10 Nov 2026 suite nesting saja 341 lulus. Setelah sesi kontur: 351 lulus. Setelah susunan blok, tombol Staging, bongkar per resi, pecah resi kebesaran, dan kunci lembar per bagian: 386 lulus (`npm test`, 20 November 2026), termasuk `lib/nesting/staging-start.test.ts`, `lib/nesting/receipt-split.test.ts`, dan `lib/nesting/receipt-lock.test.ts`.
+- `lib/receipt-parts.ts` memutuskan label `kode 1/N`, pecahan yang sah, dan `receiptIsComplete`. `lib/receipt-lock.ts` memakai aturan itu. Route kunci batch, tandai selesai, buka kunci, dan bongkar menghitung status resi dari situ. Ada di branch fitur D, belum di `main`. Bongkar memakai aturan yang sama dengan bongkar per resi: pending hanya kalau tidak ada keping aktif di lembar lain. Resi yang sudah selesai tidak dibuka oleh bongkar.
+- Kolom `staging_items.part_done` (migrasi `0019_part_done`) menandai keping yang lembarnya ditandai selesai. Kunci batch tidak memakai kolom itu: baris staging dihapus dan kepingnya tersimpan di `print_batches.layout_data`.
 
 `resolveNestingMode` di `lib/nesting/nesting-mode.ts`: selain teks persis `grouped-v2` atau `production-v3`, permintaan dianggap mesin lama. Itu sengaja, supaya pemanggil lama tidak berubah perilaku.

@@ -13,7 +13,7 @@ Database dan unggahan tidak ada di GitHub. `.gitignore` mengabaikan `.env`, `sql
 3. Salin `sqlite.db`, `sqlite.db-wal`, dan `sqlite.db-shm` ke root repo.
 4. Salin folder `public/uploads` dari Drive ke `public/uploads`.
 5. `cp .env.example .env` (isinya `DATABASE_URL=sqlite.db`). Jangan commit `.env`.
-6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch ini menambah `0017_shape_block_rotation` (kolom `rotation_deg`) dan `0018_receipt_split_part` (`split_part`, `split_count`). Database yang sudah di 0016 cukup di-migrate sampai habis. Baris lama yang kolomnya kosong tetap dibaca seperti dulu.
+6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch ini menambah `0017_shape_block_rotation` (kolom `rotation_deg`), `0018_receipt_split_part` (`split_part`, `split_count`), dan `0019_part_done` (`part_done`). Database yang sudah di 0016 cukup di-migrate sampai habis. Baris lama yang kolomnya kosong tetap dibaca seperti dulu. Baris lama berstatus `completed` mendapat `part_done` = 1.
 7. `npm run dev`
 
 `npm run build` membaca database saat membuat halaman depan. Salin database, atau jalankan migrasi pada database kosong, sebelum build. Build tanpa tabel membuat `sqlite.db` kosong dan gagal dengan `no such table: order_items`.

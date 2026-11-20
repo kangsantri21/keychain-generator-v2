@@ -3,6 +3,7 @@ import { eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, orderItems, templates, type NewOrderItem, type Template, type HoleOverride } from "@/lib/db/schema";
 import { isUniqueConstraintError } from "@/lib/template-files";
+import { progressByOrder } from "@/lib/receipt-status";
 
 function badRequest(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -24,6 +25,8 @@ interface OrderPayload {
   receiptCode: string;
   manualCode: string | null;
   status: string;
+  /** "1/2 bagian selesai" while a split receipt is only partly locked. Null otherwise. */
+  progressLabel: string | null;
   createdAt: string;
   items: OrderItemPayload[];
 }
@@ -67,6 +70,7 @@ export async function GET() {
         receiptCode: row.receiptCode,
         manualCode: row.manualCode,
         status: row.status,
+        progressLabel: null,
         createdAt: row.createdAt,
         items: [],
       };
@@ -85,6 +89,11 @@ export async function GET() {
         holeOverrides: row.holeOverrides ?? null,
       });
     }
+  }
+
+  const labels = progressByOrder([...orderMap.keys()]);
+  for (const order of orderMap.values()) {
+    if (order.status === "processing") order.progressLabel = labels.get(order.id) ?? null;
   }
 
   return NextResponse.json({ orders: [...orderMap.values()] });

@@ -218,6 +218,12 @@ export const stagingItems = sqliteTable("staging_items", {
   // Feature D (lock one part) reads these before marking the order completed.
   splitPart: integer("split_part"),
   splitCount: integer("split_count"),
+  // 1 = this piece's sheet is locked (Tandai Selesai). The layout status
+  // ("staged-shape" and the others) stays, so Buka Kunci can return the
+  // sheet to the active list. Kunci batch removes the row instead and
+  // keeps the piece in print_batches. Old rows with status "completed"
+  // are backfilled to 1 by 0019_part_done.
+  partDone: integer("part_done", { mode: "boolean" }).notNull().default(false),
   status: text("status").notNull().default("staged"),
   createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
   // Frozen snapshot of orderItems.holeOverrides[nameIndex] at the moment

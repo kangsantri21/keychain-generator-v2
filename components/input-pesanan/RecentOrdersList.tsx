@@ -20,12 +20,14 @@ const STATUS_LABELS: Record<OrderStatus, string> = {
   completed: "Selesai",
 };
 
-function StatusBadge({ status }: { status: OrderStatus }) {
+function StatusBadge({ status, progressLabel }: { status: OrderStatus; progressLabel?: string | null }) {
   return (
     <span
-      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}
+      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
+        progressLabel ? "bg-sky-100 text-sky-800" : STATUS_STYLES[status]
+      }`}
     >
-      {STATUS_LABELS[status]}
+      {progressLabel ?? STATUS_LABELS[status]}
     </span>
   );
 }
@@ -108,7 +110,7 @@ export function RecentOrdersList() {
                       <span title={itemSummary(order)}>{itemSummary(order) || "-"}</span>
                     </td>
                     <td className="px-3 py-3 align-top">
-                      <StatusBadge status={order.status} />
+                      <StatusBadge status={order.status} progressLabel={order.progressLabel} />
                     </td>
                     <td className="px-3 py-3 align-top">
                       <div className="flex items-center justify-end gap-1">
@@ -227,7 +229,7 @@ function OrderPreviewModal({
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mb-4 flex items-center justify-between">
-            <StatusBadge status={order.status} />
+            <StatusBadge status={order.status} progressLabel={order.progressLabel} />
             <span className="text-xs text-slate-400">
               {new Date(order.createdAt).toLocaleString("id-ID")}
             </span>

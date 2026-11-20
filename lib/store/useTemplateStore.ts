@@ -62,6 +62,8 @@ export interface OrderQueueEntry {
   receiptCode: string;
   manualCode: string | null;
   status: OrderStatus;
+  /** "1/2 bagian selesai" while only some parts of a split receipt are locked. */
+  progressLabel?: string | null;
   createdAt: string;
   items: OrderQueueLineItem[];
 }

@@ -51,6 +51,9 @@ export interface StagingItemPayload {
   /** 1-based part of a receipt that did not fit one sheet. Null when the receipt is whole. */
   splitPart?: number | null;
   splitCount?: number | null;
+  /** Copied from the staging row when a batch is locked, so deleting the batch can put a split part back. */
+  holeOverrideX?: number | null;
+  holeOverrideY?: number | null;
   status: string;
   order: StagingOrderPayload | null;
   template: StagingTemplatePayload | null;
