@@ -29,6 +29,7 @@ import {
 } from "@/lib/nesting/shape-block-config";
 import {
   addTurns,
+  outlinesTooClose,
   prepareOutline,
   preparedTooClose,
   rectOutline,
@@ -578,7 +579,57 @@ function finish<T>(pieces: LocalPiece<T>[] | null, clearance: number, maxW: numb
   slid = flipPass(slid, clearance);
   slid = tuckBottoms(slid, maxW, maxH, clearance);
   slid = fillVoids(slid, maxW, maxH, clearance);
-  return slid;
+  // The 1 mm picture used while searching can leave a real gap under 1 mm.
+  // Push those pairs apart, or drop the candidate if they no longer fit.
+  return pushToClearance(slid, clearance, maxW, maxH);
+}
+
+function pairTooClose<T>(a: LocalPiece<T>, b: LocalPiece<T>, clearance: number): boolean {
+  return outlinesTooClose(translatePolys(a.polys, a.x, a.y), translatePolys(b.polys, b.x, b.y), clearance);
+}
+
+function pushToClearance<T>(pieces: LocalPiece<T>[], clearance: number, maxW: number, maxH: number): LocalPiece<T>[] | null {
+  const placed = pieces.map((piece) => ({ ...piece }));
+  for (let pass = 0; pass < 24; pass++) {
+    let moved = false;
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        const a = placed[i];
+        const b = placed[j];
+        if (rectsApart({ x: a.x, y: a.y, w: a.w, h: a.h }, { x: b.x, y: b.y, w: b.w, h: b.h }, clearance)) continue;
+        if (!pairTooClose(a, b, clearance)) continue;
+        const target = a.x + a.y <= b.x + b.y ? b : a;
+        const other = target === a ? b : a;
+        const gapX = target.x - (other.x + other.w);
+        const gapY = target.y - (other.y + other.h);
+        if (gapX < gapY) target.x += 0.2;
+        else target.y += 0.2;
+        moved = true;
+      }
+    }
+    if (!moved) {
+      const size = sizeOf(placed);
+      if (size.w > maxW + 0.2 || size.h > maxH + 0.2) return null;
+      return normalize(placed);
+    }
+  }
+  const size = sizeOf(placed);
+  if (size.w > maxW + 0.2 || size.h > maxH + 0.2) return null;
+  return pairClear(placed, clearance) ? normalize(placed) : null;
+}
+
+function pairClear<T>(pieces: LocalPiece<T>[], clearance: number): boolean {
+  for (let i = 0; i < pieces.length; i++) {
+    for (let j = i + 1; j < pieces.length; j++) {
+      if (rectsApart(
+        { x: pieces[i].x, y: pieces[i].y, w: pieces[i].w, h: pieces[i].h },
+        { x: pieces[j].x, y: pieces[j].y, w: pieces[j].w, h: pieces[j].h },
+        clearance
+      )) continue;
+      if (pairTooClose(pieces[i], pieces[j], clearance)) return false;
+    }
+  }
+  return true;
 }
 
 /** Empty 1 mm cells inside the block's own box. Lower means the gaps are filled. */
@@ -1146,43 +1197,59 @@ function largestFittingPrefix<T>(items: ShapeBlockItem<T>[], config: ShapeBlockC
 }
 
 /**
- * Fewest framed parts of a receipt that did not fit as one block.
- * Returns one unmarked block when a shelf still holds every piece
- * (the receipt fits, so it is not split). Returns null when a piece
- * is larger than the sheet.
- *
- * Split parts use a shelf with a slightly wider gap and no slide pass.
- * The slide pass pulls notches together and, on a full sheet of tags,
- * can leave cut lines closer than CUT_CLEARANCE_MM after rounding.
+ * Largest prefix that still fits after the clearance repair (`finish`).
+ * Used when a raw shelf claims the whole receipt fits but the repaired
+ * layout does not. The whole set is already known not to fit.
+ */
+function largestFinishedPrefix<T>(group: ReceiptGroup<T>, items: ShapeBlockItem<T>[], config: ShapeBlockConfig): number {
+  const fits = (count: number) => buildBlock({ ...group, items: items.slice(0, count) }, config, { part: 1, count: 2 }, "full") != null;
+  if (items.length < 2 || !fits(1)) return 0;
+  let lo = 1;
+  let hi = items.length - 1;
+  let best = 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(mid)) {
+      best = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
+}
+
+/**
+ * Fewest framed parts of a receipt that did not fit as one repaired block.
+ * Returns null when a piece is larger than the sheet. Tag sheets that only
+ * fail the slide pass use a slightly wider shelf gap so the cut lines stay
+ * at least CUT_CLEARANCE_MM apart.
  */
 function fewestParts<T>(group: ReceiptGroup<T>, config: ShapeBlockConfig): BuiltBlock<T>[] | null {
   const packing: ShapeBlockConfig = { ...config, cutClearanceMm: Math.round((config.cutClearanceMm + 0.2) * 1000) / 1000 };
-  const chunks: ShapeBlockItem<T>[][] = [];
+  const blocks: BuiltBlock<T>[] = [];
   let rest = group.items;
   while (rest.length > 0) {
     let count = largestFittingPrefix(rest, packing);
-    let fitted = false;
-    while (count > 0) {
-      const probe = buildBlock({ ...group, items: rest.slice(0, count) }, packing, { part: 1, count: 2 }, "search");
-      if (probe) {
-        chunks.push(rest.slice(0, count));
-        rest = rest.slice(count);
-        fitted = true;
-        break;
+    let chosen: BuiltBlock<T> | null = null;
+    if (blocks.length === 0 && count >= rest.length) {
+      count = largestFinishedPrefix(group, rest, config);
+      if (count > 0) chosen = buildBlock({ ...group, items: rest.slice(0, count) }, config, { part: 1, count: 2 }, "full");
+    } else {
+      while (count > 0 && !chosen) {
+        chosen = buildBlock({ ...group, items: rest.slice(0, count) }, packing, { part: 1, count: 2 }, "search");
+        if (!chosen) count -= 1;
       }
-      count -= 1;
     }
-    if (!fitted) return null;
+    if (!chosen || count <= 0) return null;
+    blocks.push(chosen);
+    rest = rest.slice(count);
   }
-  if (chunks.length < 2) {
-    const whole = buildBlock(group, packing, null, "search");
-    return whole ? [whole] : null;
-  }
-  const blocks: BuiltBlock<T>[] = [];
-  for (let index = 0; index < chunks.length; index++) {
-    const block = buildBlock({ ...group, items: chunks[index] }, packing, { part: index + 1, count: chunks.length }, "search");
-    if (!block) return null;
-    blocks.push(block);
+  if (blocks.length < 2) return null;
+  const count = blocks.length;
+  for (let index = 0; index < count; index++) {
+    blocks[index].splitPart = index + 1;
+    blocks[index].splitCount = count;
+    blocks[index].soloSheet = true;
+    blocks[index].label = receiptPartLabel(group.code, index + 1, count);
   }
   return blocks;
 }

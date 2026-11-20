@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { shapeLabelsOf } from "@/lib/nesting/shape-block-marks";
 import { itemsFromVectorSheet, type VectorSheet } from "@/lib/nesting/manual-vector-sheets";
 import { runShapeBlockNesting } from "@/lib/nesting/shape-block-nesting";
+import { STAGED_SHAPE } from "@/lib/staging-mode";
 
 const fixture = JSON.parse(readFileSync("lib/nesting/fixtures/manual-vector-sheets.json", "utf8")) as { sheets: VectorSheet[] };
 
@@ -33,6 +35,31 @@ function assertSheetContract(id: string): void {
   if (!run.ok) {
     assert.match(run.errors.join(" "), /tidak dipecah/);
     assert.equal(run.sheetCount, 0);
+    return;
+  }
+  const split = run.blocks.some((block) => (block.splitCount ?? 0) > 1);
+  if (split) {
+    assert.equal(run.placements.length, frame.pieces.length, id);
+    assert.equal(new Set(run.placements.map((placement) => placement.item.id)).size, frame.pieces.length, id);
+    const sheets = new Set(run.placements.map((placement) => placement.sheetIndex));
+    for (const sheet of sheets) {
+      const onSheet = run.placements.filter((placement) => placement.sheetIndex === sheet);
+      const labels = shapeLabelsOf(
+        onSheet.map((placement) => ({
+          orderId: placement.orderId ?? 0,
+          posX: placement.posX,
+          posY: placement.posY,
+          width: placement.width,
+          height: placement.height,
+          status: STAGED_SHAPE,
+          splitPart: placement.splitPart,
+          splitCount: placement.splitCount,
+          order: { receiptCode: placement.item.receiptCode ?? "" },
+        }))
+      );
+      const parts = new Set(onSheet.map((placement) => placement.splitPart));
+      assert.equal(labels?.length, parts.size, id);
+    }
     return;
   }
   assert.equal(run.sheetCount, 1, id);

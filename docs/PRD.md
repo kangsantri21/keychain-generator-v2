@@ -36,7 +36,7 @@ Alur yang benar-benar ada di aplikasi hari ini:
 1. **Template.** Admin mengunggah font (TTF/OTF) dan, untuk template karakter, gambar SVG atau PNG. Admin mengatur warna, tinggi potong, jarak teks, dan apakah ada lubang gantungan. Template bisa mode dinamis (garis potong dihitung aplikasi) atau mode tetap (garis potong sudah ada di SVG).
 2. **Input pesanan.** Operator mengetik nomor resi, kode manual jika ada, memilih template, dan menempel daftar nama. Jumlah pesanan sama dengan jumlah nama. Varian: gantungan kunci atau pin. Status awal: pending.
 3. **Antrean.** Satu baris per nama. Operator memilih nama yang akan disusun, lalu mengirim ke mesin nesting. Bisa juga menambahkan nama pending ke lembar yang sudah ada.
-4. **Staging.** Aplikasi menyimpan posisi tiap potongan di lembar. Operator melihat pratinjau, menghitung HPP kasar (modal lembar dibagi jumlah pcs, tersimpan di browser), lalu mengunci lembar menjadi batch. Ada juga tombol tandai selesai dan bongkar lembar.
+4. **Staging.** Aplikasi menyimpan posisi tiap potongan di lembar. Operator melihat pratinjau, menghitung HPP kasar (modal lembar dibagi jumlah pcs, tersimpan di browser), lalu mengunci lembar menjadi batch. Ada juga tombol tandai selesai dan bongkar lembar. Tombol **Mulai Susun Lembar Kerja** menyusun semua resi yang masih pending (Production Nesting). Memilih sebagian nama tetap dari Antrean.
 5. **File siap cetak.** Batch yang terkunci bisa diunduh sebagai DXF (garis potong, lubang, border, fiducial) dan JPG 300 DPI (gambar cetak, dicerminkan karena cetak dari belakang). Menghapus batch hanya menghapus arsip file. Pesanan tetap berstatus selesai.
 
 Status pesanan di `main`: `pending` → `processing` (setelah masuk lembar) → `completed` (setelah lembar dikunci atau ditandai selesai). Status ini milik seluruh resi, bukan per nama.
@@ -72,7 +72,7 @@ Status di kolom “Main” adalah yang ada di branch `main` hari ini. Kolom “B
 | Production Nesting (rapat, satu resi satu lembar) | Tidak ada | Ada di branch, belum di main. Ini bawaan antrean |
 | Panel eksperimen (slot, compound, region, benchmark) | Tidak ada | Ada di branch, belum di main. Hanya di mode pratinjau |
 | Tambah ke lembar yang sudah ada | Ada, hanya pesanan pending, tidak mengacak isi lama | Ada. Lembar produksi tidak boleh ditambah dengan cara legacy |
-| Pratinjau staging dan HPP sederhana | Ada | Ada, plus metrik lembar |
+| Pratinjau staging dan HPP sederhana | Ada | Ada, plus metrik lembar. Tombol “Mulai Susun Lembar Kerja” menyusun semua resi pending (Production Nesting). Di `main` tombol itu memanggil API tanpa daftar nama dan selalu gagal |
 | Kunci batch produksi | Ada. Isi layout dipercaya dari browser | Ada di branch, belum di main: layout dicocokkan ke database dan aturan jarak |
 | Tandai selesai tanpa membuat file | Ada. Seluruh resi di lembar jadi selesai | Perlu dicek ulang saat digabung; aturan resi utuh sudah lebih ketat |
 | Bongkar lembar | Ada. Semua resi di lembar kembali ke pending | Ada |
@@ -82,7 +82,7 @@ Status di kolom “Main” adalah yang ada di branch `main` hari ini. Kolom “B
 | Login | Tidak ada. Paket `better-auth` terpasang tetapi tidak dipakai | Sama |
 | Impor BigSeller / marketplace | Tidak ada | Tidak ada |
 | Jurnal Accurate | Tidak ada | Tidak ada |
-| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Sesi susunan blok, lalu perbaikan selang-seling dan kontur tokoh: 371 lulus. Sesi pecah resi kebesaran: 376 lulus |
+| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Susunan blok, selang-seling, kontur tokoh, dan tombol Staging: 374 lulus. Setelah pecah resi kebesaran: 379 lulus |
 
 ## Keputusan nesting
 
@@ -172,7 +172,7 @@ Masalah yang masih mengganggu pekerjaan, baik di `main` maupun yang baru selesai
 2. **Garis potong terlalu kasar — perbaikan ada di branch sesi kontur, belum di `main`.** Jarak potong 2,5 mm (Contour Corel 0,25 cm), sambungan bulat, celah antar huruf di bawah 5 mm tertutup oleh offset itu, kurva diratakan pada 0,01 mm, lubang gantungan di DXF berupa lingkaran. Belum dicek pada potongan akrilik sungguhan. `main` masih mesin lama (ratakan 0,05 mm, lubang segi 16).
 3. **Satu resi bisa masuk dua lembar** di `main`. Antrean masih bisa mengirim nama yang statusnya sudah “diproses”. Perbaikan ada di branch, belum di main.
 4. **Mengunci satu lembar menandai seluruh resi selesai.** Nama yang tidak ikut terpilih hilang dari antrean. Di mode produksi branch, resi yang sudah tidak pending tidak bisa dikirim lagi, jadi sisa nama itu tidak punya jalan kembali.
-5. **Tombol “Mulai Susun Lembar Kerja” di Staging Area tidak bisa jalan.** Ia memanggil API tanpa daftar nama. Penyusunan yang benar dimulai dari Antrean Pesanan.
+5. **Tombol “Mulai Susun Lembar Kerja” di `main` tidak bisa jalan.** Ia memanggil API tanpa daftar nama. Di branch ini tombol sudah diperbaiki: server mengisi daftar nama dari resi yang masih pending, lalu Production Nesting menulis lembar. Resi yang sudah diproses atau selesai tidak ikut. Jika tidak ada resi pending, tidak ada lembar baru. Memilih sebagian nama tetap dari Antrean Pesanan. Perbaikan ini belum di `main`.
 6. **Membongkar satu lembar mengembalikan semua resi di lembar itu ke pending**, walaupun bagian resi yang sama masih duduk di lembar lain.
 7. **Tidak ada login.** Nama pelanggan dan file produksi terbuka bagi siapa saja yang kebuka aplikasinya.
 8. **Edit pesanan belum ada.**

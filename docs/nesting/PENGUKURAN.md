@@ -90,7 +90,9 @@ Luas manual = luas bingkai yang mereka isi. Luas aplikasi = 310 mm × tinggi yan
 | 10 Nov 7 | 53 | 470×265 | 1 lembar, 405 mm | +0,8% | 61,1% |
 | 10 Nov 8 | 97 | 470×310 | 2 lembar, label 1/2 (84 keping, 429 mm) dan 2/2 (13 keping, 92 mm) | — | — |
 
-36 lembar muat di satu lembar aplikasi. Yang terboros di antara yang muat adalah 9 Nov 2, 2,4% lebih luas dari bingkainya. Sebelum putaran selang-seling, yang terboros adalah 9 Nov 9 (+2,8%). Sisanya di bawah batas 10%. Kolom “Isi” adalah luas garis potong dibagi luas 310 mm × tinggi terpakai.
+36 lembar muat di satu lembar aplikasi pada pengukuran sebelum perbaikan jarak potong. Yang terboros di antara yang muat adalah 9 Nov 2, 2,4% lebih luas dari bingkainya. Sebelum putaran selang-seling, yang terboros adalah 9 Nov 9 (+2,8%). Sisanya di bawah batas 10%. Kolom “Isi” adalah luas garis potong dibagi luas 310 mm × tinggi terpakai.
+
+4 Nov 1, sesudah perbaikan jarak garis potong yang ikut dari tombol Staging, tidak muat sebagai satu blok. Aplikasi memecahnya menjadi dua bagian berlabel `1/2` dan `2/2`. Angka satu lembar di tabel adalah ukuran sebelum perbaikan jarak itu.
 
 Ukuran diukur ulang 20 November 2026 setelah mesin boleh membalik keping 180° kalau itu tidak membuat blok lebih tinggi, dan mengisi celah yang masih muat. 10 Nov 8 tetap tidak muat sebagai satu blok.
 
