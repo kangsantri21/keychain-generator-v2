@@ -51,6 +51,7 @@ test("the Staging button posts the pending-receipt request, not an empty POST", 
 let db: typeof import("../db").db;
 let schema: typeof import("../db/schema");
 let POST: typeof import("../../app/api/staging/nest/route").POST;
+let DELETE_SHEET: typeof import("../../app/api/staging/sheets/[sheetId]/route").DELETE;
 
 before(async () => {
   mkdirSync(fontDir, { recursive: true });
@@ -61,6 +62,7 @@ before(async () => {
   ({ db } = await import("../db"));
   schema = await import("../db/schema");
   ({ POST } = await import("../../app/api/staging/nest/route"));
+  ({ DELETE: DELETE_SHEET } = await import("../../app/api/staging/sheets/[sheetId]/route"));
 });
 
 after(() => {
@@ -124,6 +126,7 @@ test("Staging start turns sample pending receipts into a worksheet", async () =>
   const startedBody = await started.json();
   assert.equal(started.status, 200, JSON.stringify(startedBody));
   assert.equal(startedBody.engine, "production-v3");
+  assert.equal(startedBody.packer, "SHAPE");
   assert.equal(startedBody.items, 6);
   assert.equal(startedBody.ordersProcessed, 4);
   assert.ok(startedBody.sheets >= 1);
@@ -134,7 +137,8 @@ test("Staging start turns sample pending receipts into a worksheet", async () =>
     staged.map((row) => row.customerName).sort(),
     ["Ani", "Budi", "Citra", "Dedi", "Eka", "Sari"]
   );
-  assert.ok(staged.every((row) => row.status === "staged-production"));
+  assert.ok(staged.every((row) => row.status === "staged-shape"));
+  assert.ok(staged.every((row) => row.rotationDeg === 0 || row.rotationDeg === 90 || row.rotationDeg === 180 || row.rotationDeg === 270));
 
   const sheetsByOrder = new Map<number, Set<number>>();
   for (const row of staged) {
@@ -161,4 +165,46 @@ test("Staging start turns sample pending receipts into a worksheet", async () =>
   assert.equal(again.status, 400);
   assert.match(againBody.error, /Tidak ada pesanan pending/);
   assert.equal((await db.select().from(schema.stagingItems)).length, 6);
+});
+
+test("dismantling one sheet leaves a duplicate receipt on the other sheet", async () => {
+  const [template] = await db.select().from(schema.templates).limit(1);
+  const [duplicated] = await db.insert(schema.orders).values({ receiptCode: "RESI-DOBEL", status: "processing" }).returning();
+  const [onlyTwo] = await db.insert(schema.orders).values({ receiptCode: "RESI-LEMBAR-2", status: "processing" }).returning();
+  const [onlyThree] = await db.insert(schema.orders).values({ receiptCode: "RESI-LEMBAR-3", status: "processing" }).returning();
+
+  async function stage(orderId: number, sheetId: number, name: string) {
+    await db.insert(schema.stagingItems).values({
+      orderId,
+      templateId: template.id,
+      customerName: name,
+      sheetId,
+      posX: 10,
+      posY: 10,
+      width: 20,
+      height: 10,
+      rotated: false,
+      status: "staged-production",
+    });
+  }
+
+  await stage(duplicated.id, 80, "Nama A");
+  await stage(duplicated.id, 81, "Nama A lagi");
+  await stage(onlyTwo.id, 80, "Nama B");
+  await stage(onlyThree.id, 81, "Nama C");
+
+  const response = await DELETE_SHEET(new NextRequest("http://localhost/api/staging/sheets/80", { method: "DELETE" }), {
+    params: Promise.resolve({ sheetId: "80" }),
+  });
+  assert.equal(response.status, 200);
+
+  const left = (await db.select().from(schema.stagingItems)).filter((row) => [duplicated.id, onlyTwo.id, onlyThree.id].includes(row.orderId));
+  assert.deepEqual(
+    left.map((row) => `${row.orderId}:${row.sheetId}`).sort(),
+    [`${duplicated.id}:81`, `${onlyThree.id}:81`].sort()
+  );
+  const status = async (id: number) => (await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0].status;
+  assert.equal(await status(duplicated.id), "processing");
+  assert.equal(await status(onlyTwo.id), "pending");
+  assert.equal(await status(onlyThree.id), "processing");
 });

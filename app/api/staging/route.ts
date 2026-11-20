@@ -3,12 +3,14 @@ import { eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { stagingItems, orders, templates, type Order, type Template } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
-import { renderTemplateItem } from "@/lib/render-dispatcher";
+import { renderTemplateItemCached } from "@/lib/render-cache";
 import type { KeychainRender } from "@/lib/render-types";
+import { shapeGateFields } from "@/lib/nesting/shape-placed";
 import { summarizeSheet, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
 import type { StagingSheetSummary } from "@/lib/staging-types";
 import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
 import { activeProductionFrame } from "@/lib/active-frame";
+import { contourSizeMessage, duplicateReceiptMessage } from "@/lib/staging-advice";
 
 interface StagingItemPayload {
   id: number;
@@ -21,6 +23,7 @@ interface StagingItemPayload {
   width: number;
   height: number;
   rotated: boolean;
+  rotationDeg: number | null;
   status: string;
   order: Order | null;
   template: Template | null;
@@ -49,6 +52,7 @@ export async function GET(request: NextRequest) {
       width: stagingItems.width,
       height: stagingItems.height,
       rotated: stagingItems.rotated,
+      rotationDeg: stagingItems.rotationDeg,
       status: stagingItems.status,
       holeOverrideX: stagingItems.holeOverrideX,
       holeOverrideY: stagingItems.holeOverrideY,
@@ -79,7 +83,7 @@ export async function GET(request: NextRequest) {
             row.holeOverrideX !== null && row.holeOverrideY !== null
               ? { x: row.holeOverrideX, y: row.holeOverrideY }
               : null;
-          render = renderTemplateItem(assets, row.template, row.customerName, holeOverride);
+          render = renderTemplateItemCached(assets, row.template, row.customerName, holeOverride);
         } catch {
           render = null;
         }
@@ -112,8 +116,10 @@ export async function GET(request: NextRequest) {
       width: item.width,
       height: item.height,
       rotated: item.rotated,
+      rotationDeg: item.rotationDeg,
       expectedWidth: item.render?.width ?? NaN,
       expectedHeight: item.render?.height ?? NaN,
+      ...shapeGateFields(item, item.render),
     }));
     const { mode, source } = sheetModeOf(sheetItems);
     const gate = validatePlacedSheets(placed, placed.map((p) => p.key), mode === "mixed" ? "production" : mode);
@@ -122,8 +128,16 @@ export async function GET(request: NextRequest) {
     if (mode === "mixed") errors.unshift(MIXED_MODE_ERROR);
     if (mode !== "legacy") {
       const split = [...new Set(sheetItems.map((i) => i.orderId))].filter((o) => (sheetsByOrder.get(o)?.size ?? 1) > 1);
-      if (split.length > 0) errors.push(`${split.length} resi juga memiliki item di lembar kerja lain — resi tidak boleh terpecah`);
+      if (split.length > 0) {
+        const others = split.flatMap((orderId) => [...(sheetsByOrder.get(orderId) ?? [])].filter((id) => id !== sheetId));
+        errors.push(duplicateReceiptMessage(split.length, others));
+      }
     }
+    const drifted = placed.filter((item) => {
+      const [width, height] = item.rotated ? [item.expectedHeight, item.expectedWidth] : [item.expectedWidth, item.expectedHeight];
+      return !(Math.abs(item.width - width) <= 0.01 && Math.abs(item.height - height) <= 0.01);
+    });
+    if (drifted.length > 0) errors.push(contourSizeMessage(drifted.length));
     errors.push(...activeProductionFrame({ items: sheetItems }).errors);
     return { ...summarizeSheet(placed), profile, modeSource: source, valid: errors.length === 0, errors };
   };

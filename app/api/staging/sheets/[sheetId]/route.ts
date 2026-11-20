@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { stagingItems, orders } from "@/lib/db/schema";
 
@@ -34,7 +34,19 @@ export async function DELETE(
 
   db.transaction((tx) => {
     tx.delete(stagingItems).where(eq(stagingItems.sheetId, sheetId)).run();
-    tx.update(orders).set({ status: "pending" }).where(inArray(orders.id, orderIds)).run();
+    for (const orderId of orderIds) {
+      const [order] = tx.select().from(orders).where(eq(orders.id, orderId)).all();
+      if (!order || order.status === "completed") continue;
+      const stillActive = tx
+        .select({ id: stagingItems.id })
+        .from(stagingItems)
+        .where(and(eq(stagingItems.orderId, orderId), ne(stagingItems.status, "completed")))
+        .all();
+      tx.update(orders)
+        .set({ status: stillActive.length > 0 ? "processing" : "pending" })
+        .where(eq(orders.id, orderId))
+        .run();
+    }
   });
 
   return NextResponse.json({ success: true });

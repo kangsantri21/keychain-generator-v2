@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# drawn keychain cache (rebuilt locally; can hold customer names)
+/.cache/
+
 # production
 /build
 
@@ -49,6 +52,9 @@ next-env.d.ts
 
 # uploaded template files
 /public/uploads
+
+# Fonts downloaded for measurement. Licenses differ; do not commit them.
+/local-fonts
 
 # secrets / API keys
 *.key

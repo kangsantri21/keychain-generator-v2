@@ -32,6 +32,7 @@ import { compactRigidRects, compactionBoundsOf, type CompactionMove } from "./gr
 import { compoundStage } from "./grouped-nesting-v3-compound";
 import { regionStage } from "./grouped-nesting-v3-region";
 import { receiptsOnSeveralSheets, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
+import { runShapeBlockNesting, type ShapeBlockResult } from "@/lib/nesting/shape-block-nesting";
 
 export const PRODUCTION_NESTING_RULES = {
   sheetWidthMm: SHEET_WIDTH_MM,
@@ -59,6 +60,8 @@ export interface ProductionPlacement<T> {
   width: number;
   height: number;
   rotated: boolean;
+  /** 0, 90, 180 or 270. The box packer only ever emits 0 or 90. */
+  rotationDeg: 0 | 90 | 180 | 270;
 }
 
 export interface ProductionNestingResult<T> {
@@ -68,8 +71,8 @@ export interface ProductionNestingResult<T> {
   placements: ProductionPlacement<T>[];
   sheetCount: number;
   sumUsedHeight: number;
-  /** "V3" when a V3 stage (slot reflow / compound / region repack FAST) improved on V2; else the V2 layout was kept. Diagnostic only. */
-  engine: "V3" | "V2";
+  /** "SHAPE" is the cut-line block packer. "V3"/"V2" are the older box packer. */
+  engine: "V3" | "V2" | "SHAPE";
   /** Post-pack group compaction, one entry per receipt (orderId; null = orphan item group). */
   compaction: (Omit<CompactionMove, "key"> & { orderId: number | null })[];
   result: GroupedNestingResult<T>;
@@ -80,6 +83,169 @@ export interface ProductionNestingResult<T> {
  * config. Never returns a partial layout as ok.
  */
 export function runProductionNesting<T>(items: GroupedNestingItem<T>[]): ProductionNestingResult<T> {
+  if (items.some((item) => (item.outline?.length ?? 0) > 0)) return shapeProductionResult(items);
+  return runBoxProductionNesting(items);
+}
+
+function shapeProductionResult<T>(items: GroupedNestingItem<T>[]): ProductionNestingResult<T> {
+  const shape = runShapeBlockNesting(
+    items.map((item) => ({
+      id: item.id,
+      orderId: item.orderId,
+      width: item.originalWidth,
+      height: item.originalHeight,
+      allowRotation: item.allowRotation,
+      outline: item.outline,
+      receiptCode: item.receiptCode,
+      data: item.data,
+    }))
+  );
+  const placements: ProductionPlacement<T>[] = shape.placements.map((p) => ({
+    data: p.item.data,
+    orderId: p.orderId,
+    sheetIndex: p.sheetIndex,
+    posX: p.posX,
+    posY: p.posY,
+    width: p.width,
+    height: p.height,
+    rotated: p.rotated,
+    rotationDeg: p.rotationDeg,
+  }));
+  const errors = [...shape.errors];
+  if (shape.ok) {
+    const placedData = new Set(shape.placements.map((p) => p.item.data));
+    const kept = items.filter((item) => placedData.has(item.data));
+    const byData = new Map(kept.map((item) => [item.data, item]));
+    const placed: PlacedItem[] = shape.placements.map((p, index) => {
+      const source = byData.get(p.item.data);
+      return {
+        key: String(source?.id ?? `missing-${index}`),
+        orderId: p.orderId ?? -1,
+        sheet: p.sheetIndex,
+        posX: p.posX,
+        posY: p.posY,
+        width: p.width,
+        height: p.height,
+        rotated: p.rotated,
+        expectedWidth: source?.originalWidth ?? NaN,
+        expectedHeight: source?.originalHeight ?? NaN,
+        outline: p.outline,
+        cutClearanceMm: shape.config.cutClearanceMm,
+        blockGapMm: shape.config.blockGapMm,
+      };
+    });
+    const gate = validatePlacedSheets(placed, kept.map((item) => String(item.id)), "production");
+    if (!gate.ok) errors.push(...gate.errors);
+    else if (shape.placements.length > 0) {
+      return {
+        ok: true,
+        errors,
+        placements,
+        sheetCount: shape.sheetCount,
+        sumUsedHeight: shape.sumUsedHeight,
+        engine: "SHAPE",
+        compaction: [],
+        result: emptyGroupedResult(items, shape),
+      };
+    }
+  }
+  return {
+    ok: false,
+    errors,
+    placements,
+    sheetCount: shape.sheetCount,
+    sumUsedHeight: shape.sumUsedHeight,
+    engine: "SHAPE",
+    compaction: [],
+    result: emptyGroupedResult(items, shape),
+  };
+}
+
+function emptyGroupedResult<T>(items: GroupedNestingItem<T>[], shape: ShapeBlockResult<T>): GroupedNestingResult<T> {
+  const usedHeight = shape.sumUsedHeight;
+  const zero = { unfitGroups: 0, sheetCount: shape.sheetCount, usedHeight, boundingArea: 0, unusedSideWidth: 0, usedWidth: 0 };
+  return {
+    sheets: [],
+    summary: {
+      sheetCount: shape.sheetCount,
+      totalOrders: new Set(items.map((item) => item.orderId)).size,
+      totalItems: shape.placements.length,
+      totalUnfitItems: shape.ok ? 0 : items.length,
+      sumUsedHeight: usedHeight,
+      totalRemainingFullWidthHeight: 0,
+      totalSideFragmentWidth: 0,
+      totalSheetArea: 0,
+      totalItemArea: 0,
+      overallMaterialUtilizationPercent: 0,
+      averageUsedHeight: shape.sheetCount ? usedHeight / shape.sheetCount : 0,
+      maxUsedHeight: usedHeight,
+      minUsedHeight: usedHeight,
+    },
+    unfitGroups: [],
+    groups: [],
+    items: [],
+    metrics: {
+      totalItems: items.length,
+      totalOrders: new Set(items.map((item) => item.orderId)).size,
+      usedWidth: 0,
+      usedHeight,
+      usedArea: 0,
+      totalItemArea: 0,
+      packingUtilizationPercent: 0,
+      wastePercent: 0,
+    },
+    warnings: [],
+    unfit: [],
+    optimizer: {
+      strategy: "beam+multi-outer",
+      beamWidth: 0,
+      candidateStatesEvaluated: 0,
+      outerPackAttempts: 0,
+      strategiesTried: 0,
+      attemptsPerState: 0,
+      limitReached: false,
+      phase2cScore: zero,
+      phase2dScore: zero,
+      finalScore: zero,
+      candidateSource: "phase2c",
+      selectedStrategyId: "shape-block",
+      selectedHeuristic: "shape-block",
+      selectedSort: "area",
+      improvementVsPhase2CPercent: 0,
+      improvementVsPhase2DPercent: 0,
+      phase2d: {
+        strategy: "beam",
+        beamWidth: 0,
+        effectiveBeamWidth: 0,
+        statesEvaluated: 0,
+        limitReached: false,
+        baselineScore: zero,
+        optimizedScore: zero,
+        usedBaseline: true,
+        improvementPercent: 0,
+        outerStrategyId: "shape-block",
+      },
+      multiSheet: {
+        mode: "LAST_ONLY",
+        bestExistingEvaluated: false,
+        sheetsBefore: shape.sheetCount,
+        sheetsAfter: shape.sheetCount,
+        sumUsedHeightBefore: usedHeight,
+        sumUsedHeightAfter: usedHeight,
+        heightSavedMm: 0,
+        heightSavedPercent: 0,
+        existingSheetAttempts: 0,
+        successfulBackfills: 0,
+        newSheetsAvoided: 0,
+        relocationPass: "OFF",
+        packEvaluations: 0,
+        statesEvaluated: 0,
+      },
+    },
+  };
+}
+
+function runBoxProductionNesting<T>(items: GroupedNestingItem<T>[]): ProductionNestingResult<T> {
   const config = resolveConfig(PRODUCTION_SPACING_OVERRIDES);
   const run = runGroupedNestingV3(items, PRODUCTION_SPACING_OVERRIDES, undefined, {
     trace: false,
@@ -134,6 +300,7 @@ export function runProductionNesting<T>(items: GroupedNestingItem<T>[]): Product
     width: item.width,
     height: item.height,
     rotated: item.rotated,
+    rotationDeg: item.rotated ? 90 : 0,
   }));
 
   // Independent production gate on the final placements (the same check the batch lock runs).

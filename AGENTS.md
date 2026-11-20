@@ -13,9 +13,9 @@ Database dan unggahan tidak ada di GitHub. `.gitignore` mengabaikan `.env`, `sql
 3. Salin `sqlite.db`, `sqlite.db-wal`, dan `sqlite.db-shm` ke root repo.
 4. Salin folder `public/uploads` dari Drive ke `public/uploads`.
 5. `cp .env.example .env` (isinya `DATABASE_URL=sqlite.db`). Jangan commit `.env`.
-6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. Skema branch ini sama dengan `main` (sampai `0016_icy_misty_knight`). Tidak ada kolom `rotation_deg`; migrasi itu hanya ada di PR #3 dan tidak ikut branch ini.
+6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch ini menambah `0017_shape_block_rotation` (kolom `rotation_deg`). Database yang sudah di 0016 cukup di-migrate sekali lagi. Baris lama yang kolomnya kosong tetap dibaca seperti dulu.
 7. `npm run dev`
 
 `npm run build` membaca database saat membuat halaman depan. Salin database, atau jalankan migrasi pada database kosong, sebelum build. Build tanpa tabel membuat `sqlite.db` kosong dan gagal dengan `no such table: order_items`.
 
-Jangan pernah commit `.env`, berkas database, `public/uploads`, API key, atau kredensial. Satu-satunya berkas env yang boleh masuk Git adalah `.env.example`.
+Jangan pernah commit `.env`, berkas database, `public/uploads`, folder `local-fonts` (font Coffee Soda), API key, atau kredensial. Satu-satunya berkas env yang boleh masuk Git adalah `.env.example`.
