@@ -7,7 +7,9 @@ import fs from "node:fs";
 import { describe, test } from "node:test";
 import paper from "paper";
 import * as opentypeNs from "opentype.js";
+import { artworkShapePaths, productionOutlineAtHeight } from "@/lib/character-cut";
 import { computeLaserOutlineClipper, computeProductionOutline } from "@/lib/clipper-outline";
+import { contourSizeMessage, duplicateReceiptMessage } from "@/lib/staging-advice";
 import { buildSheetDxfDocument } from "@/lib/export-dxf";
 import { GAP_CLOSE_MM, OUTLINE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@/lib/keychain-geometry";
 import {
@@ -345,5 +347,40 @@ describe("smooth curves and the ring hole", () => {
     assert.ok(Math.abs(turned[0].x - (-8 + 40 + 30)) < 0.02, `rotated x ${turned[0].x}`);
     assert.ok(Math.abs(turned[0].y - (470 - (5 + 50))) < 0.02, `rotated y ${turned[0].y}`);
     assert.ok(Math.abs(turned[0].r - 0.95) < 0.02);
+  });
+});
+
+describe("Character cut ignores a stored cut line", () => {
+  test("artwork paths are kept and the stored cut line is dropped", () => {
+    const art = rect(2, 2, 10, 10);
+    const cut = rect(0, 0, 20, 20);
+    assert.deepEqual(artworkShapePaths({ allShapePaths: [art, cut], cutLinePaths: [cut] }), [art]);
+  });
+
+  test("the finished contour is 2.5 mm outside the artwork, not the stored cut line", () => {
+    const art = rect(0, 0, 10, 10);
+    const built = productionOutlineAtHeight([art], 15, 0);
+    assert.ok(built.outline && built.bounds);
+    assert.ok(Math.abs(built.bounds.width - 15) < 0.05, `width ${built.bounds.width}`);
+    assert.ok(Math.abs(built.bounds.height - 15) < 0.05, `height ${built.bounds.height}`);
+    // A 20 mm stored cut line would have finished near 20 mm, not 15.
+    assert.ok(built.bounds.width < 16);
+  });
+});
+
+describe("Staging explains an invalid old sheet", () => {
+  test("a duplicated receipt names the other sheet and the way to fix it", () => {
+    const text = duplicateReceiptMessage(3, [2, 2]);
+    assert.match(text, /3 resi/);
+    assert.match(text, /#2/);
+    assert.match(text, /Bongkar/);
+    assert.match(text, /satu kali/);
+  });
+
+  test("a size change says the 2.5 mm contour was recomputed", () => {
+    const text = contourSizeMessage(67);
+    assert.match(text, /67 keping/);
+    assert.match(text, /2,5 mm/);
+    assert.match(text, /Bongkar/);
   });
 });

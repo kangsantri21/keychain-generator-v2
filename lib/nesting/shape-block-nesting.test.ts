@@ -101,6 +101,27 @@ describe("Shape-block nesting", () => {
     assert.deepEqual(gate.errors, []);
   });
 
+  test("equal rectangles alternate 0° and 180° when that does not use more sheet", () => {
+    const pieces = Array.from({ length: 6 }, (_, id) =>
+      item({
+        id,
+        orderId: 8,
+        width: 40,
+        height: 16,
+        allowRotation: true,
+        outline: rectOutline(40, 16),
+        receiptCode: "BARIS",
+        data: id,
+      })
+    );
+    const run = runShapeBlockNesting(pieces);
+    assert.equal(run.ok, true, run.errors.join("; "));
+    const zeros = run.placements.filter((p) => p.rotationDeg === 0).length;
+    const flips = run.placements.filter((p) => p.rotationDeg === 180).length;
+    assert.ok(zeros >= 1 && flips >= 1, `rotations 0=${zeros} 180=${flips}`);
+    assert.ok(run.sumUsedHeight < 80, `used height ${run.sumUsedHeight}`);
+  });
+
   test("long names lie down when that uses less sheet than a column", () => {
     const pieces = Array.from({ length: 8 }, (_, id) =>
       item({

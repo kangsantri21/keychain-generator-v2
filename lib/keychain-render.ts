@@ -4,7 +4,6 @@ import * as opentype from "opentype.js";
 import { renderColoredGlyphsAtHeight, type GlyphSegment } from "@/lib/font-preview";
 import {
   translatePathData,
-  scaleAndTranslatePathData,
   squeezeHorizontalPathData,
   getPathBounds,
   findHoleCenterInside,
@@ -13,6 +12,7 @@ import {
   circlePathData,
   type PathBounds,
 } from "@/lib/laser-outline";
+import { artworkShapePaths, productionOutlineAtHeight } from "@/lib/character-cut";
 import { computeProductionOutline, unionOutlines } from "@/lib/clipper-outline";
 import { parseCharacterSvg, type CharacterVector } from "@/lib/character-svg-server";
 import type { Template, HoleOverride } from "@/lib/db/schema";
@@ -153,20 +153,13 @@ function renderKeychainTextScaled(
   const { segments, bbox } = renderColoredGlyphsAtHeight(assets.font, sampleText, textRawHeightMm, template.colors);
   const rawTextWidthMm = Math.max(bbox.x2 - bbox.x1, 1e-6);
 
-  // Character outline is auto-computed via Clipper, exactly like the
-  // "fixed" layoutMode engine's own resilience fix (lib/keychain-render-
-  // fixed.ts): the old approach trusted a single tagged "cut-line" layer
-  // inside the designer's SVG (id="cut-line" / reddish stroke / bare
-  // fill:none), which routinely broke on files with no clean pre-made
-  // cut-line layer at all - e.g. a starfish upload whose reddish stroke
-  // lived on an inner design element, not a proper outer silhouette,
-  // cutting straight through the artwork's internal detail instead of
-  // wrapping it. Instead, EVERY shape in the character's SVG is unioned
-  // together via Clipper (`unionOutlines` - a plain boolean union, no
-  // dilate/erode, and it already drops interior holes/counters via
-  // keepOuterOrientation) into one solid outer boundary with no internal
-  // holes, no matter how the designer's file is laid out.
-  const characterAllShapes = template.isCharacter ? (assets.characterVector?.allShapePaths ?? []) : [];
+  // The character's laser line is the same 2.5 mm round contour as the
+  // name (lib/character-cut.ts). A cut line stored in the SVG is ignored:
+  // that path is the old contour, and using it is why a sheet opened after
+  // the contour change still looked like the previous system. A PNG with
+  // no vectors falls through to the plain box below, which is offset too.
+  const characterVector = template.isCharacter ? assets.characterVector : null;
+  const characterAllShapes = characterVector ? artworkShapePaths(characterVector) : [];
   const hasCharacterVectorShapes = characterAllShapes.length > 0;
 
   // Side length of the plain (no usable vector artwork - a raster PNG
@@ -188,22 +181,14 @@ function renderKeychainTextScaled(
   let hasCharacterOutline = false;
   if (template.isCharacter) {
     if (hasCharacterVectorShapes) {
-      // Scale every shape to the real target height FIRST (around the SVG's
-      // own origin, height-only so the artwork's real proportions - not a
-      // fixed square - determine its width), THEN union - Clipper's offset
-      // math needs genuine output-mm coordinates, not the SVG's arbitrary
-      // native scale.
-      const srcBounds = assets.characterVector!.bounds;
-      const fitScale = template.charTargetHeight / srcBounds.height;
-      const cutTx = marginMm - srcBounds.x * fitScale;
-      const cutTy = marginMm - srcBounds.y * fitScale;
-      const scaledShapes = characterAllShapes.map((d) => scaleAndTranslatePathData(d, fitScale, cutTx, cutTy));
-      const autoOutline = unionOutlines(scaledShapes);
-      if (autoOutline) {
-        positionedCharacterOutline = [autoOutline];
-        characterShapes.push(autoOutline);
-        const b = getPathBounds(autoOutline);
-        if (b) characterBounds = b;
+      // Ignore a cut line saved in the SVG (that is the old contour) and
+      // build the 2.5 mm round contour around the artwork. The finished
+      // height is template.charTargetHeight, already including that offset.
+      const built = productionOutlineAtHeight(characterAllShapes, template.charTargetHeight, marginMm);
+      if (built.outline && built.bounds) {
+        positionedCharacterOutline = [built.outline];
+        characterShapes.push(built.outline);
+        characterBounds = built.bounds;
         hasCharacterOutline = true;
       }
     }

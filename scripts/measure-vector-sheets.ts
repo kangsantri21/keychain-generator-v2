@@ -14,6 +14,16 @@ const fixture = JSON.parse(readFileSync("lib/nesting/fixtures/manual-vector-shee
 const wantImages = process.argv.includes("--images");
 const imageIds = new Set(["3nov-1", "4nov-1", "5nov-1", "6nov-1", "9nov-1", "10nov-1", "10nov-8"]);
 
+function ringArea(flat: number[]): number {
+  let area = 0;
+  const n = flat.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += flat[i * 2] * flat[j * 2 + 1] - flat[j * 2] * flat[i * 2 + 1];
+  }
+  return Math.abs(area) / 2;
+}
+
 function dateKey(id: string): number {
   const n = Number.parseInt(id, 10);
   return Number.isFinite(n) ? n : 0;
@@ -94,10 +104,12 @@ async function main(): Promise<void> {
       continue;
     }
     const used = run.sumUsedHeight * run.config.sheetWidthMm;
+    const pieceArea = sheet.pieces.reduce((sum, piece) => sum + ringArea(piece.p), 0);
     const pct = (used / manual - 1) * 100;
+    const fill = (pieceArea / used) * 100;
     if (pct > 10 || run.sheetCount > 1) over++;
     console.log(
-      `${sheet.label} ${sheet.id}  keping ${items.length}  manual ${sheet.frameW.toFixed(0)}×${sheet.frameH.toFixed(0)}  aplikasi ${run.sheetCount} lembar ${run.sumUsedHeight.toFixed(0)} mm  ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%  ${ms} ms`
+      `${sheet.label} ${sheet.id}  keping ${items.length}  manual ${sheet.frameW.toFixed(0)}×${sheet.frameH.toFixed(0)}  aplikasi ${run.sheetCount} lembar ${run.sumUsedHeight.toFixed(0)} mm  ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%  isi ${fill.toFixed(1)}%  ${ms} ms`
     );
     if (wantImages && imageIds.has(sheet.id)) {
       const previews: PreviewPiece[] = run.placements.map((placement) => {

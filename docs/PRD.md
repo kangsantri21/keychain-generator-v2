@@ -82,7 +82,7 @@ Status di kolom “Main” adalah yang ada di branch `main` hari ini. Kolom “B
 | Login | Tidak ada. Paket `better-auth` terpasang tetapi tidak dipakai | Sama |
 | Impor BigSeller / marketplace | Tidak ada | Tidak ada |
 | Jurnal Accurate | Tidak ada | Tidak ada |
-| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Sesi susunan blok (di atas kontur) 364 lulus |
+| Tes otomatis | Tidak ada | Ada di branch, belum di main. 341 tes nesting pada 10 Nov 2026. Sesi kontur 351 lulus. Sesi susunan blok, lalu perbaikan selang-seling dan kontur tokoh: 371 lulus |
 
 ## Keputusan nesting
 

@@ -10,6 +10,7 @@ import { summarizeSheet, validatePlacedSheets, type PlacedItem } from "@/lib/pro
 import type { StagingSheetSummary } from "@/lib/staging-types";
 import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
 import { activeProductionFrame } from "@/lib/active-frame";
+import { contourSizeMessage, duplicateReceiptMessage } from "@/lib/staging-advice";
 
 interface StagingItemPayload {
   id: number;
@@ -127,8 +128,16 @@ export async function GET(request: NextRequest) {
     if (mode === "mixed") errors.unshift(MIXED_MODE_ERROR);
     if (mode !== "legacy") {
       const split = [...new Set(sheetItems.map((i) => i.orderId))].filter((o) => (sheetsByOrder.get(o)?.size ?? 1) > 1);
-      if (split.length > 0) errors.push(`${split.length} resi juga memiliki item di lembar kerja lain — resi tidak boleh terpecah`);
+      if (split.length > 0) {
+        const others = split.flatMap((orderId) => [...(sheetsByOrder.get(orderId) ?? [])].filter((id) => id !== sheetId));
+        errors.push(duplicateReceiptMessage(split.length, others));
+      }
     }
+    const drifted = placed.filter((item) => {
+      const [width, height] = item.rotated ? [item.expectedHeight, item.expectedWidth] : [item.expectedWidth, item.expectedHeight];
+      return !(Math.abs(item.width - width) <= 0.01 && Math.abs(item.height - height) <= 0.01);
+    });
+    if (drifted.length > 0) errors.push(contourSizeMessage(drifted.length));
     errors.push(...activeProductionFrame({ items: sheetItems }).errors);
     return { ...summarizeSheet(placed), profile, modeSource: source, valid: errors.length === 0, errors };
   };

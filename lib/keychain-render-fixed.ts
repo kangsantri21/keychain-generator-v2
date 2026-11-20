@@ -12,8 +12,9 @@ import {
   circlePathData,
   type PathBounds,
 } from "@/lib/laser-outline";
-import { unionOutlines } from "@/lib/clipper-outline";
-import { MAX_ITEM_WIDTH_MM, RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@/lib/keychain-geometry";
+import { artworkShapePaths } from "@/lib/character-cut";
+import { computeProductionOutline, unionOutlines } from "@/lib/clipper-outline";
+import { GAP_CLOSE_MM, MAX_ITEM_WIDTH_MM, OUTLINE_OFFSET_MM, RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@/lib/keychain-geometry";
 
 /**
  * Renders one nested unit for a "fixed" layoutMode template - the
@@ -32,16 +33,11 @@ import { MAX_ITEM_WIDTH_MM, RING_HOLE_OFFSET_MM, RING_HOLE_DIAMETER_MM } from "@
  * artwork's true outer boundary - the same Clipper union the dynamic
  * engine's own designer-cut-line path uses to weld shapes together.
  *
- * Deliberately NOT run through the dynamic engine's gap-close and
- * OUTLINE_OFFSET_MM pass, though: that pass grows a little clearance around
- * auto-laid-out text and bridges letter gaps (see lib/keychain-geometry.ts).
- * A fixed-mode master SVG is the opposite case - the designer has already
- * drawn its own finished white border and black outer line directly into
- * the artwork - so ANY extra padding here would double up on that and push
- * the red cut-line further out than the file's own outer edge. The union
- * above is a plain boolean union (zero offset), so the red line sits tight
- * against whatever the master SVG's outermost boundary actually is, no
- * padding added or removed.
+ * A cut line stored in the file (red stroke, id cut-line, or an unfilled
+ * path) is not reused: that path is the old contour. When the file also has
+ * artwork shapes, the laser line is the same 2.5 mm round contour as a
+ * dynamic name (`OUTLINE_OFFSET_MM`). A file that contains only a cut line
+ * has no artwork to measure, so that edge is kept without a second offset.
  *
  * `template.customZones` (lib/db/schema.ts) mark invisible placement zones
  * inside that same master SVG. This pass only handles `type: "text"` zones:
@@ -100,16 +96,16 @@ export function renderFixedShapeTemplate(
   // Every shape in the master, scaled to real output mm first, so the union
   // below (and everything normalized against it) is in genuine output
   // units, not the SVG's arbitrary native scale.
-  const scaledShapes = allShapePaths.map((d) => scaleAndTranslatePathData(d, baseScale, 0, 0));
-
-  // Auto-computed cut-line: a plain boolean union (zero offset - no
-  // dilate/erode padding, see this file's top-level doc comment) of every
-  // shape in the master artwork. Still drops any interior holes/counters
-  // (unionOutlines keeps only the outermost perimeter), producing a single
-  // clean outer silhouette tight against the artwork's own outer edge, no
-  // matter how many overlapping layers the designer file has, without ever
-  // needing to guess which one is "the" cut-line.
-  const outlinePathScaled = unionOutlines(scaledShapes);
+  // A cut line stored in the master SVG is the old contour. When the file
+  // also has artwork paths, the laser line is the 2.5 mm production contour
+  // around that artwork. A file that is only a cut line has nothing else to
+  // measure, so its own edge is kept (no second offset).
+  const artPaths = artworkShapePaths(vector);
+  const droppedCut = artPaths.length < allShapePaths.length;
+  const scaledShapes = (droppedCut ? artPaths : allShapePaths).map((d) => scaleAndTranslatePathData(d, baseScale, 0, 0));
+  const outlinePathScaled = droppedCut
+    ? computeProductionOutline(scaledShapes, { gapClose: GAP_CLOSE_MM, offset: OUTLINE_OFFSET_MM })
+    : unionOutlines(scaledShapes);
 
   // Every other shape (artwork image, zone text) normalizes against the
   // outline's own bounds - which should sit tight against the raw artwork

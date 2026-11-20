@@ -139,7 +139,51 @@ function pieceAt<T>(item: ShapeBlockItem<T>, rot: QuarterTurn, x: number, y: num
   };
 }
 
-function keyBefore(a: [number, number, number, number], b: [number, number, number, number]): boolean {
+type PlaceRank = [number, number, number, number, number];
+
+/**
+ * 1 when this turn faces the same way as a piece it touches. Material
+ * (bottom, then right) is compared first, so a flip is chosen only when it
+ * does not make the block taller or wider.
+ */
+function facingPenalty(
+  placed: { x: number; y: number; w: number; h: number; rot: QuarterTurn }[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rot: QuarterTurn,
+  clearance: number
+): number {
+  for (const other of placed) {
+    const vertical = Math.min(y + h, other.y + other.h) - Math.max(y, other.y);
+    const horizontal = Math.min(x + w, other.x + other.w) - Math.max(x, other.x);
+    const beside =
+      vertical > 1 &&
+      (Math.abs(x - (other.x + other.w + clearance)) < 1.5 || Math.abs(other.x - (x + w + clearance)) < 1.5);
+    const stacked =
+      horizontal > 1 &&
+      (Math.abs(y - (other.y + other.h + clearance)) < 1.5 || Math.abs(other.y - (y + h + clearance)) < 1.5);
+    if ((beside || stacked) && other.rot === rot) return 1;
+  }
+  return 0;
+}
+
+function placeRank(
+  bottom: number,
+  right: number,
+  y: number,
+  x: number,
+  rot: QuarterTurn,
+  w: number,
+  h: number,
+  placed: { x: number; y: number; w: number; h: number; rot: QuarterTurn }[],
+  clearance: number
+): PlaceRank {
+  return [bottom, right, facingPenalty(placed, x, y, w, h, rot, clearance), y, x];
+}
+
+function keyBefore(a: PlaceRank, b: PlaceRank): boolean {
   for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > EPS) return a[i] < b[i];
   return false;
 }
@@ -401,7 +445,7 @@ function rasterNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, c
   for (const item of sorted) {
     const rots: QuarterTurn[] = item.allowRotation ? [0, 180, 90, 270] : [0];
     let best: LocalPiece<T> | null = null;
-    let bestKey: [number, number, number, number] | null = null;
+    let bestKey: PlaceRank | null = null;
     for (const rot of rots) {
       const proto = pieceAt(item, rot, 0, 0, clearance);
       if (proto.w > maxW + EPS || proto.h > maxH + EPS) continue;
@@ -426,7 +470,7 @@ function rasterNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, c
           if (maskHits(sheet, sw, sh, mask, x, y)) continue;
           const bottom = Math.max(y + proto.h, ...placed.map((p) => p.y + p.h), 0);
           const right = Math.max(x + proto.w, ...placed.map((p) => p.x + p.w), 0);
-          const key: [number, number, number, number] = [bottom, right, y, x];
+          const key = placeRank(bottom, right, y, x, rot, proto.w, proto.h, placed, clearance);
           if (!bestKey || keyBefore(key, bestKey)) {
             bestKey = key;
             best = { ...proto, x, y };
@@ -455,7 +499,7 @@ function outlineNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, 
   for (const item of sorted) {
     const rots: QuarterTurn[] = item.allowRotation ? [0, 180, 90, 270] : [0];
     let best: LocalPiece<T> | null = null;
-    let bestKey: [number, number, number, number] | null = null;
+    let bestKey: PlaceRank | null = null;
     for (const rot of rots) {
       const proto = pieceAt(item, rot, 0, 0, clearance);
       if (proto.w > maxW + EPS || proto.h > maxH + EPS) continue;
@@ -481,7 +525,7 @@ function outlineNest<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: number, 
           const rights = placed.map((p) => p.x + p.w);
           const bottom = Math.max(y + proto.h, ...bottoms, 0);
           const right = Math.max(x + proto.w, ...rights, 0);
-          const key: [number, number, number, number] = [bottom, right, y, x];
+          const key = placeRank(bottom, right, y, x, rot, proto.w, proto.h, placed, clearance);
           if (!bestKey || keyBefore(key, bestKey)) {
             bestKey = key;
             best = { ...proto, x, y };
@@ -506,11 +550,105 @@ function oddTurn(index: number): QuarterTurn {
   return index % 2 === 1 ? 180 : 0;
 }
 
-function finish<T>(pieces: LocalPiece<T>[] | null, clearance: number): LocalPiece<T>[] | null {
+function finish<T>(pieces: LocalPiece<T>[] | null, clearance: number, maxW: number, maxH: number): LocalPiece<T>[] | null {
   if (!pieces || pieces.length === 0) return null;
   let slid = slidePieces(pieces, clearance);
   slid = flipPass(slid, clearance);
+  slid = tuckBottoms(slid, maxW, maxH, clearance);
+  slid = fillVoids(slid, maxW, maxH, clearance);
   return slid;
+}
+
+/** Empty 1 mm cells inside the block's own box. Lower means the gaps are filled. */
+function voidCells<T>(pieces: LocalPiece<T>[]): number {
+  const size = sizeOf(pieces);
+  const gw = Math.max(1, Math.ceil(size.w));
+  const gh = Math.max(1, Math.ceil(size.h));
+  const grid = new Uint8Array(gw * gh);
+  for (const piece of pieces) {
+    const x0 = Math.max(0, Math.floor(piece.x));
+    const y0 = Math.max(0, Math.floor(piece.y));
+    const x1 = Math.min(gw, Math.ceil(piece.x + piece.w));
+    const y1 = Math.min(gh, Math.ceil(piece.y + piece.h));
+    for (let y = y0; y < y1; y++) {
+      const row = y * gw;
+      for (let x = x0; x < x1; x++) grid[row + x] = 1;
+    }
+  }
+  let empty = 0;
+  for (let i = 0; i < grid.length; i++) if (grid[i] === 0) empty++;
+  return empty;
+}
+
+/**
+ * Slide a small piece into a hole inside the block. Kept only when the block
+ * does not grow and the hole gets smaller. Cut clearance still applies.
+ */
+function fillVoids<T>(pieces: LocalPiece<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[] {
+  if (pieces.length > 24) return pieces;
+  let best = pieces;
+  let bestVoid = voidCells(best);
+  const movable = [...best].sort((a, b) => a.w * a.h - b.w * b.h).slice(0, 8);
+  for (const piece of movable) {
+    const others = best.filter((other) => other !== piece);
+    const rots: QuarterTurn[] = piece.item.allowRotation ? [0, 180, 90, 270] : [piece.rot];
+    for (const rot of rots) {
+      const proto = pieceAt(piece.item, rot, 0, 0, clearance);
+      const anchors: { x: number; y: number }[] = [];
+      for (const other of others) {
+        anchors.push({ x: roundMm(other.x + other.w + clearance), y: other.y });
+        anchors.push({ x: other.x, y: roundMm(other.y + other.h + clearance) });
+        anchors.push({ x: roundMm(Math.max(0, other.x + other.w - proto.w)), y: other.y });
+      }
+      for (const anchor of anchors) {
+        if (anchor.x < -EPS || anchor.y < -EPS) continue;
+        if (anchor.x + proto.w > maxW + 0.2 || anchor.y + proto.h > maxH + 0.2) continue;
+        if (hitsPiece(proto, anchor.x, anchor.y, others, clearance)) continue;
+        const trial = normalize([...others, { ...proto, x: anchor.x, y: anchor.y }]);
+        const size = sizeOf(trial);
+        const had = sizeOf(best);
+        if (size.h > had.h + 0.5 || size.w > had.w + 0.5) continue;
+        const voids = voidCells(trial);
+        if (voids + 8 < bestVoid || betterLayout(trial, best, maxW, maxH)) {
+          best = trial;
+          bestVoid = voids;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * A piece that sticks out at the bottom is tried in the gaps beside its
+ * neighbours, including turned 90° or 270°. The move is kept only when the
+ * block gets shorter, or just as short and narrower.
+ */
+function tuckBottoms<T>(pieces: LocalPiece<T>[], maxW: number, maxH: number, clearance: number): LocalPiece<T>[] {
+  if (pieces.length > 24) return pieces;
+  let best = pieces;
+  const bottom = Math.max(...pieces.map((piece) => piece.y + piece.h));
+  const sticking = pieces.filter((piece) => bottom - (piece.y + piece.h) < 1).slice(0, 4);
+  for (const piece of sticking) {
+    const others = best.filter((other) => other !== piece);
+    const rots: QuarterTurn[] = piece.item.allowRotation ? [0, 90, 180, 270] : [piece.rot];
+    for (const rot of rots) {
+      const proto = pieceAt(piece.item, rot, 0, 0, clearance);
+      const anchors: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+      for (const other of others) {
+        anchors.push({ x: roundMm(other.x + other.w + clearance), y: other.y });
+        anchors.push({ x: other.x, y: roundMm(other.y + other.h + clearance) });
+      }
+      for (const anchor of anchors) {
+        if (anchor.x < -EPS || anchor.y < -EPS) continue;
+        if (anchor.x + proto.w > maxW + 0.2 || anchor.y + proto.h > maxH + 0.2) continue;
+        if (hitsPiece(proto, anchor.x, anchor.y, others, clearance)) continue;
+        const trial = normalize([...others, { ...proto, x: anchor.x, y: anchor.y }]);
+        if (betterLayout(trial, best, maxW, maxH)) best = trial;
+      }
+    }
+  }
+  return best;
 }
 
 function flipPass<T>(pieces: LocalPiece<T>[], clearance: number): LocalPiece<T>[] {
@@ -627,8 +765,8 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
     columnStrips(items, maxW, maxH, gap, true),
     columnStrips(items, maxW, maxH, gap, false),
     columnStrips(items, maxW * 0.55, maxH, gap, true),
-    rowShelf(items, () => 0, maxW, gap),
     rowShelf(items, (_item, index) => oddTurn(index), maxW, gap),
+    rowShelf(items, () => 0, maxW, gap),
     rowShelf(items, (item) => baseRot(item), maxW, gap),
     rasterNest(items, maxW, maxH, gap),
     items.length <= 18 ? outlineNest(items, maxW, maxH, gap) : null,
@@ -639,7 +777,7 @@ function layoutCandidates<T>(items: ShapeBlockItem<T>[], maxW: number, maxH: num
   }
   const finished: LocalPiece<T>[][] = [];
   for (const candidate of raw) {
-    const done = finish(candidate, clearance);
+    const done = finish(candidate, clearance, maxW, maxH);
     if (!done) continue;
     const size = sizeOf(done);
     if (!materialRank(size.w, size.h, maxW, maxH)) continue;
@@ -913,15 +1051,22 @@ export function runShapeBlockNesting<T>(items: ShapeBlockItem<T>[], partial?: Pa
       continue;
     }
     const options: FootprintOption<T>[] = [];
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     for (const laid of layouts) {
       for (const rot of [0, 90] as const) {
         const option = optionFrom(laid, rot, config);
         if (option.footW > config.sheetWidthMm - 2 * config.sheetMarginMm + EPS) continue;
         if (option.footH > config.sheetHeightMm - 2 * config.sheetMarginMm + EPS) continue;
         const key = `${option.footW.toFixed(0)}x${option.footH.toFixed(0)}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        // Same footprint: keep the layout that faces more than one way.
+        const mix = new Set(laid.map((piece) => piece.rot)).size;
+        const prev = seen.get(key);
+        if (prev !== undefined && mix <= prev) continue;
+        seen.set(key, mix);
+        if (prev !== undefined) {
+          const index = options.findIndex((have) => `${have.footW.toFixed(0)}x${have.footH.toFixed(0)}` === key);
+          if (index >= 0) options.splice(index, 1);
+        }
         options.push(option);
       }
     }
