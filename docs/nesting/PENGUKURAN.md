@@ -46,7 +46,7 @@ Gambar skala sama, kiri foto, kanan aplikasi: [images/manual-vs-aplikasi.png](im
 
 Enam berkas potong (3, 4, 5, 6, 9, dan 10 Nov) berisi 37 lembar fisik. Yang diukur adalah garis potong di vektor, bukan tebakan dari foto. Hampir semua bingkai yang digambar tim berukuran 470 × 265 mm. Satu lembar di 10 Nov berukuran 470 × 310 mm, yaitu lembar 31 × 47 cm yang dipakai tidur.
 
-Kode resi tidak ada di berkas potong (yang ada garis potong dan tanda registrasi), jadi satu bingkai dibanding sebagai satu resi. Keping dari bingkai itu tidak dicampur dengan bingkai lain, dan tidak dipecah.
+Kode resi tidak ada di berkas potong (yang ada garis potong dan tanda registrasi), jadi satu bingkai dibanding sebagai satu resi. Keping dari bingkai itu tidak dicampur dengan bingkai lain. Kalau resi itu tidak muat satu lembar, aplikasi memecahnya (10 Nov 8).
 
 Luas manual = luas bingkai yang mereka isi. Luas aplikasi = 310 mm × tinggi yang terpakai di lembar 31 × 47 cm. Angka minus berarti aplikasi lebih hemat.
 
@@ -88,15 +88,19 @@ Luas manual = luas bingkai yang mereka isi. Luas aplikasi = 310 mm × tinggi yan
 | 10 Nov 5 | 63 | 470×265 | 1 lembar, 361 mm | −10,2% | 64,7% |
 | 10 Nov 6 | 33 | 470×265 | 1 lembar, 377 mm | −6,2% | 63,3% |
 | 10 Nov 7 | 53 | 470×265 | 1 lembar, 405 mm | +0,8% | 61,1% |
-| 10 Nov 8 | 97 | 470×310 | tidak muat, resi tidak dipecah | — | — |
+| 10 Nov 8 | 97 | 470×310 | 2 lembar, label 1/2 (84 keping, 429 mm) dan 2/2 (13 keping, 92 mm) | — | — |
 
-36 lembar muat di satu lembar aplikasi. Yang terboros di antara yang muat adalah 9 Nov 2, 2,4% lebih luas dari bingkainya. Sebelum putaran selang-seling, yang terboros adalah 9 Nov 9 (+2,8%). Sisanya di bawah batas 10%. Kolom “Isi” adalah luas garis potong dibagi luas 310 mm × tinggi terpakai.
+36 lembar muat di satu lembar aplikasi pada pengukuran sebelum perbaikan jarak potong. Yang terboros di antara yang muat adalah 9 Nov 2, 2,4% lebih luas dari bingkainya. Sebelum putaran selang-seling, yang terboros adalah 9 Nov 9 (+2,8%). Sisanya di bawah batas 10%. Kolom “Isi” adalah luas garis potong dibagi luas 310 mm × tinggi terpakai.
 
-Ukuran diukur ulang 20 November 2026 setelah mesin boleh membalik keping 180° kalau itu tidak membuat blok lebih tinggi, dan mengisi celah yang masih muat. 10 Nov 8 tetap tidak dipecah.
+4 Nov 1, sesudah perbaikan jarak garis potong yang ikut dari tombol Staging, tidak muat sebagai satu blok. Aplikasi memecahnya menjadi dua bagian berlabel `1/2` dan `2/2`. Angka satu lembar di tabel adalah ukuran sebelum perbaikan jarak itu.
 
-10 Nov 8 adalah lembar penuh: 97 tag sekitar 22–24 × 60 mm mengisi 470 × 310 mm sampai dekat tepi. Margin kamera 6 mm, bingkai, dan label menyisakan daerah yang tidak cukup untuk 97 keping itu. Aplikasi tidak memecah resi menjadi dua lembar.
+Ukuran diukur ulang 20 November 2026 setelah mesin boleh membalik keping 180° kalau itu tidak membuat blok lebih tinggi, dan mengisi celah yang masih muat. 10 Nov 8 tetap tidak muat sebagai satu blok.
 
-Contoh, kiri susunan manual, kanan aplikasi. Skala milimeter sama. 4 Nov memuat tokoh besar dan tag; 9 Nov rapat dan seragam; 10 Nov 8 hanya sisi manual karena aplikasi menolak memecah.
+10 Nov 8 adalah lembar penuh: 97 tag sekitar 22–24 × 60 mm mengisi 470 × 310 mm sampai dekat tepi. Margin kamera 6 mm, bingkai, dan label menyisakan daerah yang tidak cukup untuk 97 keping itu. Keputusan Rofiq (fitur C): resi ini dipecah. Hasilnya dua blok berbingkai, label `10 Nov 8 1/2` (84 keping, jejak 298×429 mm) dan `10 Nov 8 2/2` (13 keping, jejak 248×92 mm). Resi yang masih muat satu lembar tidak dipecah. Gambar di bawah memakai kotak, bukan garis huruf, supaya nama pelanggan tidak terbaca.
+
+![Resi 97 tag dipecah dua lembar](images/resi-pecah-10nov-8.png)
+
+Contoh, kiri susunan manual, kanan aplikasi. Skala milimeter sama. 4 Nov memuat tokoh besar dan tag; 9 Nov rapat dan seragam. 10 Nov 8 yang dipecah ada di gambar terpisah di atas, tanpa nama pelanggan.
 
 ![3 Nov](images/vector-3nov-1.png)
 

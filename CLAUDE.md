@@ -42,7 +42,7 @@ Database dan unggahan tidak ada di GitHub. `.gitignore` mengabaikan `.env`, `sql
 3. Salin `sqlite.db`, `sqlite.db-wal`, dan `sqlite.db-shm` ke root repo.
 4. Salin folder `public/uploads` dari Drive ke `public/uploads`.
 5. `cp .env.example .env` (isinya `DATABASE_URL=sqlite.db`). Jangan commit `.env`.
-6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch ini menambah `0017_shape_block_rotation` (kolom `rotation_deg`). Database yang sudah di 0016 cukup di-migrate sekali lagi. Baris lama yang kolomnya kosong tetap dibaca seperti dulu.
+6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch nesting siap produksi menambah `0017_shape_block_rotation` (kolom `rotation_deg`). Fitur C menambah `0018_receipt_split_part` (kolom `staging_items.split_part` dan `split_count`). Database yang sudah di 0016 cukup di-migrate sampai habis. Baris lama yang kolomnya kosong tetap dibaca seperti dulu: bukan pecahan, dan resi di dua lembar tetap INVALID.
 7. `npm run dev`
 
 `npm run build` membaca database saat membuat halaman depan. Salin database, atau jalankan migrasi pada database kosong, sebelum build. Build tanpa tabel membuat `sqlite.db` kosong dan gagal dengan `no such table: order_items`.
@@ -57,7 +57,7 @@ Jangan pernah commit `.env`, berkas database, `public/uploads`, folder `local-fo
 
 Angka pembanding dengan foto manual ada di `docs/nesting/PENGUKURAN.md`.
 
-Lembar yang sudah tersimpan sebelum kontur 2,5 mm tidak boleh dikunci begitu saja. Garis potong dihitung ulang saat lembar dibuka. Kalau ukurannya berubah, atau satu resi ada di dua lembar, Staging menandai INVALID dan menyuruh bongkar lalu kirim ulang dari Antrean. Jangan commit snapshot database pelanggan.
+Lembar yang sudah tersimpan sebelum kontur 2,5 mm tidak boleh dikunci begitu saja. Garis potong dihitung ulang saat lembar dibuka. Kalau ukurannya berubah, atau satu resi ada di dua lembar tanpa tanda pecahan sah, Staging menandai INVALID dan menyuruh bongkar lalu kirim ulang dari Antrean. Jangan commit snapshot database pelanggan.
 
 ## Sesi: tombol Staging “Mulai Susun Lembar Kerja”
 
@@ -68,3 +68,27 @@ Lembar yang sudah tersimpan sebelum kontur 2,5 mm tidak boleh dikunci begitu saj
 **Yang diubah.** `lib/staging-start.ts`, `POST /api/staging/nest`, tombol di `components/staging-area/ControlPanel.tsx`, dan handler di `app/staging-area/page.tsx`. Tes `lib/nesting/staging-start.test.ts`.
 
 **Masalah terbuka.** Di `main` tombol lama masih ada. API legacy masih bisa menyusun nama yang sudah punya baris staging aktif (P0.9, bagian penolakan legacy). Mengunci satu lembar masih menandai seluruh resi selesai. Tidak ada login.
+
+## Fitur C — pecah resi yang tidak muat (20 November 2026)
+
+Keputusan Rofiq: resi yang benar-benar tidak muat satu lembar 31×47 cm boleh dipecah. Ada di branch fitur C, belum di `main`, dan belum di `versi-lengkap` sampai PR-nya digabung.
+
+- Mesin yang memecah adalah packer blok berbingkai (`lib/nesting/shape-block-nesting.ts`), yaitu jalur Production Nesting kalau keping punya garis potong. Semua rotasi dicoba dulu. Kalau tetap tidak muat, keping dibagi menjadi bagian sesedikit mungkin. Tiap bagian blok berbingkai sendiri, di lembar sendiri, label `<kode resi> 1/2`, `2/2`, sampai `N`.
+- Resi yang muat tetap satu blok. Tidak pernah dapat label bagian.
+- Packer kotak `lib/nesting/grouped-nesting.ts` (pratinjau Grouped V2 dan jalur tanpa garis potong) tetap menolak dengan `ORDER_GROUP_TOO_LARGE_FOR_SHEET`. Ia tidak menggambar bingkai, jadi pecahan tidak ditaruh di situ.
+- Gate (`lib/production-gate.ts`) mengizinkan resi di lebih dari satu lembar hanya bila setiap keping ditandai `splitPart` / `splitCount` yang konsisten. Pecahan lama dan cetak dobel (kolom kosong) tetap ditolak.
+- Kolom baru: `staging_items.split_part` dan `split_count`, migrasi `0018_receipt_split_part`. Keduanya kosong pada resi utuh.
+- Contoh 97 tag (10 Nov lembar 8): 84 keping di lembar `1/2`, 13 keping di lembar `2/2`. Gambar tanpa nama pelanggan: `docs/nesting/images/resi-pecah-10nov-8.png`.
+
+### Yang perlu fitur D (jangan dikerjakan di sesi ini)
+
+Mengunci atau menandai selesai **satu bagian** belum diubah. Yang sudah disiapkan:
+
+- `receiptIsComplete` di `lib/receipt-parts.ts`. Resi baru yang dipecah dianggap selesai hanya kalau bagian 1 sampai N semuanya selesai. Resi utuh selesai seperti biasa.
+- `POST /api/print-batches` masih menolak lembar yang resinya juga ada di lembar kerja lain, termasuk pecahan sah. Komentar di route itu menunjuk fungsi di atas.
+- `POST /api/staging/sheets/[id]/complete` masih menandai seluruh resi selesai begitu satu lembar ditandai. Fitur D harus memanggil `receiptIsComplete` sebelum menulis `orders.status = completed`.
+- Membongkar satu bagian tidak boleh mengembalikan resi ke pending kalau bagian lain masih tersusun. Itu menyambung P0.10.
+
+Sampai fitur D masuk, Rofiq bisa menyusun dan melihat dua lembar. Mengunci salah satu bagian masih ditolak.
+
+Tombol “Mulai Susun” menyimpan resi yang muat dan resi yang dipecah. Yang disebut dilewati hanya resi yang sudah ada di lembar lain, yang tidak bisa digambar, atau yang punya satu keping lebih besar dari lembar. Bongkar satu lembar mengembalikan resi ke pending hanya bila tidak ada keping aktif di lembar lain.

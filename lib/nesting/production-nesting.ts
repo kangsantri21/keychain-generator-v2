@@ -15,7 +15,9 @@
  * 13 mm from the top (grouped-nesting-config.ts PRODUCTION_SPACING). A
  * result is only usable when `ok` — every item placed exactly once, no
  * unfit, and the independent geometry check (lib/production-gate.ts) clean.
- * One receipt = one group; groups never split across sheets.
+ * One receipt = one framed block when it fits. A receipt that does not fit
+ * one sheet is split into marked parts (shape path only). The box path
+ * still keeps every receipt on one sheet.
  */
 import { resolveConfig, type GroupedNestingItem, type GroupedNestingResult } from "./grouped-nesting";
 import {
@@ -62,6 +64,9 @@ export interface ProductionPlacement<T> {
   rotated: boolean;
   /** 0, 90, 180 or 270. The box packer only ever emits 0 or 90. */
   rotationDeg: 0 | 90 | 180 | 270;
+  /** Set by the shape packer when this piece is one part of an oversized receipt. */
+  splitPart?: number | null;
+  splitCount?: number | null;
 }
 
 export interface ProductionNestingResult<T> {
@@ -110,6 +115,8 @@ function shapeProductionResult<T>(items: GroupedNestingItem<T>[]): ProductionNes
     height: p.height,
     rotated: p.rotated,
     rotationDeg: p.rotationDeg,
+    splitPart: p.splitPart,
+    splitCount: p.splitCount,
   }));
   const errors = [...shape.errors];
   if (shape.ok) {
@@ -132,6 +139,8 @@ function shapeProductionResult<T>(items: GroupedNestingItem<T>[]): ProductionNes
         outline: p.outline,
         cutClearanceMm: shape.config.cutClearanceMm,
         blockGapMm: shape.config.blockGapMm,
+        splitPart: p.splitPart,
+        splitCount: p.splitCount,
       };
     });
     const gate = validatePlacedSheets(placed, kept.map((item) => String(item.id)), "production");

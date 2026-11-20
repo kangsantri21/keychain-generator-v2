@@ -6,6 +6,7 @@
  * optional: every receipt gets exactly one label, outside the frame.
  */
 import { LABEL_CHAR_EM, LABEL_FONT_MM, LABEL_GUTTER_MM, FRAME_PAD_MM, labelFontThatFits, labelSide, labelTextLength } from "@/lib/nesting/shape-block-config";
+import { receiptPartLabel } from "@/lib/receipt-parts";
 import { STAGED_SHAPE } from "@/lib/staging-mode";
 
 const ASCENT = 0.8;
@@ -18,6 +19,9 @@ export interface MarkItem {
   height: number;
   status?: string;
   order?: { receiptCode: string } | null;
+  /** Set on each piece of an authorized split. The label becomes "<kode> 1/2". */
+  splitPart?: number | null;
+  splitCount?: number | null;
 }
 
 export interface BlockFrame {
@@ -57,23 +61,25 @@ function unionOf(items: MarkItem[]): { x: number; y: number; w: number; h: numbe
 
 export function framesAndLabels(
   items: MarkItem[],
-  codeOf: (orderId: number) => string,
+  codeOf: (orderId: number, group?: MarkItem[]) => string,
   pad = FRAME_PAD_MM,
   gutter = LABEL_GUTTER_MM
 ): { frames: BlockFrame[]; labels: SideLabel[] } {
-  const byOrder = new Map<number, MarkItem[]>();
+  const byPart = new Map<string, MarkItem[]>();
   for (const item of items) {
-    const list = byOrder.get(item.orderId);
+    const key = `${item.orderId}:${item.splitPart ?? 0}`;
+    const list = byPart.get(key);
     if (list) list.push(item);
-    else byOrder.set(item.orderId, [item]);
+    else byPart.set(key, [item]);
   }
   const frames: BlockFrame[] = [];
   const labels: SideLabel[] = [];
-  for (const [orderId, group] of [...byOrder.entries()].sort((a, b) => a[0] - b[0])) {
+  for (const group of [...byPart.values()].sort((a, b) => a[0].orderId - b[0].orderId || (a[0].splitPart ?? 0) - (b[0].splitPart ?? 0))) {
+    const orderId = group[0].orderId;
     const box = unionOf(group);
     const frame = { orderId, x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad };
     frames.push(frame);
-    const text = codeOf(orderId);
+    const text = codeOf(orderId, group);
     const side = labelSide(frame.w, frame.h);
     const along = side === "left" ? frame.h : frame.w;
     const fontSize = labelFontThatFits(text, along, LABEL_FONT_MM);
@@ -112,7 +118,11 @@ export function shapeFramesOf(items: MarkItem[]): BlockFrame[] {
 /** One side label per receipt, or null when this is not a shape-block sheet. */
 export function shapeLabelsOf(items: MarkItem[]): SideLabel[] | null {
   if (!isShapeSheet(items)) return null;
-  const codeOf = (orderId: number) => items.find((item) => item.orderId === orderId)?.order?.receiptCode ?? `#${orderId}`;
+  const codeOf = (orderId: number, group?: MarkItem[]) => {
+    const item = group?.[0] ?? items.find((candidate) => candidate.orderId === orderId);
+    const code = item?.order?.receiptCode ?? `#${orderId}`;
+    return receiptPartLabel(code, item?.splitPart, item?.splitCount);
+  };
   return framesAndLabels(items, codeOf).labels;
 }
 

@@ -48,6 +48,9 @@ export interface StagingItemPayload {
   rotated: boolean;
   /** 0, 90, 180 or 270. Missing on older rows: 90 when `rotated`, otherwise 0. */
   rotationDeg?: number | null;
+  /** 1-based part of a receipt that did not fit one sheet. Null when the receipt is whole. */
+  splitPart?: number | null;
+  splitCount?: number | null;
   status: string;
   order: StagingOrderPayload | null;
   template: StagingTemplatePayload | null;

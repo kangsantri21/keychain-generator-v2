@@ -7,6 +7,7 @@ import { renderTemplateItemCached } from "@/lib/render-cache";
 import type { KeychainRender } from "@/lib/render-types";
 import { shapeGateFields } from "@/lib/nesting/shape-placed";
 import { summarizeSheet, validatePlacedSheets, type PlacedItem } from "@/lib/production-gate";
+import { unauthorizedSplitOrderIds } from "@/lib/receipt-parts";
 import type { StagingSheetSummary } from "@/lib/staging-types";
 import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
 import { activeProductionFrame } from "@/lib/active-frame";
@@ -24,6 +25,8 @@ interface StagingItemPayload {
   height: number;
   rotated: boolean;
   rotationDeg: number | null;
+  splitPart: number | null;
+  splitCount: number | null;
   status: string;
   order: Order | null;
   template: Template | null;
@@ -53,6 +56,8 @@ export async function GET(request: NextRequest) {
       height: stagingItems.height,
       rotated: stagingItems.rotated,
       rotationDeg: stagingItems.rotationDeg,
+      splitPart: stagingItems.splitPart,
+      splitCount: stagingItems.splitCount,
       status: stagingItems.status,
       holeOverrideX: stagingItems.holeOverrideX,
       holeOverrideY: stagingItems.holeOverrideY,
@@ -104,8 +109,20 @@ export async function GET(request: NextRequest) {
   }
 
   // Operator metrics + the same validation gate the batch lock runs (lib/production-gate.ts).
+  // A receipt on two sheets is illegal unless the packer marked it as a split
+  // of a receipt that did not fit. Old double-prints have no mark.
   const sheetsByOrder = new Map<number, Set<number>>();
   for (const item of items) sheetsByOrder.set(item.orderId, (sheetsByOrder.get(item.orderId) ?? new Set()).add(item.sheetId));
+  const illegalSplits = new Set(
+    unauthorizedSplitOrderIds(
+      items.map((item) => ({
+        orderId: item.orderId,
+        sheet: item.sheetId,
+        splitPart: item.splitPart,
+        splitCount: item.splitCount,
+      }))
+    )
+  );
   const summaryOf = (sheetId: number, sheetItems: StagingItemPayload[]): StagingSheetSummary => {
     const placed: PlacedItem[] = sheetItems.map((item) => ({
       key: String(item.id),
@@ -127,7 +144,7 @@ export async function GET(request: NextRequest) {
     const errors = [...gate.errors];
     if (mode === "mixed") errors.unshift(MIXED_MODE_ERROR);
     if (mode !== "legacy") {
-      const split = [...new Set(sheetItems.map((i) => i.orderId))].filter((o) => (sheetsByOrder.get(o)?.size ?? 1) > 1);
+      const split = [...new Set(sheetItems.map((i) => i.orderId))].filter((o) => illegalSplits.has(o));
       if (split.length > 0) {
         const others = split.flatMap((orderId) => [...(sheetsByOrder.get(orderId) ?? [])].filter((id) => id !== sheetId));
         errors.push(duplicateReceiptMessage(split.length, others));

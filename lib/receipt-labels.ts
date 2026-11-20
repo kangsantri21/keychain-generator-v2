@@ -132,7 +132,12 @@ function bestPosition(box: Rect, w: number, h: number, items: Footprint[]): { x:
  * (lib/staging-mode.ts), geometry only for marker-less history.
  */
 export function internalLabelsOf(sheet: {
-  items: (Footprint & { status: string; order: { receiptCode: string } | null })[];
+  items: (Footprint & {
+    status: string;
+    order: { receiptCode: string } | null;
+    splitPart?: number | null;
+    splitCount?: number | null;
+  })[];
 }): InternalLabel[] | null {
   if (sheetModeOf(sheet.items).mode === "legacy") return null;
   const side = shapeLabelsOf(sheet.items);

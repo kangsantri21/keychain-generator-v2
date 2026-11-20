@@ -215,10 +215,13 @@ export async function POST(request: NextRequest) {
       let sumUsedHeight = 0;
       for (const [orderId, group] of byOrder) {
         const one = runProductionNesting(group);
+        // A receipt that does not fit one sheet is split by the packer and
+        // comes back ok, with part labels. Only a receipt that still cannot
+        // be placed (a piece bigger than the sheet, or a failed gate) is skipped.
         if (!one.ok) {
           failed.push({
             receipt: codeOf.get(orderId) ?? `#${orderId}`,
-            reason: one.errors[0] ?? "tidak bisa disusun dalam satu lembar",
+            reason: one.errors[0] ?? "tidak bisa disusun",
           });
           continue;
         }
@@ -257,6 +260,8 @@ export async function POST(request: NextRequest) {
       height: placement.height,
       rotated: placement.rotated,
       rotationDeg: placement.rotationDeg,
+      splitPart: placement.splitPart ?? null,
+      splitCount: placement.splitCount ?? null,
       // Shape-block sheets: one framed receipt, cut-line gaps, side label.
       // The older box packer is not on this path anymore (it still runs for
       // callers that pass no outline — tests and any future opt-out).

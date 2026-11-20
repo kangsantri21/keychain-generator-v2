@@ -124,6 +124,10 @@ export async function POST(request: NextRequest) {
   gateErrors.push(...gate.errors);
 
   // A production sheet must hold every staged unit of its receipts (one receipt = one group on one sheet).
+  // Feature D: an authorized split (staging_items.split_part / split_count) may lock one
+  // part. Until then this check still rejects every receipt that also sits on another
+  // open sheet, including a legal oversized split. Do not mark the order completed
+  // from one part — lib/receipt-parts.ts receiptIsComplete is the rule.
   if (mode !== "legacy") {
     const sheetOrderIds = [...new Set(dbRows.map((row) => row.orderId))];
     const elsewhere = await db

@@ -77,6 +77,19 @@ Selesai bila:
 - Tes gagal jika mesin mencampur dua resi hanya supaya angka pemakaian naik.
 - Jika setelah butir ini selisih masih di atas 10 persen karena yang dirapatkan masih kotak, baru kerjakan rapatan mengikuti garis potong. Jangan mulai dari situ sebelum kolom, rotasi, dan bingkai pada P0.4 dan P0.5 selesai.
 
+### P0.6b Pecah resi yang tidak muat — selesai di branch fitur C, belum di `main`
+
+Keputusan Rofiq: resi yang benar-benar tidak muat satu lembar 310×470 mm boleh dipecah. Resi yang muat tetap satu blok.
+
+Selesai bila:
+
+- 97 tag (10 Nov 8) tersusun di dua lembar berlabel `1/2` dan `2/2`.
+- Resi yang muat tidak pernah dapat label bagian.
+- Gate menolak pecahan yang tidak ditandai, dan menerima pecahan yang kolom `split_part` / `split_count`-nya lengkap.
+- Gambar contoh ada di [docs/nesting/images/resi-pecah-10nov-8.png](nesting/images/resi-pecah-10nov-8.png). Nama pelanggan tidak digambar.
+
+Belum selesai (fitur D, sesi lain): mengunci atau menandai selesai satu bagian tidak boleh menyelesaikan seluruh resi. Pakai `receiptIsComplete` di `lib/receipt-parts.ts`. Route `POST /api/print-batches` dan `POST /api/staging/sheets/[id]/complete` masih berperilaku lama. Membongkar satu bagian tidak boleh mengembalikan resi ke pending kalau bagian lain masih tersusun.
+
 ### P0.7 Gabungkan nesting produksi ke main
 
 **Ada di branch, belum di main.** `feature/nesting-v3-compact` sudah berisi mesin produksi, cek resi ganda, dan 341 tes.
