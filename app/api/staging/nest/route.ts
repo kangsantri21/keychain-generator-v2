@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, orderItems, templates, stagingItems, type NewStagingItem, type HoleOverride } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
@@ -18,6 +18,7 @@ import { compoundStage, isCompoundRequest } from "@/lib/nesting/grouped-nesting-
 import { regionStage, isRegionRequest } from "@/lib/nesting/grouped-nesting-v3-region";
 import { SHEET_WIDTH_MM, SHEET_HEIGHT_MM, ITEM_PADDING_RIGHT_MM, ITEM_PADDING_BOTTOM_MM } from "@/lib/keychain-geometry";
 import { parseSelections } from "@/lib/staging-selection";
+import { isStagingStartRequest, selectionsForPendingItems } from "@/lib/staging-start";
 
 interface PackData {
   orderId: number;
@@ -36,7 +37,24 @@ interface PackData {
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => null);
+  let body = await request.json().catch(() => null);
+
+  // Staging Area's "Mulai Susun Lembar Kerja" sends no name list. The old
+  // call was rejected here even when pending receipts existed. Load those
+  // receipts and force Production Nesting — never the legacy packer.
+  if (isStagingStartRequest(body) && parseSelections(body?.selections).size === 0) {
+    const pendingItems = await db
+      .select({ itemId: orderItems.id, names: orderItems.customerNames })
+      .from(orderItems)
+      .innerJoin(orders, eq(orders.id, orderItems.orderId))
+      .where(eq(orders.status, "pending"));
+    const selections = selectionsForPendingItems(pendingItems);
+    if (selections.length === 0) {
+      return NextResponse.json({ error: "Tidak ada pesanan pending untuk disusun" }, { status: 400 });
+    }
+    body = { ...(body as object), selections, mode: "production-v3" };
+  }
+
   const selectionsByItem = parseSelections(body?.selections);
 
   if (selectionsByItem.size === 0) {
@@ -230,7 +248,10 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      engine: nesting.engine,
+      // Mode the operator asked for. `packer` is the machine that ran:
+      // "SHAPE" is one receipt per framed block; "V3"/"V2" are the older box packer.
+      engine: "production-v3",
+      packer: nesting.engine,
       sheets: nesting.sheetCount,
       items: productionRows.length,
       ordersProcessed: productionOrderIds.length,

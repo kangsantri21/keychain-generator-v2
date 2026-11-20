@@ -17,6 +17,7 @@ import {
   stagingCacheGeneration,
   writeStagingCache,
 } from "@/lib/staging-cache";
+import { STAGING_START_REQUEST } from "@/lib/staging-start";
 
 type ViewMode = "active" | "history";
 
@@ -39,6 +40,7 @@ export default function StagingAreaPage() {
   const viewModeRef = useRef<ViewMode>("active");
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isLocking, setIsLocking] = useState(false);
+  const [isStartingNesting, setIsStartingNesting] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("active");
   const [pendingSheetActionId, setPendingSheetActionId] = useState<number | null>(null);
 
@@ -137,6 +139,28 @@ export default function StagingAreaPage() {
     else applySheets(await loadHistorySheets());
   }
 
+  async function handleStartNesting() {
+    setIsStartingNesting(true);
+    try {
+      const res = await fetch("/api/staging/nest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(STAGING_START_REQUEST),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const details: string[] = Array.isArray(data.details) ? data.details : [];
+        throw new Error([data.error ?? "Gagal menyusun lembar kerja", ...details.slice(0, 5)].join("\n"));
+      }
+      toast.success(`${data.items} pesanan berhasil disusun di ${data.sheets} lembar`);
+      await reloadAfterMutation();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal menyusun lembar kerja");
+    } finally {
+      setIsStartingNesting(false);
+    }
+  }
+
   async function handleLockBatch(batchCode: string) {
     const activeSheet = sheets.find((sheet) => sheet.sheetId === activeSheetId);
     if (!activeSheet) return;
@@ -230,7 +254,9 @@ export default function StagingAreaPage() {
           sheets={sheets}
           activeSheetId={activeSheetId}
           onSelectSheet={handleSelectSheet}
+          onStartNesting={handleStartNesting}
           onLockBatch={handleLockBatch}
+          isStartingNesting={isStartingNesting}
           isLocking={isLocking}
           canLock={!activeSheet?.summary || activeSheet.summary.valid}
           isVerifying={viewMode === "active" && isRevalidating}

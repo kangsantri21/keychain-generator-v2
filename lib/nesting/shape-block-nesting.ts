@@ -21,6 +21,7 @@ import {
 } from "@/lib/nesting/shape-block-config";
 import {
   addTurns,
+  outlinesTooClose,
   prepareOutline,
   preparedTooClose,
   rectOutline,
@@ -556,7 +557,57 @@ function finish<T>(pieces: LocalPiece<T>[] | null, clearance: number, maxW: numb
   slid = flipPass(slid, clearance);
   slid = tuckBottoms(slid, maxW, maxH, clearance);
   slid = fillVoids(slid, maxW, maxH, clearance);
-  return slid;
+  // The 1 mm picture used while searching can leave a real gap under 1 mm.
+  // Push those pairs apart, or drop the candidate if they no longer fit.
+  return pushToClearance(slid, clearance, maxW, maxH);
+}
+
+function pairTooClose<T>(a: LocalPiece<T>, b: LocalPiece<T>, clearance: number): boolean {
+  return outlinesTooClose(translatePolys(a.polys, a.x, a.y), translatePolys(b.polys, b.x, b.y), clearance);
+}
+
+function pushToClearance<T>(pieces: LocalPiece<T>[], clearance: number, maxW: number, maxH: number): LocalPiece<T>[] | null {
+  const placed = pieces.map((piece) => ({ ...piece }));
+  for (let pass = 0; pass < 24; pass++) {
+    let moved = false;
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        const a = placed[i];
+        const b = placed[j];
+        if (rectsApart({ x: a.x, y: a.y, w: a.w, h: a.h }, { x: b.x, y: b.y, w: b.w, h: b.h }, clearance)) continue;
+        if (!pairTooClose(a, b, clearance)) continue;
+        const target = a.x + a.y <= b.x + b.y ? b : a;
+        const other = target === a ? b : a;
+        const gapX = target.x - (other.x + other.w);
+        const gapY = target.y - (other.y + other.h);
+        if (gapX < gapY) target.x += 0.2;
+        else target.y += 0.2;
+        moved = true;
+      }
+    }
+    if (!moved) {
+      const size = sizeOf(placed);
+      if (size.w > maxW + 0.2 || size.h > maxH + 0.2) return null;
+      return normalize(placed);
+    }
+  }
+  const size = sizeOf(placed);
+  if (size.w > maxW + 0.2 || size.h > maxH + 0.2) return null;
+  return pairClear(placed, clearance) ? normalize(placed) : null;
+}
+
+function pairClear<T>(pieces: LocalPiece<T>[], clearance: number): boolean {
+  for (let i = 0; i < pieces.length; i++) {
+    for (let j = i + 1; j < pieces.length; j++) {
+      if (rectsApart(
+        { x: pieces[i].x, y: pieces[i].y, w: pieces[i].w, h: pieces[i].h },
+        { x: pieces[j].x, y: pieces[j].y, w: pieces[j].w, h: pieces[j].h },
+        clearance
+      )) continue;
+      if (pairTooClose(pieces[i], pieces[j], clearance)) return false;
+    }
+  }
+  return true;
 }
 
 /** Empty 1 mm cells inside the block's own box. Lower means the gaps are filled. */

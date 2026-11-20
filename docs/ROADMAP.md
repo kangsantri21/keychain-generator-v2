@@ -102,11 +102,12 @@ Selesai bila:
 
 Di `main`, `POST /api/staging/nest` tidak menolak nama yang sudah ada di lembar. Tombol “Mulai Susun Lembar Kerja” di Staging Area memanggil API tanpa daftar nama, jadi selalu gagal.
 
-Selesai bila:
+Tombol Staging **sudah diperbaiki di branch ini, belum di `main`.** Tombol mengirim `{ allPending: true, mode: "production-v3" }`. Server mengisi daftar nama dari resi yang statusnya masih pending, lalu Production Nesting menulis lembar. Permintaan tanpa daftar nama dan tanpa `allPending` tetap ditolak. Tes: `lib/nesting/staging-start.test.ts`.
+
+Yang belum selesai:
 
 - API legacy menolak pilihan yang sudah punya baris `staging_items` aktif untuk nama yang sama, dengan pesan yang bisa dibaca operator.
-- Tombol di Staging Area dihapus, atau hanya membuka Antrean Pesanan. Tidak ada lagi permintaan nest tanpa `selections`.
-- Tes mencakup kedua kasus itu. Untuk mode produksi, tes resi ganda yang sudah ada di branch tetap lulus.
+- Tes untuk penolakan legacy itu. Untuk mode produksi, tes resi ganda yang sudah ada di branch tetap lulus.
 
 ### P0.10 Bongkar lembar tidak merusak lembar lain
 

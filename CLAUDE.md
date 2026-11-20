@@ -58,3 +58,13 @@ Jangan pernah commit `.env`, berkas database, `public/uploads`, folder `local-fo
 Angka pembanding dengan foto manual ada di `docs/nesting/PENGUKURAN.md`.
 
 Lembar yang sudah tersimpan sebelum kontur 2,5 mm tidak boleh dikunci begitu saja. Garis potong dihitung ulang saat lembar dibuka. Kalau ukurannya berubah, atau satu resi ada di dua lembar, Staging menandai INVALID dan menyuruh bongkar lalu kirim ulang dari Antrean. Jangan commit snapshot database pelanggan.
+
+## Sesi: tombol Staging “Mulai Susun Lembar Kerja”
+
+**Keputusan.** Tombol di halaman Staging menyusun semua resi yang masih pending dengan Production Nesting. Di branch ini Production Nesting adalah susunan per resi (blok berbingkai, jarak 1 mm pada garis potong). Server yang mengisi daftar nama. Permintaan kosong tanpa tanda `allPending` tetap ditolak, supaya pemanggil lain tidak diam-diam menyusun seluruh antrean. Memilih sebagian nama tetap dari Antrean Pesanan.
+
+**Akar masalah.** Tombol lama memanggil `POST /api/staging/nest` tanpa body. Route butuh `selections` (`itemId:indeksNama`). Tanpa daftar itu jawabannya selalu 400 “Pilih minimal satu pesanan untuk disusun”, meskipun resi pending sudah ada di database, dan tidak ada baris `staging_items` yang ditulis. Mengganti tombol dengan tautan ke Antrean hanya menyembunyikan error.
+
+**Yang diubah.** `lib/staging-start.ts`, `POST /api/staging/nest`, tombol di `components/staging-area/ControlPanel.tsx`, dan handler di `app/staging-area/page.tsx`. Tes `lib/nesting/staging-start.test.ts`.
+
+**Masalah terbuka.** Di `main` tombol lama masih ada. API legacy masih bisa menyusun nama yang sudah punya baris staging aktif (P0.9, bagian penolakan legacy). Mengunci satu lembar masih menandai seluruh resi selesai. Tidak ada login.
