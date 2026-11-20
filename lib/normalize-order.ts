@@ -24,6 +24,7 @@ interface RawOrder {
   receiptCode: string;
   manualCode: string | null;
   status: string;
+  progressLabel?: string | null;
   createdAt: string;
   items: RawOrderItem[];
 }
@@ -34,6 +35,7 @@ export function toOrderQueueEntry(raw: RawOrder): OrderQueueEntry {
     receiptCode: raw.receiptCode,
     manualCode: raw.manualCode,
     status: raw.status as OrderStatus,
+    progressLabel: raw.progressLabel ?? null,
     createdAt: raw.createdAt,
     items: raw.items.map((item) => ({
       id: item.id,

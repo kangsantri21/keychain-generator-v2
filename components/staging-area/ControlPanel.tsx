@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Play, Lock, Trash2, CheckCircle2, History, Layers } from "lucide-react";
+import { Play, Lock, Trash2, CheckCircle2, History, Layers, Unlock } from "lucide-react";
 import type { StagingSheet } from "@/lib/staging-types";
+import { sheetSplitBadge } from "@/lib/receipt-lock";
 import { HppCalculator } from "./HppCalculator";
 
 export function ControlPanel({
@@ -21,6 +22,7 @@ export function ControlPanel({
   isLoadingHistory,
   onDeleteSheet,
   onCompleteSheet,
+  onReopenSheet,
   pendingSheetActionId,
 }: {
   sheets: StagingSheet[];
@@ -39,6 +41,7 @@ export function ControlPanel({
   isLoadingHistory: boolean;
   onDeleteSheet: (sheetId: number) => void;
   onCompleteSheet: (sheetId: number) => void;
+  onReopenSheet: (sheetId: number) => void;
   pendingSheetActionId: number | null;
 }) {
   const [batchCode, setBatchCode] = useState("");
@@ -104,7 +107,9 @@ export function ControlPanel({
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
-            {sheets.map((sheet) => (
+            {sheets.map((sheet) => {
+              const partBadge = sheetSplitBadge(sheet.items);
+              return (
               <div
                 key={sheet.sheetId}
                 className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-sm font-medium transition-colors ${
@@ -118,33 +123,49 @@ export function ControlPanel({
                   onClick={() => onSelectSheet(sheet.sheetId)}
                   className="flex flex-1 items-center justify-between text-left hover:text-blue-700"
                 >
-                  <span>Lembar Kerja #{sheet.sheetId}</span>
+                  <span className="flex items-center gap-1.5">
+                    Lembar Kerja #{sheet.sheetId}
+                    {partBadge ? (
+                      <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800">
+                        Bagian {partBadge}
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="text-xs text-slate-400">{sheet.items.length} item</span>
                 </button>
-                {!isHistory && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => onCompleteSheet(sheet.sheetId)}
-                      disabled={pendingSheetActionId === sheet.sheetId}
-                      title="Tandai Selesai"
-                      className="rounded p-1 text-emerald-600 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <CheckCircle2 size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteSheet(sheet.sheetId)}
-                      disabled={pendingSheetActionId === sheet.sheetId}
-                      title="Bongkar / Hapus"
-                      className="rounded p-1 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </>
+                {isHistory ? (
+                  <button
+                    type="button"
+                    onClick={() => onReopenSheet(sheet.sheetId)}
+                    disabled={pendingSheetActionId === sheet.sheetId}
+                    title="Buka Kunci"
+                    className="rounded p-1 text-sky-700 transition-colors hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Unlock size={16} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onCompleteSheet(sheet.sheetId)}
+                    disabled={pendingSheetActionId === sheet.sheetId}
+                    title="Tandai Selesai"
+                    className="rounded p-1 text-emerald-600 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => onDeleteSheet(sheet.sheetId)}
+                  disabled={pendingSheetActionId === sheet.sheetId}
+                  title="Bongkar / Hapus"
+                  className="rounded p-1 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -181,8 +202,9 @@ export function ControlPanel({
           <p className="text-xs font-medium text-red-600">Lembar kerja ini INVALID — perbaiki atau bongkar sebelum dikunci.</p>
         )}
         <p className="text-xs text-slate-400">
-          Mengarsipkan lembar kerja yang aktif sebagai batch produksi permanen di File Siap
-          Cetak (untuk download DXF/print), lalu mengosongkan lembar kerja ini dari Staging Area.
+          Mengarsipkan lembar yang aktif sebagai batch produksi di File Siap Cetak, lalu
+          mengosongkan lembar ini. Kalau resi dipecah, hanya bagian di lembar ini yang selesai.
+          Resi utuh selesai setelah semua bagiannya terkunci.
         </p>
       </div>
     </div>

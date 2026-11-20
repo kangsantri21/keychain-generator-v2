@@ -7,8 +7,9 @@
  * piece carries that mark and each sheet is exactly one part.
  *
  * Locking one part without the others is feature D. `receiptIsComplete`
- * is the rule D must use: the order becomes completed only when every
- * part is done. The lock and "tandai selesai" routes do not call it yet.
+ * is the rule: the order becomes completed only when every part is done.
+ * The lock, "tandai selesai", bongkar, and buka kunci routes call it
+ * through lib/receipt-lock.ts before writing `orders.status`.
  */
 
 export interface SplitUnit {

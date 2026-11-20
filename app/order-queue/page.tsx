@@ -61,6 +61,7 @@ interface QueueRow {
   variant: OrderItemVariant;
   qty: number;
   status: OrderStatus;
+  progressLabel: string | null;
   holeOverride: HoleOverride | null;
 }
 
@@ -85,8 +86,9 @@ function flattenToRows(orders: OrderQueueEntry[]): QueueRow[] {
           templateCode: item.templateCode,
           variant: item.variant,
           qty: 1,
-          status: order.status,
-          holeOverride: item.holeOverrides?.[index] ?? null,
+      status: order.status,
+      progressLabel: order.progressLabel ?? null,
+      holeOverride: item.holeOverrides?.[index] ?? null,
         });
       });
     }
@@ -642,9 +644,11 @@ export default function OrderQueuePage() {
                           <td className="px-3 py-3 align-top text-slate-600">{row.qty}</td>
                           <td className="px-3 py-3 align-top">
                             <span
-                              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[row.status]}`}
+                              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
+                                row.progressLabel ? "bg-sky-100 text-sky-800" : STATUS_STYLES[row.status]
+                              }`}
                             >
-                              {STATUS_LABELS[row.status]}
+                              {row.progressLabel ?? STATUS_LABELS[row.status]}
                             </span>
                           </td>
                           <td className="px-3 py-3 align-top">

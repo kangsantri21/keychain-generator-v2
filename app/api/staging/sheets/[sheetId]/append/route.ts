@@ -50,7 +50,7 @@ export async function POST(
   if (existingItems.length === 0) {
     return badRequest("Lembar Kerja tidak ditemukan (mungkin sudah dikunci atau dibongkar)", 404);
   }
-  if (existingItems.some((item) => item.status === "completed")) {
+  if (existingItems.some((item) => item.partDone || item.status === "completed")) {
     return badRequest("Lembar Kerja ini sudah ditandai selesai, tidak bisa ditambahkan lagi");
   }
   // Production Nesting sheets must never receive legacy-packed units (lib/staging-mode.ts).

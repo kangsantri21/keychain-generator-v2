@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { stagingItems, orders } from "@/lib/db/schema";
+import { stagingItems } from "@/lib/db/schema";
+import { describeLockedOrders, syncOrderStatuses } from "@/lib/receipt-status";
 
 function badRequest(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
 /**
- * "Tandai Selesai" — marks a staging sheet (and every order it draws from)
- * as completed. Completed orders drop out of both the nesting pool
- * (GET /api/staging/nest only pulls "pending" orders) and the main Input
- * Pesanan queue (GET /api/orders excludes "completed"), and the sheet
- * itself moves from the Staging Area's active list into its history view.
- *
- * Feature D: a receipt split across sheets (split_part / split_count) must
- * stay processing until receiptIsComplete (lib/receipt-parts.ts) is true.
- * This route still completes every order on the sheet. Do not change that
- * here — D owns the per-part lock.
+ * "Tandai Selesai" — locks the pieces on this sheet only.
+ * The receipt becomes completed only when every part is locked
+ * (lib/receipt-lock.ts). A split stays processing and the queue shows
+ * "1/2 bagian selesai" until the other parts are locked too.
+ * The layout status is kept so Buka Kunci can return the sheet.
  */
 export async function POST(
   _request: NextRequest,
@@ -34,13 +30,16 @@ export async function POST(
   if (items.length === 0) {
     return badRequest("Lembar kerja tidak ditemukan", 404);
   }
+  if (items.some((item) => item.partDone || item.status === "completed")) {
+    return badRequest("Lembar ini sudah ditandai selesai");
+  }
 
   const orderIds = [...new Set(items.map((item) => item.orderId))];
 
-  db.transaction((tx) => {
-    tx.update(stagingItems).set({ status: "completed" }).where(eq(stagingItems.sheetId, sheetId)).run();
-    tx.update(orders).set({ status: "completed" }).where(inArray(orders.id, orderIds)).run();
+  const orders = db.transaction((tx) => {
+    tx.update(stagingItems).set({ partDone: true }).where(eq(stagingItems.sheetId, sheetId)).run();
+    return describeLockedOrders(tx, syncOrderStatuses(tx, orderIds));
   });
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, orders });
 }

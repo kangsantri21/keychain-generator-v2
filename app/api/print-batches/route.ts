@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { printBatches, orderItems, orders, stagingItems, templates } from "@/lib/db/schema";
+import { printBatches, orderItems, stagingItems, templates } from "@/lib/db/schema";
 import { isUniqueConstraintError } from "@/lib/template-files";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
 import { renderTemplateItem } from "@/lib/render-dispatcher";
@@ -10,6 +10,8 @@ import { matchSubmittedToStaged, validatePlacedSheets, type PlacedItem } from "@
 import type { StagingItemPayload } from "@/lib/staging-types";
 import { MIXED_MODE_ERROR, sheetModeOf } from "@/lib/staging-mode";
 import { activeProductionFrame } from "@/lib/active-frame";
+import { openSheetsBlockingLock, lockedPiecesFromLayout } from "@/lib/receipt-lock";
+import { describeLockedOrders, syncOrderStatuses } from "@/lib/receipt-status";
 
 function badRequest(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -64,7 +66,7 @@ export async function POST(request: NextRequest) {
   const dbRows = await db
     .select()
     .from(stagingItems)
-    .where(and(eq(stagingItems.sheetId, sheetId), ne(stagingItems.status, "completed")));
+    .where(and(eq(stagingItems.sheetId, sheetId), eq(stagingItems.partDone, false), ne(stagingItems.status, "completed")));
   if (dbRows.length === 0) {
     return badRequest("Lembar kerja tidak ditemukan di Staging Area", 404);
   }
@@ -124,18 +126,29 @@ export async function POST(request: NextRequest) {
   gateErrors.push(...gate.errors);
 
   // A production sheet must hold every staged unit of its receipts (one receipt = one group on one sheet).
-  // Feature D: an authorized split (staging_items.split_part / split_count) may lock one
-  // part. Until then this check still rejects every receipt that also sits on another
-  // open sheet, including a legal oversized split. Do not mark the order completed
-  // from one part — lib/receipt-parts.ts receiptIsComplete is the rule.
+  // An authorized split (split_part / split_count) may lock one part while the
+  // other parts stay on their own open sheets. An unmarked second sheet is still refused.
   if (mode !== "legacy") {
     const sheetOrderIds = [...new Set(dbRows.map((row) => row.orderId))];
     const elsewhere = await db
-      .select({ orderId: stagingItems.orderId, sheetId: stagingItems.sheetId })
+      .select({
+        orderId: stagingItems.orderId,
+        sheetId: stagingItems.sheetId,
+        splitPart: stagingItems.splitPart,
+        splitCount: stagingItems.splitCount,
+      })
       .from(stagingItems)
-      .where(and(inArray(stagingItems.orderId, sheetOrderIds), ne(stagingItems.sheetId, sheetId), ne(stagingItems.status, "completed")));
-    if (elsewhere.length > 0) {
-      gateErrors.push(`${new Set(elsewhere.map((e) => e.orderId)).size} resi juga memiliki item di lembar kerja lain — resi tidak boleh terpecah`);
+      .where(
+        and(
+          inArray(stagingItems.orderId, sheetOrderIds),
+          ne(stagingItems.sheetId, sheetId),
+          eq(stagingItems.partDone, false),
+          ne(stagingItems.status, "completed")
+        )
+      );
+    const blocked = openSheetsBlockingLock(dbRows, elsewhere);
+    if (blocked.length > 0) {
+      gateErrors.push(`${blocked.length} resi juga memiliki item di lembar kerja lain — resi tidak boleh terpecah`);
     }
   }
   // The physical export frame (adaptive height on Production sheets) must hold the validated layout.
@@ -146,7 +159,22 @@ export async function POST(request: NextRequest) {
   }
 
   // Saved layout = the validated DB placement (same numbers the preview showed), with the client's render payload.
-  const layoutData: StagingItemPayload[] = match.layout;
+  // Split marks and hole overrides are taken from the staging row so a later
+  // delete of this batch can put that part back and recompute the receipt.
+  const rowById = new Map(dbRows.map((row) => [row.id, row]));
+  const layoutData: StagingItemPayload[] = match.layout.map((item) => {
+    const row = rowById.get(item.id);
+    if (!row) return item;
+    return {
+      ...item,
+      splitPart: row.splitPart,
+      splitCount: row.splitCount,
+      rotationDeg: row.rotationDeg,
+      status: row.status,
+      holeOverrideX: row.holeOverrideX,
+      holeOverrideY: row.holeOverrideY,
+    };
+  });
   const orderIds = [...new Set(layoutData.map((item) => item.orderId))];
 
   // A staged item only carries orderId+templateId, not the order_items row
@@ -185,15 +213,16 @@ export async function POST(request: NextRequest) {
             .where(inArray(orderItems.id, matchedOrderItemIds))
             .run();
         }
-        if (orderIds.length > 0) {
-          tx.update(orders).set({ status: "completed" }).where(inArray(orders.id, orderIds)).run();
-        }
         tx.delete(stagingItems).where(eq(stagingItems.sheetId, sheetId)).run();
+        const lockedOrders = describeLockedOrders(
+          tx,
+          syncOrderStatuses(tx, orderIds, { extraLocked: lockedPiecesFromLayout(layoutData) })
+        );
 
-        return inserted;
+        return { inserted, orders: lockedOrders };
       });
 
-      return NextResponse.json({ batch }, { status: 201 });
+      return NextResponse.json({ batch: batch.inserted, orders: batch.orders }, { status: 201 });
     } catch (error) {
       if (isUniqueConstraintError(error) && !requestedCode) {
         suffix += 1;

@@ -196,12 +196,23 @@ export default function StagingAreaPage() {
     }
   }
 
+  function sheetResultText(fallback: string, orders?: { receiptCode: string; status: string; progressLabel: string | null }[]): string {
+    if (!orders?.length) return fallback;
+    const notes = orders.map((order) => {
+      if (order.progressLabel) return `${order.receiptCode}: ${order.progressLabel}`;
+      if (order.status === "completed") return `${order.receiptCode} selesai`;
+      if (order.status === "pending") return `${order.receiptCode} kembali ke antrean`;
+      return `${order.receiptCode} masih diproses`;
+    });
+    return `${fallback} ${notes.join(". ")}.`;
+  }
+
   async function handleDeleteSheet(sheetId: number) {
-    if (
-      !window.confirm(
-        `Bongkar Lembar Kerja #${sheetId}? Item di dalamnya akan kembali ke antrean pesanan pending untuk di-nesting ulang.`
-      )
-    ) {
+    const message =
+      viewMode === "history"
+        ? `Bongkar Lembar Kerja #${sheetId} yang sudah selesai? Susunan bagian ini dihapus. Status resi dihitung ulang dari bagian yang masih ada.`
+        : `Bongkar Lembar Kerja #${sheetId}? Susunan di lembar ini dihapus. Kalau bagian resi yang sama masih ada di lembar lain, resi tetap diproses.`;
+    if (!window.confirm(message)) {
       return;
     }
     setPendingSheetActionId(sheetId);
@@ -209,7 +220,7 @@ export default function StagingAreaPage() {
       const res = await fetch(`/api/staging/sheets/${sheetId}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal membongkar lembar kerja");
-      toast.success(`Lembar Kerja #${sheetId} dibongkar, pesanan kembali ke antrean`);
+      toast.success(sheetResultText(`Lembar Kerja #${sheetId} dibongkar.`, data.orders));
       await reloadAfterMutation();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal membongkar lembar kerja");
@@ -218,10 +229,32 @@ export default function StagingAreaPage() {
     }
   }
 
+  async function handleReopenSheet(sheetId: number) {
+    if (
+      !window.confirm(
+        `Buka kunci Lembar Kerja #${sheetId}? Lembar ini kembali aktif. Status resi dihitung dari bagian yang masih terkunci.`
+      )
+    ) {
+      return;
+    }
+    setPendingSheetActionId(sheetId);
+    try {
+      const res = await fetch(`/api/staging/sheets/${sheetId}/reopen`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal membuka kunci lembar kerja");
+      toast.success(sheetResultText(`Lembar Kerja #${sheetId} dibuka kuncinya.`, data.orders));
+      await reloadAfterMutation();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal membuka kunci lembar kerja");
+    } finally {
+      setPendingSheetActionId(null);
+    }
+  }
+
   async function handleCompleteSheet(sheetId: number) {
     if (
       !window.confirm(
-        `Tandai Lembar Kerja #${sheetId} selesai? Seluruh pesanan di dalamnya akan ditandai selesai dan hilang dari antrean.`
+        `Tandai Lembar Kerja #${sheetId} selesai? Hanya bagian di lembar ini yang selesai. Resi utuh selesai kalau semua bagiannya sudah terkunci.`
       )
     ) {
       return;
@@ -231,7 +264,7 @@ export default function StagingAreaPage() {
       const res = await fetch(`/api/staging/sheets/${sheetId}/complete`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal menandai lembar kerja selesai");
-      toast.success(`Lembar Kerja #${sheetId} ditandai selesai`);
+      toast.success(sheetResultText(`Lembar Kerja #${sheetId} ditandai selesai.`, data.orders));
       await reloadAfterMutation();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menandai lembar kerja selesai");
@@ -265,6 +298,7 @@ export default function StagingAreaPage() {
           isLoadingHistory={isLoadingHistory}
           onDeleteSheet={handleDeleteSheet}
           onCompleteSheet={handleCompleteSheet}
+          onReopenSheet={handleReopenSheet}
           pendingSheetActionId={pendingSheetActionId}
         />
         {isLoading ? (

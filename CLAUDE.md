@@ -42,7 +42,7 @@ Database dan unggahan tidak ada di GitHub. `.gitignore` mengabaikan `.env`, `sql
 3. Salin `sqlite.db`, `sqlite.db-wal`, dan `sqlite.db-shm` ke root repo.
 4. Salin folder `public/uploads` dari Drive ke `public/uploads`.
 5. `cp .env.example .env` (isinya `DATABASE_URL=sqlite.db`). Jangan commit `.env`.
-6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch nesting siap produksi menambah `0017_shape_block_rotation` (kolom `rotation_deg`). Fitur C menambah `0018_receipt_split_part` (kolom `staging_items.split_part` dan `split_count`). Database yang sudah di 0016 cukup di-migrate sampai habis. Baris lama yang kolomnya kosong tetap dibaca seperti dulu: bukan pecahan, dan resi di dua lembar tetap INVALID.
+6. `npm run db:migrate` jika database yang disalin belum memakai migrasi di repo. `main` berhenti di `0016_icy_misty_knight`. Branch nesting siap produksi menambah `0017_shape_block_rotation` (kolom `rotation_deg`). Fitur C menambah `0018_receipt_split_part` (kolom `staging_items.split_part` dan `split_count`). Fitur D menambah `0019_part_done` (kolom `staging_items.part_done`). Database yang sudah di 0016 cukup di-migrate sampai habis. Baris lama yang kolomnya kosong tetap dibaca seperti dulu: bukan pecahan, dan resi di dua lembar tetap INVALID. Baris lama yang statusnya `completed` mendapat `part_done` = 1.
 7. `npm run dev`
 
 `npm run build` membaca database saat membuat halaman depan. Salin database, atau jalankan migrasi pada database kosong, sebelum build. Build tanpa tabel membuat `sqlite.db` kosong dan gagal dengan `no such table: order_items`.
@@ -67,7 +67,7 @@ Lembar yang sudah tersimpan sebelum kontur 2,5 mm tidak boleh dikunci begitu saj
 
 **Yang diubah.** `lib/staging-start.ts`, `POST /api/staging/nest`, tombol di `components/staging-area/ControlPanel.tsx`, dan handler di `app/staging-area/page.tsx`. Tes `lib/nesting/staging-start.test.ts`.
 
-**Masalah terbuka.** Di `main` tombol lama masih ada. API legacy masih bisa menyusun nama yang sudah punya baris staging aktif (P0.9, bagian penolakan legacy). Mengunci satu lembar masih menandai seluruh resi selesai. Tidak ada login.
+**Masalah terbuka.** Di `main` tombol lama masih ada. API legacy masih bisa menyusun nama yang sudah punya baris staging aktif (P0.9, bagian penolakan legacy). Di `main`, mengunci satu lembar masih menandai seluruh resi selesai. Di branch fitur D, kunci hanya menyelesaikan bagian yang ada di lembar itu. Tidak ada login.
 
 ## Fitur C — pecah resi yang tidak muat (20 November 2026)
 
@@ -80,13 +80,15 @@ Keputusan Rofiq: resi yang benar-benar tidak muat satu lembar 31×47 cm boleh di
 - Kolom baru: `staging_items.split_part` dan `split_count`, migrasi `0018_receipt_split_part`. Keduanya kosong pada resi utuh.
 - Contoh 97 tag (10 Nov lembar 8): 84 keping di lembar `1/2`, 13 keping di lembar `2/2`. Gambar tanpa nama pelanggan: `docs/nesting/images/resi-pecah-10nov-8.png`.
 
-### Yang perlu fitur D (jangan dikerjakan di sesi ini)
+### Fitur D — kunci lembar per bagian (20 November 2026)
 
-Mengunci atau menandai selesai **satu bagian** belum diubah. Yang sudah disiapkan:
+Mengunci atau menandai selesai satu lembar hanya menyelesaikan keping di lembar itu. Ada di branch fitur D, belum di `main`, dan belum di `versi-lengkap` sampai PR-nya digabung.
 
-- `receiptIsComplete` di `lib/receipt-parts.ts`. Resi baru yang dipecah dianggap selesai hanya kalau bagian 1 sampai N semuanya selesai. Resi utuh selesai seperti biasa.
-- `POST /api/print-batches` masih menolak lembar yang resinya juga ada di lembar kerja lain, termasuk pecahan sah. Komentar di route itu menunjuk fungsi di atas.
-- `POST /api/staging/sheets/[id]/complete` masih menandai seluruh resi selesai begitu satu lembar ditandai. Fitur D harus memanggil `receiptIsComplete` sebelum menulis `orders.status = completed`.
-- Membongkar satu bagian tidak boleh mengembalikan resi ke pending kalau bagian lain masih tersusun. Itu menyambung P0.10.
-
-Sampai fitur D masuk, Rofiq bisa menyusun dan melihat dua lembar. Mengunci salah satu bagian masih ditolak.
+- Aturan selesai tetap `receiptIsComplete` di `lib/receipt-parts.ts`, dipanggil lewat `lib/receipt-lock.ts`. Resi pecahan selesai hanya kalau bagian 1 sampai N semuanya terkunci. Resi utuh di satu lembar selesai seperti biasa.
+- `POST /api/staging/sheets/[id]/complete` (Tandai Selesai) mengisi `part_done` pada keping lembar itu. Status susunan (`staged-shape` dan yang lain) tidak ditimpa, supaya lembar bisa dibuka lagi.
+- `POST /api/print-batches` (Kunci batch) mengizinkan pecahan sah. Resi yang juga ada di lembar lain tanpa tanda pecahan tetap ditolak. Keping lembar itu pindah ke batch. Resi belum selesai kalau masih ada bagian yang terbuka.
+- `POST .../reopen` (tombol Buka Kunci di Riwayat) mengembalikan lembar ke daftar aktif dan menghitung ulang status resi.
+- `DELETE .../sheets/[id]` (Bongkar) hanya menghapus lembar itu. Resi kembali ke pending hanya kalau tidak ada bagian lain yang masih tersusun atau terkunci. Itu menutup P0.10 di branch ini.
+- Menghapus batch yang berisi pecahan mengembalikan bagian itu ke Staging. Menghapus batch resi utuh tidak mengubah status selesai.
+- Antrean Pesanan dan daftar pesanan di Input menampilkan `1/2 bagian selesai` selagi baru sebagian bagian yang terkunci. Lembar di Staging menampilkan lencana `Bagian 1/2`.
+- Kolom baru: `staging_items.part_done`, migrasi `0019_part_done`. Keduanya kosong (0) pada lembar yang masih aktif. Baris lama berstatus `completed` diisi 1.

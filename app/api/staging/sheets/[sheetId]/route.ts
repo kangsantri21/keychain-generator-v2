@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { stagingItems, orders } from "@/lib/db/schema";
+import { stagingItems } from "@/lib/db/schema";
+import { describeLockedOrders, syncOrderStatuses } from "@/lib/receipt-status";
 
 function badRequest(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
 /**
- * "Bongkar" — dismantles a staging sheet without touching the underlying
- * order data: only the staging_items rows (this nested instance) are
- * deleted, while the orders they came from revert to "pending" so they
- * fall back into the pool the next nesting run picks up. order_items
- * (the customer names themselves) are never touched by this at all.
+ * "Bongkar" — deletes this sheet's pieces only.
+ * The receipt returns to pending only when nothing of it remains on a
+ * sheet or in a locked batch. Another part that is still arranged or
+ * locked keeps the receipt in processing (P0.10 / feature D).
  */
 export async function DELETE(
   _request: NextRequest,
@@ -32,10 +32,10 @@ export async function DELETE(
 
   const orderIds = [...new Set(items.map((item) => item.orderId))];
 
-  db.transaction((tx) => {
+  const orders = db.transaction((tx) => {
     tx.delete(stagingItems).where(eq(stagingItems.sheetId, sheetId)).run();
-    tx.update(orders).set({ status: "pending" }).where(inArray(orders.id, orderIds)).run();
+    return describeLockedOrders(tx, syncOrderStatuses(tx, orderIds));
   });
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, orders });
 }

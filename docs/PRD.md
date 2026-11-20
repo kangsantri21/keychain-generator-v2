@@ -41,6 +41,8 @@ Alur yang benar-benar ada di aplikasi hari ini:
 
 Status pesanan di `main`: `pending` → `processing` (setelah masuk lembar) → `completed` (setelah lembar dikunci atau ditandai selesai). Status ini milik seluruh resi, bukan per nama.
 
+Di branch fitur D (belum di `main`): mengunci atau menandai selesai satu lembar hanya menyelesaikan keping di lembar itu. Resi menjadi `completed` hanya kalau semua bagiannya sudah berada di lembar terkunci. Selagi baru sebagian, antrean menampilkan misalnya `1/2 bagian selesai`. Membongkar atau membuka kunci satu lembar mengembalikan bagian itu, dan tidak mengembalikan resi ke pending kalau bagian lain masih tersusun atau terkunci.
+
 Modul mahar: input nama pengantin, tanggal, nominal teks, bentuk, dan ukuran. Nesting mahar dihitung di browser. Hanya hasil yang dikunci yang disimpan ke server.
 
 ### Yang berubah di branch nesting-v3-compact
@@ -147,7 +149,7 @@ Yang belum diputuskan ada di bagian nesting. Jawaban kontur sudah ditulis di baw
 
 1. Ukuran lembar **310 × 470 mm** sudah dikonfirmasi Rofiq (31 × 47 cm).
 2. Jarak aman antar garis potong **1 mm** untuk sementara. Belum dicek pada potongan sungguhan. Mesin kotak lama tetap 2 mm antar kotak.
-3. Resi yang tidak muat dalam satu lembar **boleh dipecah** (keputusan Rofiq, fitur C). Bagian sesedikit mungkin, tiap bagian satu blok berbingkai berlabel `kode 1/N`. Resi yang muat tidak pernah dipecah. Mengunci satu bagian tanpa menyelesaikan bagian lain adalah fitur D, belum dikerjakan.
+3. Resi yang tidak muat dalam satu lembar **boleh dipecah** (keputusan Rofiq, fitur C). Bagian sesedikit mungkin, tiap bagian satu blok berbingkai berlabel `kode 1/N`. Resi yang muat tidak pernah dipecah. Mengunci satu bagian tanpa menyelesaikan bagian lain ada di branch fitur D, belum di `main`.
 4. Berapa lama operator masih mau menunggu untuk satu gelombang (misalnya 30 nama, atau batch sebesar PAT 228)?
 5. Label: satu kode per blok, di samping bingkai. Bukan satu kode di bawah setiap keping. Ini yang tergambar di contoh manual, dan yang sekarang dicetak.
 
@@ -171,9 +173,9 @@ Masalah yang masih mengganggu pekerjaan, baik di `main` maupun yang baru selesai
 1. **Hasil nesting.** `main` masih mencampur resi. Sesi susunan blok (belum di `main`) sudah mengelompokkan, membingkai, menaruh satu kode di samping, memutar 90° dan 180°, dan merapatkan garis potong. Pada sampel 11 resi, tinggi bahan 12,4% lebih pendek dari susunan tangan. Belum dicek pada akrilik. Angkanya di [docs/nesting/PENGUKURAN.md](nesting/PENGUKURAN.md).
 2. **Garis potong terlalu kasar — perbaikan ada di branch sesi kontur, belum di `main`.** Jarak potong 2,5 mm (Contour Corel 0,25 cm), sambungan bulat, celah antar huruf di bawah 5 mm tertutup oleh offset itu, kurva diratakan pada 0,01 mm, lubang gantungan di DXF berupa lingkaran. Belum dicek pada potongan akrilik sungguhan. `main` masih mesin lama (ratakan 0,05 mm, lubang segi 16).
 3. **Satu resi bisa masuk dua lembar** di `main`. Antrean masih bisa mengirim nama yang statusnya sudah “diproses”. Perbaikan ada di branch, belum di main.
-4. **Mengunci satu lembar menandai seluruh resi selesai.** Nama yang tidak ikut terpilih hilang dari antrean. Di mode produksi branch, resi yang sudah tidak pending tidak bisa dikirim lagi, jadi sisa nama itu tidak punya jalan kembali.
+4. **Mengunci satu lembar menandai seluruh resi selesai — diperbaiki untuk pecahan di branch fitur D, belum di `main`.** Di `main`, dan untuk nama yang memang tidak ikut terpilih (bukan pecahan sah), sisa nama masih ikut selesai. Di branch fitur D, kunci atau tandai selesai hanya menyelesaikan keping di lembar itu. Resi pecahan selesai setelah semua bagian terkunci. Memilih sebagian nama sebuah resi yang tidak dipecah mesin masih urusan P0.8.
 5. **Tombol “Mulai Susun Lembar Kerja” di `main` tidak bisa jalan.** Ia memanggil API tanpa daftar nama. Di branch ini tombol sudah diperbaiki: server mengisi daftar nama dari resi yang masih pending, lalu Production Nesting menulis lembar. Resi yang sudah diproses atau selesai tidak ikut. Jika tidak ada resi pending, tidak ada lembar baru. Memilih sebagian nama tetap dari Antrean Pesanan. Perbaikan ini belum di `main`.
-6. **Membongkar satu lembar mengembalikan semua resi di lembar itu ke pending**, walaupun bagian resi yang sama masih duduk di lembar lain.
+6. **Membongkar satu lembar mengembalikan semua resi di lembar itu ke pending — diperbaiki di branch fitur D, belum di `main`.** Di branch ini resi kembali ke pending hanya kalau tidak ada bagian lain yang masih tersusun atau terkunci.
 7. **Tidak ada login.** Nama pelanggan dan file produksi terbuka bagi siapa saja yang kebuka aplikasinya.
 8. **Edit pesanan belum ada.**
 9. **Status “Sudah Dicetak” di File Siap Cetak tidak pernah berubah** dari pending.

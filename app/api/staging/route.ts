@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, ne } from "drizzle-orm";
+import { and, eq, ne, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { stagingItems, orders, templates, type Order, type Template } from "@/lib/db/schema";
 import { loadTemplateAssets, type TemplateAssets } from "@/lib/keychain-render";
@@ -41,7 +41,11 @@ interface StagingItemPayload {
  */
 export async function GET(request: NextRequest) {
   const wantHistory = new URL(request.url).searchParams.get("history") === "1";
-  const statusFilter = wantHistory ? eq(stagingItems.status, "completed") : ne(stagingItems.status, "completed");
+  // part_done marks a sheet locked by Tandai Selesai. Older rows used
+  // status "completed" for the same thing (migration 0019 sets part_done).
+  const statusFilter = wantHistory
+    ? or(eq(stagingItems.partDone, true), eq(stagingItems.status, "completed"))
+    : and(eq(stagingItems.partDone, false), ne(stagingItems.status, "completed"));
 
   const rows = await db
     .select({
