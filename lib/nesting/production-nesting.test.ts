@@ -244,9 +244,13 @@ describe("Production flow guards (explicit mode marker, no legacy fallback)", ()
     assert.equal(sheetModeOf([{ status: STAGED_PRODUCTION, posX: 2, posY: 2 }]).mode, "production");
   });
 
-  test("Staging Area never re-runs nesting itself (no silent legacy run); Order Queue sends Production Nesting by default", () => {
-    const staging = readFileSync("app/staging-area/page.tsx", "utf8") + readFileSync("components/staging-area/ControlPanel.tsx", "utf8");
-    assert.equal(staging.includes("/api/staging/nest"), false);
+  test("Staging Area starts Production Nesting for every pending receipt (no body-less legacy run)", () => {
+    const page = readFileSync("app/staging-area/page.tsx", "utf8");
+    const panel = readFileSync("components/staging-area/ControlPanel.tsx", "utf8");
+    assert.match(page, /STAGING_START_REQUEST/);
+    assert.match(page, /\/api\/staging\/nest/);
+    assert.doesNotMatch(page, /fetch\("\/api\/staging\/nest", \{ method: "POST" \}\)/);
+    assert.match(panel, /Mulai Susun Lembar Kerja/);
     const queue = readFileSync("app/order-queue/page.tsx", "utf8");
     assert.ok(queue.includes('useState<NestingMode>("production")'));
     assert.ok(queue.includes('mode: "production-v3"'));

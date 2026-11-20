@@ -81,7 +81,7 @@ Tingkat keparahan untuk pekerjaan sehari-hari.
 | Tinggi | Tidak ada login. Semua API bisa mengubah dan menghapus pesanan. Paket `better-auth` terpasang tetapi tidak dipanggil. |
 | Tinggi | `main` bisa menyusun nama yang sama dua kali. Perbaikan satu resi satu lembar hanya di branch. |
 | Tinggi | Mengunci atau menandai selesai satu lembar mengubah seluruh resi menjadi selesai, termasuk nama yang tidak ikut. |
-| Tinggi | Tombol “Mulai Susun Lembar Kerja” di Staging mengirim permintaan tanpa daftar nama, jadi selalu gagal. |
+| Tinggi | Tombol “Mulai Susun Lembar Kerja” di Staging mengirim permintaan tanpa daftar nama, jadi selalu gagal. **Diperbaiki di branch ini, belum di `main`:** tombol mengirim `allPending`, server mengisi nama dari resi pending, lalu Production Nesting menulis lembar. |
 | Sedang | Membongkar satu lembar mengembalikan semua resi di lembar itu ke pending, walaupun bagian resi masih ada di lembar lain. |
 | Sedang | Di `main`, kunci batch percaya JSON dari browser. Di branch, posisi dicocokkan ke database. Belum di `main`. |
 | Sedang | Foreign key SQLite tidak dihidupkan, padahal komentar kode mengira sebaliknya. |

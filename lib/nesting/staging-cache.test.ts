@@ -75,12 +75,16 @@ describe("Staging cache — cache-first render", () => {
     assert.equal(readStagingCache()?.activeSheetId, 2);
   });
 
-  test("revisiting never runs nesting — the page only reads GET /api/staging", async () => {
+  test("revisiting never runs nesting — revalidation only reads GET /api/staging", async () => {
     const { impl, calls } = mockFetch([body([sheet(1)])]);
     await fetchStagingSnapshot(impl);
     assert.deepEqual(calls, ["/api/staging"]);
-    assert.doesNotMatch(page, /\/api\/staging\/nest/);
+    assert.doesNotMatch(fnBody(page, "refreshActiveSheets"), /\/api\/staging\/nest/);
+    assert.doesNotMatch(fnBody(page, "finishRevalidation"), /\/api\/staging\/nest/);
     assert.doesNotMatch(src("lib/staging-cache.ts"), /\/api\/staging\/nest|runProductionNesting|packMaxRects/);
+    // The start button is the only nesting call on this page, and it reloads from the server afterwards.
+    assert.match(fnBody(page, "handleStartNesting"), /\/api\/staging\/nest/);
+    assert.match(fnBody(page, "handleStartNesting"), /await reloadAfterMutation\(\)/);
   });
 });
 
