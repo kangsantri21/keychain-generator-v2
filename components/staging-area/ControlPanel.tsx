@@ -11,6 +11,7 @@ export function ControlPanel({
   activeSheetId,
   onSelectSheet,
   onStartNesting,
+  nestNotice,
   onLockBatch,
   isStartingNesting,
   isLocking,
@@ -27,6 +28,8 @@ export function ControlPanel({
   activeSheetId: number | null;
   onSelectSheet: (sheetId: number) => void;
   onStartNesting: () => void;
+  /** Stays on screen after a nest so a 4xx reason is not only a toast that disappears. */
+  nestNotice?: { tone: "error" | "warn"; text: string } | null;
   onLockBatch: (batchCode: string) => void;
   isStartingNesting: boolean;
   isLocking: boolean;
@@ -58,6 +61,16 @@ export function ControlPanel({
           <Play size={16} />
           {isStartingNesting ? "Menyusun..." : "Mulai Susun Lembar Kerja"}
         </button>
+        {nestNotice && (
+          <p
+            role="alert"
+            className={`whitespace-pre-wrap rounded-md px-3 py-2 text-xs ${
+              nestNotice.tone === "error" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
+            }`}
+          >
+            {nestNotice.text}
+          </p>
+        )}
         <p className="text-xs text-slate-400">
           Menyusun semua resi yang masih pending dengan Production Nesting. Untuk memilih sebagian nama, buka{" "}
           <Link href="/order-queue" className="font-medium text-blue-600 hover:text-blue-700">

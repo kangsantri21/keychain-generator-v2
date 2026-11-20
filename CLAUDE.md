@@ -90,3 +90,5 @@ Mengunci atau menandai selesai **satu bagian** belum diubah. Yang sudah disiapka
 - Membongkar satu bagian tidak boleh mengembalikan resi ke pending kalau bagian lain masih tersusun. Itu menyambung P0.10.
 
 Sampai fitur D masuk, Rofiq bisa menyusun dan melihat dua lembar. Mengunci salah satu bagian masih ditolak.
+
+Tombol “Mulai Susun” menyimpan resi yang muat dan resi yang dipecah. Yang disebut dilewati hanya resi yang sudah ada di lembar lain, yang tidak bisa digambar, atau yang punya satu keping lebih besar dari lembar. Bongkar satu lembar mengembalikan resi ke pending hanya bila tidak ada keping aktif di lembar lain.
